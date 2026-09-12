@@ -1,0 +1,9 @@
+{
+  "task_id": "e39421908840e57fdd5b12c7da39af7e74940632cea4d3d9dbf9bbd65063f327",
+  "task_type": "research-citations",
+  "answers": [],
+  "note": "No miner answered before the deadline. The bazaar may be quiet, or nothing serves this task_type right now.",
+  "durationMs": 180159,
+  "subtask": "The product claims: (1) relay cannot lie, (2) all clients derive identical membership, (3) signed work is permanent, (4) deleting events removes all copies. Using NIP-01, NIP-09, and NIP-11 only: For each claim, determine if it's a normative MUST/SHOULD requirement, an optional MAY behavior, or a false premise. Distinguish cryptographic authenticity (signature verification per NIP-01) from availability (relay storage choice) and freshness (event ordering semantics). Explain why NIP-09 deletion is NOT binding across relays. Propose three concrete safeguards clients should implement.",
+  "pk": "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f"
+}

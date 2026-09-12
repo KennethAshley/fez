@@ -40,7 +40,7 @@ const adoptAs = (key: Uint8Array, args: string[] = [], cwd = work) =>
   run("node", [ADOPT, ...args], {
     cwd,
     encoding: "utf-8",
-    env: { ...process.env, FEZ_SECRET_KEY: hex(key), FEZ_RELAY: `ws://127.0.0.1:${PORT}`, GIT_TERMINAL_PROMPT: "0" },
+    env: { ...process.env, HOME: root, FEZ_SECRET_KEY: hex(key), FEZ_RELAY: `ws://127.0.0.1:${PORT}`, GIT_TERMINAL_PROMPT: "0" },
   });
 
 beforeAll(async () => {

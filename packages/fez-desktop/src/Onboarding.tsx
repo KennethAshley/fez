@@ -4,7 +4,8 @@ import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools/pure
 import { nip44 } from "nostr-tools";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
-import { BrowserWire, rustSigner } from "./wire";
+import { BrowserWire, pinDesktopWorkspaceOwner, rustSigner } from "./wire";
+import { WorkspaceState, resolveWorkspaceOwner } from "@fezchat/client";
 import { openBackup } from "./backup";
 import { DEFAULT_RELAY, PAIRING_RELAY, relayRaw, setRelays } from "./relay";
 import { type Step, nextStep, prevStep, identityPlan, isStep } from "./onboarding-steps";
@@ -14,6 +15,7 @@ import { generateSprite } from "@fezchat/ui";
 import { buildFezPersonaMd, buildStarterPersonaMd, STARTER_TEAM } from "./welcome-core";
 import { PROVIDERS } from "./providers";
 import { localAgents, agentReady, type LocalAgentStatus } from "./harnesses";
+import { parseWorkspaceInvite, workspaceInvite } from "../../fez-client/src/workspace-invite";
 
 export { nextStep, prevStep };
 
@@ -225,7 +227,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
         // Identity already exists — the wire signs via Rust custody, so
         // it gets the pubkey-bearing signer, never the secret.
         const secretBytes = hexToBytes(keyHex);
-        const wire = new BrowserWire(relayUrl.split(","), rustSigner(getPublicKey(secretBytes)));
+        const wire = new BrowserWire(relayUrl.split(","), rustSigner(getPublicKey(secretBytes), ACCOUNT));
         await new Promise((r) => setTimeout(r, 600));
         await wire.publish({
           kind: 0,
@@ -271,40 +273,30 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
    * a bare community URL (wss://…) for "I already have a community" —
    * Builder Lab, the team relay, wherever your key is already known.
    */
-  const acceptInvite = (code: string): boolean => {
-    const trimmed = code.trim();
-    const bare = /^wss?:\/\/.+/i.test(trimmed) ? trimmed : undefined;
-    // Same shapes ManagePane mints and accepts: modern codes are just
-    // fez-join:<relay> (the workspace IS the relay), the legacy
-    // #<community> suffix still parses. This regex once demanded the
-    // suffix — onboarding rejected the app's own invites.
-    const match = /^fez-join:([^#]+)(?:#.*)?$/i.exec(trimmed);
-    if (!bare && !match) {
-      setError("that doesn't look like an invite — paste a fez-join:… code or the community's wss:// URL");
+  const acceptInvite = async (code: string): Promise<boolean> => {
+    if (busy) return false;
+    setBusy(true);
+    try {
+      const { relay, owner: expectedOwner } = parseWorkspaceInvite(code);
+      const state = new WorkspaceState();
+      state.load();
+      const known = state.known.find(workspace => workspace.relay === relay)?.owner;
+      const expected = resolveWorkspaceOwner(known, undefined, expectedOwner);
+      // The sentinel watches shared relay settings; pin before it can discover this relay.
+      const owner = await pinDesktopWorkspaceOwner(relay, undefined, expected);
+      const set = relayUrl.split(",").map((r) => r.trim()).filter(Boolean);
+      if (!set.includes(relay)) set.unshift(relay);
+      localStorage.setItem("fez-pending-invite", owner ? workspaceInvite(relay, owner) : relay);
+      await setRelays(set);
+      setRelayUrl(set.join(","));
+      setError(undefined);
+      return true;
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
       return false;
+    } finally {
+      setBusy(false);
     }
-    const relay = (bare ?? match![1]).trim();
-    // What we unshift into the relay set must BE a relay URL: an
-    // invite like fez-join:hello parsed fine here, then poisoned the
-    // stored set — createWorkspace skips the local spawn when a
-    // pending invite exists, boot's self-heal only fires on an
-    // all-loopback set, and normalizeUrls silently drops the garbage —
-    // net effect, the exact "reconnecting…" strand the self-heal
-    // exists to prevent.
-    if (!/^wss?:\/\/.+/i.test(relay)) {
-      setError("that invite doesn't name a relay — expected fez-join:wss://…");
-      return false;
-    }
-    const set = relayUrl.split(",").map((r) => r.trim()).filter(Boolean);
-    if (!set.includes(relay)) set.unshift(relay);
-    setRelayUrl(set.join(","));
-    setRelays(set);
-    // Joined after the identity exists — you cannot be a member before
-    // you are anybody. The stored value is the RELAY: the workspace IS
-    // the relay, and boot opens exactly this URL.
-    localStorage.setItem("fez-pending-invite", relay);
-    setError(undefined);
-    return true;
   };
 
   return (
@@ -355,7 +347,8 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
         {step === "invite" && (
           <InviteStep
             error={error}
-            onAccept={(code) => {
+            busy={busy}
+            onAccept={async (code) => {
               // Two contexts share this one step: pre-identity (the
               // welcome side door — keyHex isn't set yet, so accepting
               // just records the pending relay and returns to welcome,
@@ -363,7 +356,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
               // post-identity (CommunityStep's "join" door, reached only
               // after start() has run) — joining a community there IS
               // the community choice, so it goes straight to profile.
-              if (acceptInvite(code)) setStep(keyHex ? "profile" : "welcome");
+              if (await acceptInvite(code)) setStep(keyHex ? "profile" : "welcome");
             }}
             onBack={() => {
               setError(undefined);
@@ -647,10 +640,12 @@ function PairingStep({ relayUrl, onPaired, onBack }: { relayUrl: string; onPaire
  */
 function InviteStep({
   error,
+  busy,
   onAccept,
   onBack,
 }: {
   error?: string;
+  busy: boolean;
   onAccept: (code: string) => void;
   onBack: () => void;
 }) {
@@ -668,16 +663,17 @@ function InviteStep({
         autoFocus
         spellCheck={false}
         placeholder="fez-join:… or wss://…"
+        disabled={busy}
         onChange={(e) => setCode(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && code.trim()) onAccept(code);
+          if (e.key === "Enter" && code.trim() && !busy) onAccept(code);
         }}
       />
       {error && <p className="ob-error">{error}</p>}
-      <button className="ob-primary" disabled={!code.trim()} onClick={() => onAccept(code)}>
+      <button className="ob-primary" disabled={busy || !code.trim()} onClick={() => onAccept(code)}>
         accept invite
       </button>
-      <button className="ob-secondary" onClick={onBack}>back</button>
+      <button className="ob-secondary" disabled={busy} onClick={onBack}>back</button>
     </>
   );
 }

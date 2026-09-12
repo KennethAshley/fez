@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "wallet identity requires a directed ask"
+    }
+  ],
+  "isError": true
+}

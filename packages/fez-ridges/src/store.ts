@@ -67,6 +67,7 @@ export function updatesChannel(dir: string): string | undefined {
     return value.channel;
   } catch (e) {
     if (e && typeof e === "object" && "code" in e && e.code === "ENOENT") return undefined;
+    // eslint-disable-next-line preserve-caught-error -- Raw errors may expose private response or process data.
     throw Error("Ridges update-channel settings are unreadable; announcements stopped");
   }
 }

@@ -4,6 +4,7 @@ import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure
 import { RelayConnection } from "../../../../src/protocol/relay";
 import { installMockBridge } from "./helpers/bridge";
 import { spawnRelay } from "./helpers/relay";
+import { readFileSync } from "node:fs";
 
 test("docs keep live agent discussion with a passage and undo a signed edit", async ({ page }) => {
   test.setTimeout(90_000);
@@ -41,7 +42,7 @@ test("docs keep live agent discussion with a passage and undo a signed edit", as
     await expect(page.locator(".boot-splash")).toHaveCount(0);
     await page.locator(".home-link").filter({ hasText: "docs" }).click();
     await page.locator(".wiki-list button").filter({ hasText: "Working agreement" }).click();
-    await expect(page.getByRole("tab", { name: "Conversation", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Conversation", exact: true })).toHaveAttribute("aria-expanded", "false");
     const passage = page.locator(".doc-line").filter({ hasText: "Agents can edit after discussing a change." });
     await passage.getByRole("button", { name: /Discuss passage/ }).click();
     await passage.locator("p").evaluate(element => {
@@ -84,6 +85,11 @@ test("docs keep live agent discussion with a passage and undo a signed edit", as
     await expect(page.locator(".wiki-body")).toContainText("Agents can edit after discussing a change.");
     await page.getByRole("tab", { name: "Conversation", exact: true }).click();
     await input.fill("Keep this draft on this page");
+    await rail.getByRole("button", { name: "Close conversation" }).click();
+    await expect(rail).toBeHidden();
+    await expect(page.getByRole("button", { name: "Conversation", exact: true })).toBeFocused();
+    await page.getByRole("button", { name: "Conversation", exact: true }).click();
+    await expect(input).toHaveValue("Keep this draft on this page");
     await page.locator(".wiki-list button").filter({ hasText: "Other page" }).click();
     await expect(input).toHaveValue("");
     await expect(rail).not.toContainText("Does this give agents too much freedom?");
@@ -164,5 +170,59 @@ test("docs keep live agent discussion with a passage and undo a signed edit", as
     await expect(page.locator(".wiki-body")).toContainText("Saved at the original address.");
     expect((await connection.query([{ kinds: [40100], "#d": ["release-checklist"] }])).some(e => e.content.includes("Saved at the original address."))).toBe(true);
     expect(await connection.query([{ kinds: [40100], "#d": ["release-process"] }])).toEqual([]);
+  } finally { connection.disconnect(); relay.kill(); }
+});
+
+test("board reviews leave room for all columns and the schedule stays readable in a narrow window", async ({ page }) => {
+  const secret = generateSecretKey(), owner = getPublicKey(secret);
+  const agentSecret = generateSecretKey(), agent = getPublicKey(agentSecret);
+  const socket = createServer();
+  await new Promise<void>(resolve => socket.listen(0, "127.0.0.1", resolve));
+  const port = (socket.address() as import("node:net").AddressInfo).port;
+  await new Promise<void>(resolve => socket.close(() => resolve()));
+  const relay = await spawnRelay(port, { owner });
+  const connection = new RelayConnection({ url: relay.url });
+  let timestamp = Math.floor(Date.now() / 1000) - 10;
+  const publish = (kind: number, tags: string[][], content: string, key = secret) =>
+    connection.publish(finalizeEvent({ kind, tags, content, created_at: timestamp++ }, key));
+  try {
+    await connection.connect();
+    await publish(47102, [["d", "roster"], ["p", owner, "owner"], ["p", agent, "bot"]], "");
+    await publish(47101, [["d", "general"]], '{"name":"general"}');
+    await publish(47000, [], '{"name":"fez"}', agentSecret);
+    await publish(40100, [["h", "general"], ["d", "fez-work"], ["title", "Fez work"]],
+      "# Fez work\n\n```fez:board\ndone: Done\nlimit: In Progress = 1\n```\n\n## Backlog\n\n- [ ] Review new GitHub issues\n\n## In Progress\n\n- [ ] Improve document workspace @fez\n\n## Review\n\n- [ ] Daily board reviews @fez\n\n## Done\n\n- [x] Add Always On to the menu bar\n");
+    await publish(30078, [["d", "ext:fez-kanban"]], "mock encrypted schedule");
+    await installMockBridge(page, {
+      get_pubkey: () => owner, provider_key_present: () => true, list_personas: () => ["fez"],
+      ensure_local_relay: () => relay.url, list_installed_skills: () => "[]", read_keymap: () => "{}",
+      read_media_server: () => "", latest_version: () => "0.1.0", package_info: () => "{}", spawned_agents: () => [],
+      list_gui_extensions: () => [["kanban", readFileSync(new URL("../../../fez-kanban/dist/gui.js", import.meta.url), "utf8"), ""]],
+      start_desktop_runtime: () => null, "plugin:event|listen": () => 1, "plugin:event|unlisten": () => null,
+      read_extension_grants: () => JSON.stringify({ kanban: ["read:channels", "read:agents", "publish", "sign", "ui", "background"] }),
+      nip44_decrypt: () => JSON.stringify({ reviews: [{ channelId: "general", slug: "fez-work", title: "Fez work", worker: agent, time: "09:00", timeZone: "America/New_York", prompt: "Review open GitHub issues. Choose one actionable issue, prepare a tested fix, and leave it in Review.", enabled: true, enabledAt: 1 }] }),
+    }, { identities: { default: Buffer.from(secret).toString("hex") } });
+    await page.addInitScript(url => localStorage.setItem("fez-relay", url), relay.url);
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/");
+    await expect(page.locator(".boot-splash")).toHaveCount(0);
+    await page.locator(".home-link").filter({ hasText: "docs" }).click();
+    await page.locator(".wiki-list button").filter({ hasText: "Fez work" }).click();
+    const review = page.getByRole("region", { name: "Daily board review" });
+    await expect(review).toContainText("9:00 AM · Eastern Time · @fez");
+    await expect(page.locator(".doc-conversation")).toBeHidden();
+    await expect(page.locator(".board-column").last()).toBeInViewport();
+    await page.screenshot({ path: test.info().outputPath("fez-docs-board-desktop.png"), animations: "disabled" });
+    await review.getByRole("button", { name: "Edit schedule" }).click();
+    await expect(review.getByLabel("Time zone")).toHaveValue("America/New_York");
+    await expect(review.getByRole("button", { name: "Save schedule" })).toBeInViewport();
+    await page.screenshot({ path: test.info().outputPath("fez-docs-schedule-desktop.png"), animations: "disabled" });
+    await page.setViewportSize({ width: 850, height: 850 });
+    await expect(review.getByRole("button", { name: "Save schedule" })).toBeInViewport();
+    expect(await page.locator(".wiki-scroll").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await page.screenshot({ path: test.info().outputPath("fez-docs-schedule-narrow.png"), animations: "disabled" });
+    await review.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(review).toContainText("Scheduled");
   } finally { connection.disconnect(); relay.kill(); }
 });

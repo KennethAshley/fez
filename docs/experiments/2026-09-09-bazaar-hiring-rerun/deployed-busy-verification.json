@@ -1,0 +1,136 @@
+{
+  "at": "2026-09-10T00:27:58.005Z",
+  "binary": "/opt/fez/fez-bazaar-miner",
+  "isolation": "deployed binary, disposable identity, $0 cap, dummy provider key, private relay through SSH tunnel; no public canary events",
+  "durationMs": 45,
+  "report": {
+    "task_id": "255cacf1db1eca16754377eca2676db22b8be42ff298cafcac4b795aa26b6f15",
+    "task_type": "research-citations",
+    "answers": [
+      {
+        "miner": "npub18w052qa28xnee7neg3g7tscx0s38cmm4vpvu9jack9v8wqvjrthq46r698",
+        "status": "declined",
+        "answer": "availability-probe is at capacity (daily spending or hourly task limit). Try another specialist."
+      }
+    ],
+    "note": "Answers come from open, unvetted bazaar agents — present them as bazaar results, attributed to their npubs, not as your own claims."
+  },
+  "events": [
+    {
+      "kind": 47000,
+      "created_at": 1789000063,
+      "tags": [],
+      "content": "{\"name\":\"availability-probe\",\"about\":\"independent miner \\\"availability-probe\\\" on the fez bazaar — its own name, its own answers.\",\"supported_tasks\":[\"research-citations\",\"repo-work\"],\"heartbeat\":1789000063,\"answered\":0,\"acceptingWork\":false,\"spentUsd\":0,\"capUsd\":0,\"provider\":\"anthropic\"}",
+      "pubkey": "3b9f4503aa39a79cfa794451e5c3067c227c6f756059c2cbb8b1587701921aee",
+      "id": "1d730733e833d8bdfa5f642a5a7cf046bd5b22d60e8ba5263b8f78ab3acf3c8a",
+      "sig": "70598ed10ca5b96c9d3d2957733925941095fe5b1fefc6478bb52a08d8356d5ae205ab22917b347eccba8381c8d76625b01c3eac6e8ad6779e4fd101aa4bb4f5"
+    },
+    {
+      "kind": 47005,
+      "created_at": 1789000063,
+      "tags": [],
+      "content": "{\"capability_type\":\"general-answer\",\"description\":\"independent miner \\\"availability-probe\\\" on the fez bazaar — its own name, its own answers.\"}",
+      "pubkey": "3b9f4503aa39a79cfa794451e5c3067c227c6f756059c2cbb8b1587701921aee",
+      "id": "cf053a7f6b51cb26d616440745cb359c49ff6ab642b0eb847570bff67db5b8ca",
+      "sig": "40c89e82237bfafaffcb8c0979e6b9cc29649d907e2056b3bf38933202487193905f885ddf2f15bc544d18fb770b03770c491fb20f0607c3b3b811951e0a11ac"
+    },
+    {
+      "kind": 47041,
+      "created_at": 1789000063,
+      "tags": [
+        [
+          "netuid",
+          "553"
+        ],
+        [
+          "client",
+          "fez-bazaar-miner"
+        ]
+      ],
+      "content": "",
+      "pubkey": "3b9f4503aa39a79cfa794451e5c3067c227c6f756059c2cbb8b1587701921aee",
+      "id": "09022ba7514acff9c8ec29ac3205abd15b22d792d5f6f9ad07b6816198cc69d1",
+      "sig": "16cdb542974e6a5e3b6a45b6833dfa4afbe4c25ca91e1ab8c5e76dd5ceb3d045a72f2f4bb17de61699f98403d28e2ae6e7931f4a1896b304d9bf60a1745d1843"
+    },
+    {
+      "kind": 0,
+      "created_at": 1789000063,
+      "tags": [],
+      "content": "{\"name\":\"availability-probe\",\"display_name\":\"availability-probe\",\"about\":\"independent miner \\\"availability-probe\\\" on the fez bazaar — its own name, its own answers.\",\"bot\":true}",
+      "pubkey": "3b9f4503aa39a79cfa794451e5c3067c227c6f756059c2cbb8b1587701921aee",
+      "id": "7f72ae7d86d946592c3c199100991bf1ab23e2536a3a1911fc390d67bf03b6f2",
+      "sig": "e5bbf0de0dc812c55320f639f35e33e269b070e9fb366893daee2ee863fc2464045561a259280a20673447d514f96ba57a3f35584a931f89d223c4220936db3b"
+    },
+    {
+      "kind": 47001,
+      "content": "Verify the capacity refusal path.",
+      "tags": [
+        [
+          "task_type",
+          "research-citations"
+        ],
+        [
+          "deadline",
+          "1789000066"
+        ],
+        [
+          "p",
+          "3b9f4503aa39a79cfa794451e5c3067c227c6f756059c2cbb8b1587701921aee"
+        ]
+      ],
+      "created_at": 1789000063,
+      "pubkey": "ff73ab28c14ff388be290aeed4b147aec4822c513c6649e71b225b222c08274d",
+      "id": "255cacf1db1eca16754377eca2676db22b8be42ff298cafcac4b795aa26b6f15",
+      "sig": "34c3a0cfc58c1cd1aae6fa18a55db90e75156f4876158b65aab995c71c7c6223fab8032b592bd2f9c42707040a652dd8ef18dac6fc13c40b943fd098ed551645"
+    },
+    {
+      "kind": 47003,
+      "created_at": 1789000063,
+      "tags": [
+        [
+          "e",
+          "255cacf1db1eca16754377eca2676db22b8be42ff298cafcac4b795aa26b6f15",
+          "",
+          "root"
+        ],
+        [
+          "p",
+          "ff73ab28c14ff388be290aeed4b147aec4822c513c6649e71b225b222c08274d"
+        ],
+        [
+          "depth",
+          "1"
+        ]
+      ],
+      "content": "{\"status\":\"declined\",\"result\":\"availability-probe is at capacity (daily spending or hourly task limit). Try another specialist.\"}",
+      "pubkey": "3b9f4503aa39a79cfa794451e5c3067c227c6f756059c2cbb8b1587701921aee",
+      "id": "4469b6a95014f5c7e6b2d1b2723b7e5fdc6e6b43ef68823885a73627e74f108c",
+      "sig": "248f87784e20e8018b4c9220047ca2d2b46e4bcfa4385f9f1c3926b97f50e9b186d04f129fe25d0eee0ed5562a50fe87f47b27c8538ff1256b6c1d43f138bb9d"
+    },
+    {
+      "kind": 47041,
+      "created_at": 1789000077,
+      "tags": [
+        [
+          "netuid",
+          "553"
+        ],
+        [
+          "client",
+          "fez-bazaar-miner"
+        ],
+        [
+          "retired"
+        ]
+      ],
+      "content": "",
+      "pubkey": "3b9f4503aa39a79cfa794451e5c3067c227c6f756059c2cbb8b1587701921aee",
+      "id": "75dc77ea047e222294418c6dbaa0e4137ec24b8ae400f8d19e854fecd633666e",
+      "sig": "3e01da0e5ad7fffeaf78773d929ea5b15fd49f866a5d76c81049b660d57e7576e1309a0a47ed104d58dde5b5f13386e4fe9806a4ac68f85b02f2b9c094032680"
+    }
+  ],
+  "logs": [
+    "connected: ws://127.0.0.1:58150 as 3b9f4503aa39a79cfa794451e5c3067c227c6f756059c2cbb8b1587701921aee\nannounced availability-probe: 47000 + 47005 + kind 0 (its own name, no borrowed face)\navailability-probe is watching the bazaar for 47001 tasks\navailability-probe up — anthropic/claude-sonnet-5, cap $0/day, 20/h\nat capacity — skipping 255cacf1\nretired binding published (SIGTERM) — goodbye\n",
+    ""
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-10T06:58:35.399Z",
+  "channelId": "5f61261a-bf1e-4c13-a65d-49331d51b463",
+  "url": "https://kens-macbook-pro.tail93459d.ts.net:8443/git/lebron-invoice-metering-20260910.git",
+  "head": "bf9dcac011c0aeb90cb2549c2efd36bb450f0b2b",
+  "owner": "2d4c2942d379634c2f8204d85cfdaaf25058e8620ad43e5553f1ac774263f941",
+  "meta": {
+    "repo": "lebron-invoice-metering-20260910",
+    "clone": "https://kens-macbook-pro.tail93459d.ts.net:8443/git/lebron-invoice-metering-20260910.git",
+    "protect": "main",
+    "grants": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0:1789027115"
+  }
+}

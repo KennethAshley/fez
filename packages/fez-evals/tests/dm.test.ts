@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
+import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, verifyEvent } from "nostr-tools/pure";
+import { createRumor, createSeal, createWrap } from "nostr-tools/nip59";
+import type { Event } from "nostr-tools";
 import { buildDmWraps, buildGroupDmWraps, dmConvoKey, unwrapDm, KIND_GIFT_WRAP, KIND_DM } from "@fezchat/protocol";
+import { localSigner } from "../../fez-desktop/src/wire.js";
 
 /**
  * NIP-17 DM gate — the real wrap/unwrap helpers fez ships (src/dm.ts),
@@ -13,6 +16,49 @@ const bob = generateSecretKey();
 const mallory = generateSecretKey();
 const alicePk = getPublicKey(alice);
 const bobPk = getPublicKey(bob);
+
+describe.each([
+  { name: "headless", unwrap: (event: Event) => unwrapDm(event, bob) },
+  { name: "desktop local signer", unwrap: localSigner(Buffer.from(bob).toString("hex")).unwrap },
+])("$name DM authentication", ({ unwrap }) => {
+  test("accepts an authenticated sender", async () => {
+    const wrap = createWrap(createSeal(createRumor({ kind: 14, content: "hello", tags: [["p", bobPk]] }, alice), alice, bobPk), bobPk);
+    expect(await unwrap(wrap)).toBeDefined();
+  });
+
+  test("rejects an attacker seal claiming the owner's identity", async () => {
+    const rumor = createRumor({ kind: 14, content: "forged owner instruction", tags: [["p", bobPk]] }, mallory);
+    rumor.pubkey = alicePk;
+    rumor.id = getEventHash(rumor);
+    const seal = createSeal(rumor, mallory, bobPk);
+    const wrap = createWrap(seal, bobPk);
+    expect(verifyEvent(seal)).toBe(true);
+    expect(verifyEvent(wrap)).toBe(true);
+    expect(await unwrap(wrap)).toBeUndefined();
+  });
+
+  test("rejects an invalid seal signature inside a valid gift wrap", async () => {
+    const seal = createSeal(createRumor({ kind: 14, tags: [["p", bobPk]] }, alice), alice, bobPk);
+    seal.sig = "0".repeat(128);
+    const wrap = createWrap(seal, bobPk);
+    expect(verifyEvent(wrap)).toBe(true);
+    expect(await unwrap(wrap)).toBeUndefined();
+  });
+
+  test("rejects a signed event of the wrong kind used as a seal", async () => {
+    const seal = createSeal(createRumor({ kind: 14, tags: [["p", bobPk]] }, alice), alice, bobPk);
+    const wrongKind = finalizeEvent({ kind: 1, content: seal.content, tags: [], created_at: seal.created_at }, alice);
+    expect(await unwrap(createWrap(wrongKind, bobPk))).toBeUndefined();
+  });
+
+  test("rejects an invalid outer signature even when its ciphertext decrypts", async () => {
+    const wrap = createWrap(createSeal(createRumor({ kind: 14, tags: [["p", bobPk]] }, alice), alice, bobPk), bobPk);
+    // Serialize as on the wire to discard nostr-tools' cached verification symbol.
+    const invalid: Event = JSON.parse(JSON.stringify(wrap));
+    invalid.sig = "0".repeat(128);
+    expect(await unwrap(invalid)).toBeUndefined();
+  });
+});
 
 describe("NIP-17 DM wrap/unwrap", () => {
   test("round-trips content, sender, and peer through the recipient copy", () => {

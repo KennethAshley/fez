@@ -93,6 +93,8 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
   const [tasks, setTasks] = useState<Map<string, { done: boolean; byPk: string; ts: number }>>(new Map());
   const [focusByPage, setFocusByPage] = useState<Record<string, DocFocus>>({});
   const [activityTab, setActivityTab] = useState<"conversation" | "changes">("conversation");
+  const [conversationOpen, setConversationOpen] = useState(false);
+  const conversationToggle = React.useRef<HTMLButtonElement>(null);
   const [loadError, setLoadError] = useState<string>();
   const [writeError, setWriteError] = useState<string>();
   const selectionKey = sel ? JSON.stringify([client.state.workspace.relay, sel.kind, sel.kind === "wiki" ? sel.slug : sel.channelId]) : "";
@@ -108,7 +110,10 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
   const focus = focusByPage[selectionKey] ?? {};
   const setFocus = (next: DocFocus) => {
     setFocusByPage(all => ({ ...all, [selectionKey]: next }));
-    if (currentSelection.current === selectionKey) setActivityTab("conversation");
+    if (currentSelection.current === selectionKey) {
+      setActivityTab("conversation");
+      setConversationOpen(true);
+    }
   };
   /**
    * Which lens the open page is under. `undefined` means "nobody has
@@ -558,7 +563,7 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
     <main className="main wiki-main">
       <aside className="wiki-list">
         <div className="wiki-list-head">
-          docs
+          Pages
           <button className="community-add" title="new page" onClick={() => setNewTitle(newTitle === undefined ? "" : undefined)}>
             +
           </button>
@@ -608,11 +613,12 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
         {sel && (
           <header className="topbar">
             <div className="topbar-row wiki-page-head">
-              <span className="wiki-title">
+              <h1 className="wiki-title">
                 {sel.kind === "wiki"
-                  ? `▤ ${selPage?.title ?? sel.title ?? sel.slug}`
+                  ? selPage?.title ?? sel.title ?? sel.slug
                   : `# ${client.channelRef(sel.channelId)?.name ?? ""} doc`}
-              </span>
+              </h1>
+              <div className="wiki-page-tools">
               {/**
                * Lenses an extension offers for THIS document (a board, a
                * calendar…). Markdown is always here and always one click
@@ -624,6 +630,7 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
                 <div className="page-views">
                   <button
                     className={activeView ? "page-view" : "page-view active"}
+                    aria-pressed={!activeView}
                     onClick={() => setPageView("")}
                     title="the document as written"
                   >
@@ -633,6 +640,7 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
                     <button
                       key={view.name}
                       className={activeView === view.name ? "page-view active" : "page-view"}
+                      aria-pressed={activeView === view.name}
                       onClick={() => setPageView(view.name)}
                     >
                       {view.name}
@@ -640,6 +648,11 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
                   ))}
                 </div>
               )}
+              {commentChannelId && <button ref={conversationToggle} className="agent-action wiki-conversation-toggle"
+                aria-label="Conversation" aria-expanded={conversationOpen} aria-controls="wiki-conversation"
+                onClick={() => setConversationOpen(open => !open)}>
+                Conversation{threads.some(t => !t.resolved) && <span className="wiki-discussion-count">{threads.filter(t => !t.resolved).length}</span>}
+              </button>}
               {!editing && (
                 <button
                   className="agent-action"
@@ -653,6 +666,7 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
                   ✎ {latest ? "edit" : "write"}
                 </button>
               )}
+              </div>
             </div>
           </header>
         )}
@@ -745,7 +759,7 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
                         ? change.start >= block.start && change.start <= block.end
                         : change.start < block.end && change.end > block.start);
                       return <div key={`${occurrence}:${block.text}`} data-doc-start={block.start} data-doc-end={block.end} className={`doc-line${selected ? " commenting" : ""}${changed ? " doc-line-changed" : ""}`}>
-                        <div className="doc-line-body">{changed && <div className="doc-edit-receipt"><span>{client.displayName(shown.pubkey)} edited this passage</span><button onClick={() => setActivityTab("changes")}>Review</button>{shown.id === latest?.id && <button disabled={busy} onClick={() => void undo(shown).catch(err => setWriteError(err instanceof Error ? err.message : String(err)))}>Undo</button>}</div>}{md(block.text)}</div>
+                        <div className="doc-line-body">{changed && <div className="doc-edit-receipt"><span>{client.displayName(shown.pubkey)} edited this passage</span><button onClick={() => { setActivityTab("changes"); setConversationOpen(true); }}>Review</button>{shown.id === latest?.id && <button disabled={busy} onClick={() => void undo(shown).catch(err => setWriteError(err instanceof Error ? err.message : String(err)))}>Undo</button>}</div>}{md(block.text)}</div>
                         <button className={open.length ? "line-comment has" : "line-comment"} aria-label={`Discuss passage${open.length ? ` · ${open.length} open discussions` : ""}`} onClick={() => discuss(block.start, block.end, true)}>☷{open.length > 0 && <span className="line-comment-count">{open.length}</span>}</button>
                       </div>;
                     })}
@@ -770,7 +784,7 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
         </div>
 
         </div>
-        {sel && commentChannelId && <DocConversation client={client} pageKey={selectionKey} channelId={commentChannelId} slug={sel.kind === "wiki" ? sel.slug : undefined} versions={versions ?? []} threads={threads} focus={focus} onFocus={setFocus} onRefresh={load} onUndo={undo} tab={activityTab} onTab={setActivityTab} onViewVersion={setViewing} />}
+        {sel && commentChannelId && <DocConversation hidden={!conversationOpen} onClose={() => { setConversationOpen(false); conversationToggle.current?.focus(); }} client={client} pageKey={selectionKey} channelId={commentChannelId} slug={sel.kind === "wiki" ? sel.slug : undefined} versions={versions ?? []} threads={threads} focus={focus} onFocus={setFocus} onRefresh={load} onUndo={undo} tab={activityTab} onTab={setActivityTab} onViewVersion={setViewing} />}
         </div>
       </section>
     </main>

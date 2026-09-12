@@ -40,6 +40,7 @@ export function createGuiClient(client: FezClient, name: string, granted: readon
     displayName: client.displayName.bind(client),
     pkByName: client.pkByName.bind(client),
     messages: read(client.messages.bind(client)),
+    artifacts: read(client.artifacts.bind(client)),
     msgById: read(client.msgById.bind(client)),
     threadReplies: read(client.threadReplies.bind(client)),
     reactions: read(client.reactions.bind(client)),
@@ -59,9 +60,13 @@ export function createGuiClient(client: FezClient, name: string, granted: readon
       if (args[0].source === "runs") check("runQuery(runs)", "read:agents");
       return structuredClone(await client.runQuery(...args));
     },
-    // These notifications carry identifiers only. Other client events include
-    // private content; don't forward new events just because core adds them.
-    on<E extends "channelsChanged" | "paymentReceipt">(event: E, handler: ClientEvents[E]): () => void {
+    // Artifact content is a snapshot, just like artifacts(). Other content-bearing
+    // events (notably DMs) stay unavailable to read:channels extensions.
+    on<E extends "channelsChanged" | "paymentReceipt" | "artifact">(event: E, handler: ClientEvents[E]): () => void {
+      if (event === "artifact") {
+        const notify = handler as ClientEvents["artifact"];
+        return client.on("artifact", (channelId, artifact) => notify(channelId, structuredClone(artifact)));
+      }
       if (event !== "channelsChanged" && event !== "paymentReceipt") {
         throw new Error(`extension "${name}" cannot subscribe to client.${event}`);
       }

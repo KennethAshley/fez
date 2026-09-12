@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { flash } from "./toast";
 import { ConnectAiStep, type Brain } from "./Onboarding";
 import { parsePersonaBrain, STARTER_TEAM, withPersonaBrain } from "./welcome-core";
 
@@ -24,10 +25,8 @@ export default function AiSetupDialog({ onClose, onConnected }: { onClose: () =>
         affected.current.add(name);
         const content = withPersonaBrain(md, { ...brain, harness: brain.harness });
         if (content !== md) await invoke("update_persona", { name, content });
-        if (await invoke<boolean>("agent_alive", { persona: name, bin: null })) {
-          await invoke("kill_agent", { persona: name, bin: null });
-        }
       }
+      flash("AI setup saved. Restart running agents from their profiles to apply it; current work keeps running.");
       onConnected();
     } catch (err) {
       setError(String(err));

@@ -100,7 +100,7 @@ export default function activate(api: GuiExtensionApi): void {
     const [assigned, setAssigned] = useState<string | undefined>(undefined);
 
     const gitBase = base();
-    const isOwner = client.relayInfo()?.pubkey === client.pubkey;
+    const isOwner = !!client.state?.workspace.owner && client.state.workspace.owner === client.pubkey;
 
     const reload = useCallback(() => {
       setRepos(client.channelsFrom("fez-git").map((c) => readRepo(c, base())));

@@ -45,6 +45,7 @@ export function resolveAttachedSkills(
 
 /** The `[Skills]` prompt section, or undefined when none attached. Never includes a body. */
 export function skillsPromptSection(attached: AttachedSkill[]): string | undefined {
+  attached = attached.filter(skill => !skill.disableModelInvocation);
   if (attached.length === 0) return undefined;
   return [
     `[Skills]`,
@@ -56,6 +57,21 @@ export function skillsPromptSection(attached: AttachedSkill[]): string | undefin
 /** JSON for FEZ_AGENT_SKILLS: {"<name>": {"path": "<abs path>", "setting"?: "<text>"}} — fez-mcp also accepts the older bare-string form. */
 export function skillsEnvJson(attached: AttachedSkill[]): string {
   return JSON.stringify(
-    Object.fromEntries(attached.map((s) => [s.name, s.setting ? { path: s.path, setting: s.setting } : { path: s.path }]))
+    Object.fromEntries(attached.filter(s => !s.disableModelInvocation).map((s) => [s.name, { path: s.path, ...(s.root ? { root: s.root } : {}), ...(s.setting ? { setting: s.setting } : {}) }]))
   );
+}
+
+/** Only current, authenticated owner input can opt a manual skill into a turn. */
+export function manualSkillForInput(
+  attached: AttachedSkill[],
+  input: { content: string; author: string; owner: string | undefined; persona: string },
+): AttachedSkill | undefined {
+  if (!input.owner || input.author !== input.owner) return;
+  let content = input.content.trimStart();
+  const mention = `@${input.persona}`;
+  if (content.startsWith(mention) && /^\s/.test(content.slice(mention.length))) content = content.slice(mention.length).trimStart();
+  const command = content.match(/^\/(\S+)(?:\s|$)/);
+  if (!command) return;
+  const name = command[1] === "skill" ? content.slice(command[0].length).trimStart().split(/\s/)[0] : command[1];
+  return attached.find(skill => skill.disableModelInvocation && (skill.id === name || skill.name === name));
 }

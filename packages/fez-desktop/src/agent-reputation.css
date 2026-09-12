@@ -1,0 +1,13 @@
+.agent-reputation { min-width: 0; }
+.reputation-tier, .reputation-byline { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.reputation-tier { margin: 8px 0 16px; }
+.reputation-group { margin: 14px 0; min-width: 0; }
+.reputation-group h4 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.reputation-group h4 span, .reputation-byline span, .reputation-evidence small { color: var(--fg-dim); font-weight: 400; font-size: 12px; }
+.reputation-group h4 span { margin-left: 8px; }
+.reputation-evidence { list-style: none; margin: 0; padding: 0; }
+.reputation-evidence li { padding: 8px 0; border-top: 1px solid var(--hairline); overflow-wrap: anywhere; }
+.reputation-evidence p { margin: 4px 0; white-space: pre-wrap; font-size: 13px; }
+.reputation-group summary, .guest-reputation > summary { cursor: pointer; padding: 6px 0; font-size: 13px; }
+.guest-reputation { padding: 0 20px; border-bottom: 1px solid var(--hairline); max-height: 45vh; overflow-y: auto; flex-shrink: 0; }
+.guest-reputation:has(> summary:focus-visible) { outline: 2px solid var(--brand); outline-offset: -2px; }

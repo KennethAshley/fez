@@ -1,0 +1,27 @@
+{
+  "pilotSelfCheck": "passed",
+  "coreTypecheck": "passed",
+  "evals": {
+    "passed": 1402,
+    "skipped": 1,
+    "filesPassed": 141,
+    "filesSkipped": 1,
+    "durationSeconds": 41.14,
+    "log": "/tmp/fez-hiring-evals.log"
+  },
+  "capacityCheck": {
+    "input": {
+      "miner": "quill",
+      "spentUsd": 8.0355,
+      "capUsd": 8,
+      "directed": true,
+      "leased": true
+    },
+    "actual": {
+      "answer": false,
+      "reason": "at capacity"
+    },
+    "assertion": "passed",
+    "source": "../fez-bazaar/src/miner/core.ts"
+  }
+}

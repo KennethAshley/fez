@@ -1,3 +1,4 @@
+import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { describe, expect, it } from "vitest";
 import { formatRao, shapeMetagraph, stakedAlpha, uidFor, type RawNeuron, type SubtensorApi } from "../src/chains/subtensor.js";
 
@@ -133,19 +134,15 @@ describe("transferStake shape", () => {
 describe("offerFromAnnounces — the standing offer", () => {
   it("takes the freshest announce's rate, and its silence as not-for-rent", async () => {
     const { offerFromAnnounces } = await import("../src/rent.js");
-    const offer = offerFromAnnounces([
-      { created_at: 100, content: JSON.stringify({ rate: { tao_hr: 0.2, pay_to: "5Old" } }) },
-      { created_at: 200, content: JSON.stringify({ rate: { tao_hr: 0.1, pay_to: "5New" } }) },
-    ]);
-    expect(offer).toEqual({ taoHr: 0.1, payTo: "5New" });
-    // freshest beat dropped the rate → the agent is not for rent NOW
-    expect(() =>
-      offerFromAnnounces([
-        { created_at: 300, content: JSON.stringify({ answered: 5 }) },
-        { created_at: 100, content: JSON.stringify({ rate: { tao_hr: 0.2, pay_to: "5Old" } }) },
-      ])
-    ).toThrow(/not for rent/);
-    expect(() => offerFromAnnounces([])).toThrow(/not for rent/);
+    const key = new Uint8Array(32).fill(9);
+    const miner = getPublicKey(key);
+    const payTo = "5HH8BQaYnLH5pKL3o7amtRFExD2zWXXvnrCDkoFGhZfhPLt7";
+    const announce = (created_at: number, content: unknown) => finalizeEvent({ kind: 47000, created_at, tags: [], content: JSON.stringify(content) }, key);
+    const older = announce(100, { rate: { tao_hr: 0.2, pay_to: payTo } });
+    const current = announce(200, { rate: { tao_hr: 0.1, pay_to: payTo } });
+    expect(offerFromAnnounces([older, current], miner, 200)).toEqual({ taoHr: 0.1, payTo, offerId: current.id });
+    expect(() => offerFromAnnounces([announce(300, { answered: 5 }), older], miner, 300)).toThrow(/not for rent/);
+    expect(() => offerFromAnnounces([], miner, 300)).toThrow(/offer/);
   });
 });
 

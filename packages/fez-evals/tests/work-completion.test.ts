@@ -1,11 +1,18 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey, verifyEvent, type Event } from "nostr-tools/pure";
 import { matchFilter, type Filter } from "nostr-tools";
 import { createRequire } from "node:module";
 
 const state = vi.hoisted(() => ({
-  key: "", events: [] as Event[], refuse: false,
+  dir: "", key: "", events: [] as Event[], refuse: false,
   tools: new Map<string, (input: Record<string, unknown>) => Promise<{ isError?: boolean; content: { text: string }[] }>>(),
+}));
+vi.mock("../../../src/shared/durable-work.js", async original => ({
+  ...await original<typeof import("../../../src/shared/durable-work.js")>(),
+  workDirectory: () => state.dir,
 }));
 const requireMcp = createRequire(new URL("../../fez-mcp/src/server.ts", import.meta.url));
 vi.doMock(requireMcp.resolve("@modelcontextprotocol/sdk/server/mcp.js").replace("/dist/cjs/", "/dist/esm/"), () => ({ McpServer: class {
@@ -30,11 +37,12 @@ const request = finalizeEvent({ kind: 47103, created_at: 100, content: "@speaker
 ] }, callerKey);
 const input = { requestId: request.id, status: "success", summary: "Audio delivered.", capability: "speech", artifacts: ["https://example.org/audio.wav"] };
 async function load(key: Uint8Array) {
+  if (!state.dir) state.dir = fs.mkdtempSync(path.join(os.tmpdir(), "fez-work-tool-"));
   vi.resetModules(); state.tools.clear(); state.key = Buffer.from(key).toString("hex");
   vi.stubEnv("FEZ_AGENT_PERSONA", "completion-test");
   await import("../../fez-mcp/src/server.js");
 }
-afterEach(() => { state.events = []; state.refuse = false; vi.unstubAllEnvs(); });
+afterEach(() => { if (state.dir) fs.rmSync(state.dir, { recursive: true, force: true }); state.dir = ""; state.events = []; state.refuse = false; vi.unstubAllEnvs(); });
 
 it("publishes one signed result and a separate requester-signed acceptance linked to its work", async () => {
   state.events = [request];
@@ -78,7 +86,9 @@ it("rejects unassigned work, invalid artifacts, and acceptance of a blocker; pub
   expect((await complete(input)).isError).toBe(true);
   expect(state.events).toHaveLength(1);
   state.refuse = false;
-  await complete({ ...input, status: "error", summary: "Speech tool failed", artifacts: [] });
+  const blockedRequest = finalizeEvent({ kind: 47103, created_at: 102, content: "another job", tags: request.tags }, callerKey);
+  state.events.push(blockedRequest);
+  await complete({ ...input, requestId: blockedRequest.id, status: "error", summary: "Speech tool failed", artifacts: [] });
   const result = state.events.at(-1)!;
   await load(callerKey);
   expect((await state.tools.get("fez_accept_work")!({ resultId: result.id, note: "Accept" })).isError).toBe(true);
@@ -95,4 +105,16 @@ it("carries the requester's external result handler into the signed specialist r
   expect(verifyEvent(result)).toBe(true);
   expect(result.tags).toContainEqual(["result-handler", "external"]);
   expect(result.tags).toContainEqual(["result", assignment.id]);
+});
+
+ it("retries the exact signed result after an ambiguous publish across MCP restart", async () => {
+  state.events = [request]; await load(workerKey);
+  state.refuse = true;
+  expect((await state.tools.get("fez_complete_work")!(input)).isError).toBe(true);
+  const files = fs.readdirSync(path.join(state.dir, "outbox"));
+  const saved = JSON.parse(fs.readFileSync(path.join(state.dir, "outbox", files[0]), "utf8"));
+  await load(workerKey); state.refuse = false;
+  await state.tools.get("fez_complete_work")!({ ...input, summary: "different retry text" });
+  expect(state.events.at(-1)?.id).toBe(saved.id);
+  expect(state.events.at(-1)?.content).toBe(input.summary);
 });

@@ -103,6 +103,10 @@ export interface WorkspaceInfo {
 
 export interface RelayOptions {
   port: number;
+  /** Bind one interface when a local/private relay must not listen on every address. */
+  host?: string;
+  /** Reports the assigned port after listening, including an OS-selected port when port is 0. */
+  onListening?: (port: number) => void;
   /** Workspace identity, served at NIP-11. Without `owner`, unclaimed. */
   workspace?: WorkspaceInfo;
   /** Persistence path (.jsonl default; .db/.sqlite → SQLite). Omit for in-memory. */
@@ -537,7 +541,10 @@ export function startRelay(options: RelayOptions): RelayHandle {
   }
 
   const wss = new WebSocketServer({ server: http, maxPayload: limits.maxFrameBytes });
-  http.listen(options.port);
+  http.listen(options.port, options.host, () => {
+    const address = http.address();
+    if (address && typeof address !== "string") options.onListening?.(address.port);
+  });
 
   wss.on("connection", (ws) => {
     if (subs.size >= limits.maxConns) {

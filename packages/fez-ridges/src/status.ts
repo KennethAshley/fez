@@ -1,5 +1,6 @@
 import { readJobs, type RidgesJob } from "./store.js";
 
+// eslint-disable-next-line no-control-regex -- Reject or strip control characters from untrusted text.
 const clean = (value: string) => value.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 500);
 const states: Record<RidgesJob["status"], string> = {
   working: "working — waiting for a PR", "pr-open": "PR open — ready for review",

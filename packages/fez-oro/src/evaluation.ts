@@ -34,11 +34,13 @@ const runProcess: OroProcess = (command, args, options) => new Promise((resolve,
 const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 function field(ctx: SubmissionContext, key: string, pattern?: RegExp): string {
   const value = ctx.config[key];
+  // eslint-disable-next-line no-control-regex -- Reject control characters at the process and filesystem boundary.
   if (typeof value !== 'string' || !value.trim() || value.length > 4096 || /[\x00-\x1f\x7f]/.test(value) || (pattern && !pattern.test(value))) throw Error(`Configure valid ${key}`);
   return value;
 }
 function absolute(value: string): string {
   // Docker's -v and Compose interpolation must not reinterpret local paths.
+  // eslint-disable-next-line no-control-regex -- Reject control characters at the process and filesystem boundary.
   if (!isAbsolute(value) || /[:$\x00-\x1f]/.test(value)) throw Error('ORO paths must be absolute without colons, dollar signs or control characters');
   return value;
 }
@@ -102,6 +104,7 @@ export async function evaluateOro(ctx: SubmissionContext, sourcePath: string, ru
   const keyName=provider==='openrouter'?'OPENROUTER_API_KEY':'CHUTES_API_KEY';
   const key=field(ctx,keyName.toLowerCase());
   const endpoint=(!env.DOCKER_CONTEXT && process.env.DOCKER_HOST) || (await run('docker',['context','inspect','--format','{{.Endpoints.docker.Host}}'],{cwd:checkout,env,timeout:15000})).trim();
+  // eslint-disable-next-line no-control-regex -- Reject control characters at the process and filesystem boundary.
   if(!/^unix:\/\/\/[^\x00-\x1f]+$/.test(endpoint))throw Error('ORO evaluation requires a local unix Docker endpoint, not a remote daemon');
   env.DOCKER_HOST=endpoint; delete env.DOCKER_CONTEXT;
   for (const image of Object.values(images)) {
@@ -148,6 +151,7 @@ export async function evaluateOro(ctx: SubmissionContext, sourcePath: string, ru
       const match=/^(100644|100755) blob [a-f0-9]{40} +(\d+)\t(.+)$/s.exec(entry);
       if(!match)throw Error('ORO evaluator export forbids links and submodules');
       const size=Number(match[2]),path=match[3]; total+=size;
+      // eslint-disable-next-line no-control-regex -- Reject control characters at the process and filesystem boundary.
       if(size>64*1024*1024||total>256*1024*1024||path.startsWith('/')||path.split('/').includes('..')||/[\x00-\x1f\\]/.test(path)||/(^|\/)__pycache__(\/|$)|\.py[co]$/.test(path))
         throw Error('ORO evaluator export contains an unsafe or oversized entry');
     }
@@ -187,6 +191,7 @@ export async function evaluateOro(ctx: SubmissionContext, sourcePath: string, ru
       try {await docker([...composeArgs,'down','--timeout','10'],60000);}catch{cleanupFailed=true;}
     }
     // Retain private recovery metadata if Docker cleanup failed; never publish logs.
+    // eslint-disable-next-line no-unsafe-finally -- Cleanup failure overrides results so owned resources are recovered before retrying.
     if(cleanupFailed)throw Error('ORO cleanup failed; inspect this run’s Docker resources before retrying. Private recovery files were retained.');
     await rm(root,{recursive:true,force:true});
   }

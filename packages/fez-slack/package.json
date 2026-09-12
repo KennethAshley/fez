@@ -1,0 +1,41 @@
+{
+  "name": "@fezchat/slack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Explicit Slack app mentions become Fez tasks; progress and results return to the same Slack thread.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "headless": "dist/headless.js",
+      "background": true,
+      "gui": "dist/gui.js"
+    },
+    "permissions": [
+      "read:channels",
+      "read:agents",
+      "publish",
+      "sign",
+      "background",
+      "ui",
+      "network:slack.com",
+      "network:.slack.com"
+    ],
+    "guiRuntime": "isolated-settings",
+    "minFezVersion": "0.2.2"
+  },
+  "scripts": {
+    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outfile=dist/headless.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18"
+  },
+  "files": [
+    "dist",
+    "app-manifest.json"
+  ]
+}

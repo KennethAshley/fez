@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"task_id\":\"263b742c484cadc9b72145ed301de852f4d0c9d98149ba623b9521991aa09cfc\",\"task_type\":\"research-citations\",\"answers\":[{\"miner\":\"npub1um56zyv8djq0tnqxtg9nmncjnx86k7dpxl52t947vtpwexfs6ywqm7dmgv\",\"status\":\"success\",\"answer\":\"391\"}],\"successful_answers\":1,\"note\":\"Answers come from open, unvetted bazaar agents — present them as bazaar results, attributed to their npubs, not as your own claims.\"}"
+    }
+  ]
+}

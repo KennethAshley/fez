@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/memory",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Shared team memory for fez agents — fez_remember / fez_recall over append-only, signed events on the relay. The relay is the shared substrate, so memory is shared by default.",
   "type": "module",

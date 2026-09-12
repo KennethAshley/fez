@@ -28,11 +28,13 @@ export type NostrFilter = Record<string, unknown>;
  */
 export interface NostrAccess {
   pubkey: string;
-  publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<NostrEvent>;
+  /** Preserve the prepared timestamp on an idempotent publish retry. */
+  publish(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<NostrEvent>;
   /** Sign WITHOUT publishing — NIP-98 HTTP auth headers. The key stays behind the seam. */
   signEvent(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): NostrEvent & { sig: string };
   subscribe(filters: NostrFilter[], onEvent: (event: NostrEvent) => void): () => void;
   query(filters: NostrFilter[]): Promise<NostrEvent[]>;
+  queryWithStatus?(filters: NostrFilter[]): Promise<{ events: NostrEvent[]; failures: { url: string; reason: string }[] }>;
   /** NIP-44 with the user's key. */
   encrypt(peerPubkey: string, plaintext: string): string;
   decrypt(peerPubkey: string, ciphertext: string): string;

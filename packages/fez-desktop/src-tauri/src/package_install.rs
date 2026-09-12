@@ -16,7 +16,7 @@ pub(crate) fn tar_read(tar_bytes: &[u8], rel: &str) -> Option<Vec<u8>> {
     for entry in archive.entries().ok()? {
         let mut entry = entry.ok()?;
         let path = entry.path().ok()?.into_owned();
-        if path.strip_prefix("package").ok() == Some(std::path::Path::new(rel)) {
+        if entry.header().entry_type().is_file() && path.strip_prefix("package").ok() == Some(std::path::Path::new(rel)) {
             let mut buf = Vec::new();
             std::io::Read::read_to_end(&mut entry, &mut buf).ok()?;
             return Some(buf);
@@ -64,42 +64,94 @@ pub(crate) fn tar_list_md(tar_bytes: &[u8], dir: &str) -> Vec<(String, String)> 
     out
 }
 
-/// List `<dir>/*.md` file paths (relative, "package/" prefix stripped) in
-/// an npm tarball — for `fez.skills`, which installs the files themselves
-/// rather than deriving an id+content pair from them (`tar_list_md`'s
-/// shape, used for personas). Each returned path is a valid `materialize`
-/// `rel` argument as-is (e.g. "skills/pony.md").
-pub(crate) fn tar_list_paths(tar_bytes: &[u8], dir: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut archive = tar::Archive::new(tar_bytes);
-    let entries = match archive.entries() {
-        Ok(e) => e,
-        Err(_) => return out,
-    };
-    let prefix = format!("{dir}/");
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let rel = match entry
-            .path()
-            .ok()
-            .and_then(|p| p.strip_prefix("package").ok().map(|r| r.to_path_buf()))
-        {
-            Some(r) => r,
-            None => continue,
-        };
-        let rel_str = rel.to_string_lossy().to_string();
-        let name = match rel.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if rel_str.starts_with(&prefix) && name.ends_with(".md") {
-            out.push(rel_str);
+fn safe_relative_path(rel: &str) -> bool {
+    !rel.is_empty() && !rel.contains('\\') && !rel.chars().any(char::is_control)
+        && rel.split('/').all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+fn no_symlinks_below(root: &Path, rel: &Path) -> Result<(), String> {
+    let mut path = root.to_path_buf();
+    for component in rel.components() {
+        if !matches!(component, std::path::Component::Normal(_)) { return Err("unsafe skill path".into()); }
+        path.push(component);
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => return Err("skill paths must not contain filesystem symlinks".into()),
+            Ok(_) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) => return Err(error.to_string()),
         }
     }
-    out
+    Ok(())
+}
+
+fn regular_tree(path: &Path, depth: usize) -> Result<(), String> {
+    if depth > 64 { return Err("skill directory is too deeply nested".into()); }
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if meta.is_file() { return Ok(()); }
+    if !meta.is_dir() { return Err("skill content must contain only regular files and directories".into()); }
+    for child in std::fs::read_dir(path).map_err(|e| e.to_string())? {
+        regular_tree(&child.map_err(|e| e.to_string())?.path(), depth + 1)?;
+    }
+    Ok(())
+}
+
+/// Complete regular-file payload under a declared skill directory. Preflight
+/// rejects archive links, traversal and duplicate paths before any disk write.
+fn skill_paths(tar_bytes: &[u8], dir: &str) -> Result<Vec<String>, String> {
+    if !safe_relative_path(dir) || matches!(dir.split('/').next(), Some("package.json" | "package.tmp")) {
+        return Err("skills directory escapes the package or is invalid".into());
+    }
+    let mut out = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeMap::new();
+    let mut archive = tar::Archive::new(tar_bytes);
+    for entry in archive.entries().map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let raw = entry.path_bytes();
+        let raw = std::str::from_utf8(&raw).map_err(|_| "non-UTF8 archive path")?;
+        let Some(rel) = raw.strip_prefix("package/") else { continue };
+        if rel.is_empty() { continue; }
+        let is_dir = entry.header().entry_type().is_dir();
+        let rel = if is_dir { rel.trim_end_matches('/') } else { rel };
+        if !safe_relative_path(rel) { return Err("unsafe archive path".into()); }
+        if !Path::new(rel).starts_with(dir) { continue; }
+        if seen.insert(rel.to_string(), is_dir).is_some_and(|previous| previous != is_dir || !is_dir) {
+            return Err("duplicate or conflicting skill archive paths".into());
+        }
+        if is_dir { continue; }
+        if rel == dir || !entry.header().entry_type().is_file() { return Err("skill archive content must be regular files, not links".into()); }
+        entry.header().mode().map_err(|e| e.to_string())?;
+        if !out.insert(rel.to_string()) { return Err("duplicate skill archive path".into()); }
+    }
+    // Reject a regular-file ancestor (e.g. skills/a and skills/a/SKILL.md).
+    for rel in &out {
+        for parent in Path::new(rel).ancestors().skip(1) {
+            if out.contains(&parent.to_string_lossy().to_string()) { return Err("conflicting skill archive paths".into()); }
+        }
+    }
+    Ok(out.into_iter().collect())
+}
+
+pub(crate) fn tar_list_paths(tar_bytes: &[u8], dir: &str) -> Vec<String> {
+    skill_paths(tar_bytes, dir).unwrap_or_default()
+}
+
+fn skill_entrypoint(rel: &str, dir: &str) -> bool {
+    let Ok(path) = Path::new(rel).strip_prefix(dir) else { return false };
+    path.file_name().is_some_and(|name| name == "SKILL.md")
+        || (path.components().count() == 1 && path.extension().is_some_and(|ext| ext == "md"))
+}
+
+#[cfg(unix)]
+fn skill_file_mode(tar_bytes: &[u8], rel: &str) -> Result<u32, String> {
+    let mut archive = tar::Archive::new(tar_bytes);
+    for entry in archive.entries().map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.path().map_err(|e| e.to_string())?.strip_prefix("package").ok() == Some(Path::new(rel)) {
+            let mode = entry.header().mode().map_err(|e| e.to_string())?;
+            return Ok(if mode & 0o111 != 0 { 0o755 } else { 0o644 });
+        }
+    }
+    Err("skill file missing from archive".into())
 }
 
 /// Everything an install produced, for the caller (the Tauri command) to
@@ -159,9 +211,10 @@ pub(crate) fn link_index(target: &Path, link_path: &Path) -> Result<(), String> 
 /// segments are refused rather than guessed at (a hostile manifest gets a
 /// clean error, not a write outside `packages/<base>/`).
 fn materialize(tar_bytes: &[u8], pkg_dir: &Path, rel: &str, missing_ctx: &str) -> Result<PathBuf, String> {
-    if rel.starts_with('/') || Path::new(rel).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if !safe_relative_path(rel) {
         return Err(format!("{missing_ctx} path {rel} escapes the package — refusing"));
     }
+    no_symlinks_below(pkg_dir, Path::new(rel))?;
     let bytes = tar_read(tar_bytes, rel).ok_or_else(|| format!("{missing_ctx} {rel} missing from tarball"))?;
     let dest = pkg_dir.join(rel);
     if let Some(parent) = dest.parent() {
@@ -176,7 +229,7 @@ fn materialize(tar_bytes: &[u8], pkg_dir: &Path, rel: &str, missing_ctx: &str) -
 /// none of these can be refused with nothing left behind. Reads the
 /// tarball for personas (tar_list_md doesn't write anything) but never
 /// materializes a part just to check for its existence.
-fn has_installable_content(pkg: &serde_json::Value, tar_bytes: &[u8]) -> bool {
+pub(crate) fn has_installable_content(pkg: &serde_json::Value, tar_bytes: &[u8]) -> bool {
     let parts = pkg.pointer("/fez/parts");
     let has_code_or_skill_part = ["gui", "headless", "relay", "workspace", "miner", "skill"]
         .iter()
@@ -188,7 +241,7 @@ fn has_installable_content(pkg: &serde_json::Value, tar_bytes: &[u8]) -> bool {
     });
     let has_skills = pkg.pointer("/fez/skills").is_some_and(|v| {
         let dir = v.get("dir").and_then(|d| d.as_str()).unwrap_or("skills");
-        !tar_list_paths(tar_bytes, dir).is_empty()
+        tar_list_paths(tar_bytes, dir).iter().any(|rel| skill_entrypoint(rel, dir))
     });
     has_code_or_skill_part || has_bin || has_persona || has_skills
 }
@@ -210,6 +263,38 @@ pub(crate) fn install_from_tarball(
     // De-scoped basename is the file/extension name: @fezchat/kanban → kanban.
     let base = name.rsplit('/').next().unwrap_or(name).trim_start_matches('@').to_string();
     let parts = pkg.pointer("/fez/parts");
+    if base.is_empty() || !base.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')) {
+        return Err("invalid package directory name".into());
+    }
+    // Full manifest identity, never a stripped prefix: two IDs would split
+    // this package's data, grants and agent attachments.
+    if let (Some(manifest_name), Ok(entries)) = (pkg.get("name").and_then(|v| v.as_str()), std::fs::read_dir(home.join("packages"))) {
+        for entry in entries.flatten() {
+            let id = entry.file_name().to_string_lossy().to_string();
+            if id == base { continue; }
+            // CLI install IDs can include dots; the scanned entry already bounds the path.
+            let Some(installed) = std::fs::read(entry.path().join("package.json")).ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok()) else { continue };
+            if installed.pointer("/fez/reconstructed").and_then(|v| v.as_bool()) == Some(true) { continue; }
+            if installed.get("name").and_then(|v| v.as_str()) == Some(manifest_name) {
+                return Err(format!("{manifest_name} is already installed as {id}; consolidate its data and agent attachments under {base} before installing."));
+            }
+        }
+    }
+    let skill_payload = if let Some(config) = pkg.pointer("/fez/skills") {
+        let dir = config.get("dir").and_then(|v| v.as_str()).unwrap_or("skills");
+        let paths = skill_paths(tar_bytes, dir)?;
+        let rel = Path::new("packages").join(&base).join(dir);
+        no_symlinks_below(home, &rel)?;
+        let target = home.join(rel);
+        if target.exists() {
+            if !target.is_dir() { return Err("installed skills path must be a directory".into()); }
+            regular_tree(&target, 0)?;
+        }
+        Some((dir.to_string(), paths))
+    } else { None };
+    no_symlinks_below(home, &Path::new("packages").join(&base).join("package.json"))?;
+    no_symlinks_below(home, &Path::new("packages").join(&base).join("package.tmp"))?;
 
     // Emptiness check BEFORE any write — this used to run in lib.rs
     // AFTER install_from_tarball had already written packages/<base>/package.json,
@@ -383,16 +468,22 @@ pub(crate) fn install_from_tarball(
         }
     }
 
-    // Skill package — fez.skills: <dir>/*.md materialized into THIS
-    // package's own dir (mirrors the CLI's installSkillsPart), never
-    // ~/.fez/skills/ and no symlink index — discovery (list_installed_skills,
-    // gui_parts's sibling) reads packages/*/ directly.
-    if let Some(skills_cfg) = pkg.pointer("/fez/skills") {
-        let dir = skills_cfg.get("dir").and_then(|v| v.as_str()).unwrap_or("skills");
-        for rel in tar_list_paths(tar_bytes, dir) {
+    // Replace only the package-owned skills tree; personal skill copies are
+    // independent. The complete archive and destination were preflighted above.
+    if let Some((dir, paths)) = skill_payload {
+        let target = pkg_dir.join(&dir);
+        if target.exists() { std::fs::remove_dir_all(&target).map_err(|e| e.to_string())?; }
+        for rel in paths {
             let dest = materialize(tar_bytes, &pkg_dir, &rel, "skill")?;
-            let id = dest.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-            installed.push(format!("skill {id} → packages/{base}/{dir}/{id}.md"));
+            #[cfg(unix)] {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(dest, std::fs::Permissions::from_mode(skill_file_mode(tar_bytes, &rel)?)).map_err(|e| e.to_string())?;
+            }
+            if skill_entrypoint(&rel, &dir) {
+                let entry = Path::new(&rel);
+                let id = if entry.file_name().is_some_and(|n| n == "SKILL.md") { entry.parent().and_then(Path::file_name) } else { entry.file_stem() }.and_then(|v| v.to_str()).unwrap_or("skill");
+                installed.push(format!("skill {id} → packages/{base}/{rel}"));
+            }
         }
     }
 
@@ -612,47 +703,103 @@ pub(crate) struct InstalledSkill {
     pub description: String,
     /// Declared setting choices (`options:` frontmatter) — empty when the skill declares none.
     pub options: Vec<String>,
+    #[serde(rename = "disableModelInvocation")]
+    pub disable_model_invocation: bool,
 }
 
-/// Parse a skill .md's `name:`/`description:` frontmatter by line prefix —
-/// same technique as `git_install::split_frontmatter` and the CLI's
-/// `parseSkillMd`. `name` defaults to `stem`; an absent `description` is "".
-/// CRLF-tolerant (a `\r` before each `\n` is stripped first) — matches
-/// `parseSkillMd`'s `\r?\n` regex on the TS side.
-fn skill_frontmatter(content: &str, stem: &str) -> (String, String, Vec<String>) {
+fn skill_scalar(value: &str) -> String {
+    let value = value.trim();
+    if value.starts_with('"') && value.ends_with('"') {
+        return serde_json::from_str::<String>(value).unwrap_or_else(|_| value.to_string());
+    }
+    if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
+        return value[1..value.len()-1].replace("''", "'");
+    }
+    value.to_string()
+}
+
+fn skill_options(value: &str) -> Vec<String> {
+    let value = value.trim();
+    let value = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')).unwrap_or(value);
+    let mut parts = Vec::new(); let mut part = String::new(); let mut quote = None; let mut escaped = false;
+    for c in value.chars() {
+        if escaped { part.push(c); escaped = false; continue; }
+        if c == '\\' && quote == Some('"') { part.push(c); escaped = true; continue; }
+        if c == '\'' || c == '"' {
+            if quote == Some(c) { quote = None; } else if quote.is_none() { quote = Some(c); }
+        }
+        if c == ',' && quote.is_none() { parts.push(skill_scalar(&part)); part.clear(); }
+        else { part.push(c); }
+    }
+    if quote.is_some() { return Vec::new(); }
+    parts.push(skill_scalar(&part));
+    parts.into_iter().filter(|v| !v.is_empty()).collect()
+}
+
+/// Bounded frontmatter subset shared by native import preview and discovery.
+/// Display scalars collapse whitespace; the source SKILL.md remains unchanged.
+/// An invalid manual-only flag fails closed instead of enabling model invocation.
+pub(crate) fn skill_frontmatter(content: &str, stem: &str) -> (String, String, Vec<String>, bool) {
     let content = content.replace("\r\n", "\n");
-    let content = content.as_str();
-    let mut name = stem.to_string();
-    let mut description = String::new();
-    let mut options: Vec<String> = Vec::new();
-    if let Some(after_open) = content.strip_prefix("---\n") {
-        let close = after_open
-            .find("\n---\n")
-            .map(|i| (i, i + 5))
-            .or_else(|| after_open.starts_with("---\n").then_some((0, 4)));
-        if let Some((fm_end, _)) = close {
-            for line in after_open[..fm_end].lines() {
-                let trimmed = line.trim();
-                if let Some(v) = trimmed.strip_prefix("name:") {
-                    name = v.trim().to_string();
-                } else if let Some(v) = trimmed.strip_prefix("description:") {
-                    description = v.trim().to_string();
-                } else if let Some(v) = trimmed.strip_prefix("options:") {
-                    // `options: [lite, full, ultra]` — declared setting
-                    // choices; pickers render a dropdown when present.
-                    options = v
-                        .trim()
-                        .trim_start_matches('[')
-                        .trim_end_matches(']')
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
+    let lines: Vec<&str> = content.lines().collect();
+    let defaults = || (stem.to_string(), String::new(), Vec::new(), false);
+    if lines.first() != Some(&"---") { return defaults(); }
+    let Some(end) = lines.iter().skip(1).position(|line| *line == "---").map(|i| i + 1) else { return defaults() };
+    let (mut name, mut description, mut options, mut manual) = defaults();
+    let mut i = 1;
+    while i < end {
+        let line = lines[i];
+        if line.starts_with(char::is_whitespace) { i += 1; continue; }
+        let Some((key, raw)) = line.split_once(':') else { i += 1; continue };
+        let raw = raw.trim();
+        if key == "options" && raw.is_empty() {
+            options.clear();
+            while i + 1 < end && (lines[i+1].starts_with(char::is_whitespace) || lines[i+1].trim().is_empty()) {
+                i += 1;
+                if let Some(value) = lines[i].trim().strip_prefix("- ") {
+                    let value = skill_scalar(value); if !value.is_empty() { options.push(value); }
                 }
             }
+        } else if key == "options" {
+            options = skill_options(raw);
+        } else if key == "disable-model-invocation" {
+            manual = skill_scalar(raw).to_lowercase() != "false";
+        } else if key == "name" || key == "description" {
+            let value = if matches!(raw, ">" | ">-" | ">+" | "|" | "|-" | "|+") {
+                let mut parts = Vec::new();
+                while i + 1 < end && (lines[i+1].starts_with(char::is_whitespace) || lines[i+1].trim().is_empty()) {
+                    i += 1; parts.push(lines[i].trim());
+                }
+                parts.join(" ")
+            } else { skill_scalar(raw) };
+            let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+            if key == "name" { name = value; } else { description = value; }
+        }
+        i += 1;
+    }
+    if name.is_empty() { name = stem.to_string(); }
+    (name, description, options, manual)
+}
+
+/// Category folders may nest; the first SKILL.md establishes a skill root.
+/// Markdown below that root is supporting material, never another skill.
+fn skill_entry_files(root: &Path, dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
+    if depth > 64 { return; }
+    let entrypoint = dir.join("SKILL.md");
+    if entrypoint.is_file() {
+        let relative = dir.strip_prefix(root).unwrap_or(dir);
+        let id = if relative.as_os_str().is_empty() { dir.file_name().unwrap_or_default().to_string_lossy().to_string() }
+            else { relative.to_string_lossy().replace('\\', "/") };
+        out.push((id, entrypoint)); return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() { skill_entry_files(root, &path, depth + 1, out); }
+        else if depth == 0 && path.extension().is_some_and(|ext| ext == "md") {
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) { out.push((stem.to_string(), path)); }
         }
     }
-    (name, description, options)
 }
 
 /// Walk `packages/*/package.json` for `fez.skills` and read each `.md`'s
@@ -670,6 +817,9 @@ pub(crate) fn installed_skills(home: &Path) -> Vec<InstalledSkill> {
             Ok(n) => n,
             Err(_) => continue,
         };
+        if no_symlinks_below(home, &Path::new("packages").join(&pkg_name).join("package.json")).is_err() {
+            eprintln!("Skipping skills package: linked package or manifest"); continue;
+        }
         let manifest = match installed_manifest(&pkg_name, home) {
             Some(m) => m,
             None => continue,
@@ -687,30 +837,24 @@ pub(crate) fn installed_skills(home: &Path) -> Vec<InstalledSkill> {
             .unwrap_or(&pkg_name)
             .to_string();
         let dir = skills_cfg.get("dir").and_then(|v| v.as_str()).unwrap_or("skills");
-        // `dir` is attacker-controlled (written verbatim at install, never
-        // re-validated) — same escape gate `materialize` enforces at write
-        // time, required again here since this is a separate read path a
-        // package.json could still be hand-edited to hit.
-        if dir.starts_with('/') || Path::new(dir).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-            continue;
+        if !safe_relative_path(dir) { continue; }
+        let relative = Path::new("packages").join(&pkg_name).join(dir);
+        if no_symlinks_below(home, &relative).is_err() {
+            eprintln!("Skipping skills package {pkg_name}: linked skills directory"); continue;
         }
-        let skills_dir = home.join("packages").join(&pkg_name).join(dir);
-        let files = match std::fs::read_dir(&skills_dir) {
-            Ok(f) => f,
-            Err(_) => continue,
-        };
-        for f in files.flatten() {
-            let path = f.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                continue;
-            }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        let skills_dir = home.join(relative);
+        if !skills_dir.exists() { continue; }
+        if let Err(error) = regular_tree(&skills_dir, 0) {
+            eprintln!("Skipping skills package {pkg_name}: {error}"); continue;
+        }
+        let mut files = Vec::new();
+        skill_entry_files(&skills_dir, &skills_dir, 0, &mut files);
+        files.sort_by(|a,b| a.0.cmp(&b.0));
+        for (id, path) in files {
             let Ok(content) = std::fs::read_to_string(&path) else { continue };
-            let (name, description, options) = skill_frontmatter(&content, stem);
-            if description.is_empty() {
-                continue; // required — matches skills-md.ts
-            }
-            out.push(InstalledSkill { pkg: pkg_name.clone(), title: title.clone(), id: stem.to_string(), name, description, options });
+            let (name, description, options, disable_model_invocation) = skill_frontmatter(&content, &id);
+            if description.is_empty() { continue; }
+            out.push(InstalledSkill { pkg: pkg_name.clone(), title: title.clone(), id, name, description, options, disable_model_invocation });
         }
     }
     out
@@ -762,6 +906,38 @@ mod tests {
         add(&mut b, "package/bin/index.js", "#!/usr/bin/env node\n");
         add(&mut b, "package/dist/mcp.js", "export default 3;\n");
         b.into_inner().unwrap()
+    }
+
+    #[test]
+    fn refuses_an_existing_full_package_identity_under_another_id_before_writing() {
+        for id in ["fez-tidy", "tidy.dev"] {
+            let home = tempfile::tempdir().unwrap();
+            let alias = home.path().join("packages").join(id);
+            std::fs::create_dir_all(&alias).unwrap();
+            let manifest = tar_read(&fixture_tar(), "package.json").unwrap();
+            std::fs::write(alias.join("package.json"), &manifest).unwrap();
+            let error = install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap_err();
+            assert!(error.contains(&format!("@fezchat/tidy is already installed as {id}")), "{error}");
+            assert!(!home.path().join("packages/tidy").exists());
+            assert!(!home.path().join("extensions").exists());
+            assert_eq!(std::fs::read(alias.join("package.json")).unwrap(), manifest);
+        }
+    }
+
+    #[test]
+    fn full_identity_guard_allows_other_scopes_reconstructed_names_and_in_place_updates() {
+        let home = tempfile::tempdir().unwrap();
+        for (id, manifest) in [
+            ("other-tidy", serde_json::json!({"name": "@other/tidy"})),
+            ("fez-tidy", serde_json::json!({"name": "@fezchat/tidy", "fez": {"reconstructed": true}})),
+        ] {
+            let dir = home.path().join("packages").join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("package.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        }
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.2", home.path()).unwrap();
+        assert!(home.path().join("packages/other-tidy/package.json").exists());
     }
 
     // THE LAYOUT CONTRACT — must match packages/fez-evals/tests/package-lifecycle.test.ts exactly.
@@ -1154,12 +1330,184 @@ mod tests {
 
     #[test]
     fn skill_frontmatter_tolerates_crlf() {
-        let (name, description, options) = skill_frontmatter(
+        let (name, description, options, manual) = skill_frontmatter(
             "---\r\nname: The Pony\r\ndescription: lazy senior dev\r\noptions: [lite, full, ultra]\r\n---\r\nBe lazy.\r\n",
             "pony",
         );
         assert_eq!(name, "The Pony");
         assert_eq!(description, "lazy senior dev");
         assert_eq!(options, vec!["lite", "full", "ultra"]);
+        assert!(!manual);
     }
+
+    fn skill_archive(files: &[(&str, &[u8])], link: Option<&str>) -> Vec<u8> {
+        let mut b = tar::Builder::new(Vec::new());
+        let manifest = br#"{"name":"@fezchat/skill-pack","version":"1.0.0","fez":{"skills":{"dir":"skills"}}}"#;
+        for (path, bytes) in std::iter::once(("package/package.json", manifest.as_slice())).chain(files.iter().copied()) {
+            let mut h = tar::Header::new_gnu(); h.set_size(bytes.len() as u64); h.set_mode(if path.ends_with(".sh") { 0o4755 } else { 0o644 }); h.set_cksum();
+            b.append_data(&mut h, path, bytes).unwrap();
+        }
+        if let Some(path) = link {
+            let mut h = tar::Header::new_gnu(); h.set_entry_type(tar::EntryType::Symlink); h.set_size(0); h.set_mode(0o777); h.set_link_name("/tmp/outside").unwrap(); h.set_cksum();
+            b.append_data(&mut h, path, &[][..]).unwrap();
+        }
+        b.into_inner().unwrap()
+    }
+
+    #[test]
+    fn nested_skills_keep_complete_resources_and_discover_only_entrypoints() {
+        let home = tempfile::tempdir().unwrap();
+        let archive = skill_archive(&[
+            ("package/skills/pony/SKILL.md", b"---\nname: 'Pony Skill'\ndescription: >-\n  useful tools\n  for a job\noptions: ['one,two', full]\ndisable-model-invocation: true\n---\nBody\n"),
+            ("package/skills/pony/scripts/run.py", b"raise RuntimeError('never execute on install')\n"),
+            ("package/skills/pony/assets/pixel.bin", &[0, 255, 1]),
+            ("package/skills/pony/references/guide.md", b"---\ndescription: supporting material\n---\nx"),
+            ("package/skills/flat.md", b"---\ndescription: legacy\n---\nx"),
+        ], None);
+        install_from_tarball("@fezchat/skill-pack", &archive, "1.0.0", home.path()).unwrap();
+        assert_eq!(std::fs::read(home.path().join("packages/skill-pack/skills/pony/assets/pixel.bin")).unwrap(), vec![0,255,1]);
+        assert!(home.path().join("packages/skill-pack/skills/pony/scripts/run.py").is_file());
+        let found = installed_skills(home.path());
+        assert_eq!(found.len(), 2);
+        let pony = found.iter().find(|s| s.id == "pony").unwrap();
+        assert_eq!(pony.name, "Pony Skill"); assert_eq!(pony.description, "useful tools for a job");
+        assert_eq!(pony.options, vec!["one,two", "full"]);
+        assert_eq!(serde_json::to_value(pony).unwrap()["disableModelInvocation"], true);
+    }
+
+    #[test]
+    fn support_only_archive_and_symlink_payload_fail_before_installing_anything() {
+        for archive in [
+            skill_archive(&[("package/skills/pony/references/guide.md", b"---\ndescription: not a skill\n---\n")], None),
+            skill_archive(&[("package/skills/pony/SKILL.md", b"---\ndescription: skill\n---\n")], Some("package/skills/pony/secret")),
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            assert!(install_from_tarball("@fezchat/skill-pack", &archive, "1", home.path()).is_err());
+            assert!(!home.path().join("packages/skill-pack").exists());
+        }
+    }
+
+    #[test]
+    fn destination_symlinks_are_neither_written_nor_discovered() {
+        let home = tempfile::tempdir().unwrap(); let outside = tempfile::tempdir().unwrap();
+        let pkg = home.path().join("packages/skill-pack"); std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(outside.path().join("flat.md"), "---\ndescription: private\n---\nx").unwrap();
+        std::os::unix::fs::symlink(outside.path(), pkg.join("skills")).unwrap();
+        let archive = skill_archive(&[("package/skills/flat.md", b"---\ndescription: public\n---\nx")], None);
+        assert!(install_from_tarball("@fezchat/skill-pack", &archive, "1", home.path()).is_err());
+        std::fs::write(pkg.join("package.json"), tar_read(&archive, "package.json").unwrap()).unwrap();
+        assert!(installed_skills(home.path()).is_empty());
+        assert!(std::fs::read_to_string(outside.path().join("flat.md")).unwrap().contains("private"));
+    }
+
+    #[test]
+    fn updating_a_skill_removes_stale_packaged_files_and_preserves_personal_copies() {
+        let home = tempfile::tempdir().unwrap();
+        let first = skill_archive(&[("package/skills/pony/SKILL.md", b"---\ndescription: skill\n---\nx"), ("package/skills/pony/old.txt", b"old")], None);
+        install_from_tarball("@fezchat/skill-pack", &first, "1", home.path()).unwrap();
+        std::fs::create_dir_all(home.path().join("skills")).unwrap();
+        std::fs::write(home.path().join("skills/personal.md"), "personal").unwrap();
+        let next = skill_archive(&[("package/skills/pony/SKILL.md", b"---\ndescription: skill\n---\nx")], None);
+        install_from_tarball("@fezchat/skill-pack", &next, "2", home.path()).unwrap();
+        assert!(!home.path().join("packages/skill-pack/skills/pony/old.txt").exists());
+        assert_eq!(std::fs::read_to_string(home.path().join("skills/personal.md")).unwrap(), "personal");
+    }
+
+
+    #[test]
+    fn nested_categories_stop_at_the_first_skill_entrypoint() {
+        let home = tempfile::tempdir().unwrap();
+        let archive = skill_archive(&[
+            ("package/skills/category/pony/SKILL.md", b"---\ndescription: real skill\n---\nx"),
+            ("package/skills/category/pony/references/nested/SKILL.md", b"---\ndescription: support\n---\nx"),
+            ("package/skills/category/readme.md", b"---\ndescription: not an entrypoint\n---\nx"),
+            ("package/skills/category2/other/SKILL.md", b"---\ndescription: another\n---\nx"),
+        ], None);
+        install_from_tarball("@fezchat/skill-pack", &archive, "1", home.path()).unwrap();
+        let ids: Vec<String> = installed_skills(home.path()).into_iter().map(|s| s.id).collect();
+        assert_eq!(ids, vec!["category/pony", "category2/other"]);
+    }
+
+    #[test]
+    fn root_skill_entrypoint_owns_its_support_tree() {
+        let home = tempfile::tempdir().unwrap();
+        let archive = skill_archive(&[
+            ("package/skills/SKILL.md", b"---\ndescription: root\n---\nx"),
+            ("package/skills/notes.md", b"---\ndescription: support\n---\nx"),
+            ("package/skills/child/SKILL.md", b"---\ndescription: support\n---\nx"),
+        ], None);
+        install_from_tarball("@fezchat/skill-pack", &archive, "1", home.path()).unwrap();
+        let skills = installed_skills(home.path());
+        assert_eq!(skills.len(), 1); assert_eq!(skills[0].id, "skills");
+    }
+
+    #[test]
+    fn metadata_matches_quoted_list_and_manual_invocation_rules() {
+        let (name, description, options, manual) = skill_frontmatter(
+            "---\nname: ''\ndescription: |+\n  a literal\n\n  description\noptions:\n  - 'one,two'\n  - \"three\\nfour\"\ndisable-model-invocation: 'FALSE'\n---", "fallback");
+        assert_eq!(name, "fallback"); assert_eq!(description, "a literal description");
+        assert_eq!(options, vec!["one,two", "three\nfour"]); assert!(!manual);
+        assert!(skill_frontmatter("---\ndescription: ok\ndisable-model-invocation: maybe\n---", "x").3);
+    }
+
+    #[test]
+    fn ambiguous_archive_paths_are_rejected_before_replacing_old_skills() {
+        for path in ["package/skills/../escape.txt", "package/skills/./pony/alias.txt", "package/skills//alias.txt"] {
+            let home = tempfile::tempdir().unwrap();
+            let normal = skill_archive(&[("package/skills/pony/SKILL.md", b"---\ndescription: old\n---\nx")], None);
+            install_from_tarball("@fezchat/skill-pack", &normal, "1", home.path()).unwrap();
+            let mut archive = tar::Builder::new(Vec::new());
+            // Build a hostile raw tar name; Builder's safe append_data refuses it.
+            for (name, bytes) in [("package/package.json", tar_read(&normal, "package.json").unwrap()), ("package/skills/pony/SKILL.md", b"---\ndescription: new\n---\nx".to_vec()), (path, b"bad".to_vec())] {
+                let mut header = tar::Header::new_gnu();
+                header.as_mut_bytes()[..100].fill(0);
+                header.as_mut_bytes()[..name.len()].copy_from_slice(name.as_bytes());
+                header.set_mode(0o644); header.set_size(bytes.len() as u64); header.set_cksum();
+                archive.append(&header, bytes.as_slice()).unwrap();
+            }
+            assert!(install_from_tarball("@fezchat/skill-pack", &archive.into_inner().unwrap(), "2", home.path()).is_err(), "{path}");
+            assert!(std::fs::read_to_string(home.path().join("packages/skill-pack/skills/pony/SKILL.md")).unwrap().contains("old"));
+        }
+    }
+
+    #[test]
+    fn a_symlink_resource_invalidates_discovery_without_reading_its_target() {
+        let home = tempfile::tempdir().unwrap(); let outside = tempfile::tempdir().unwrap();
+        let archive = skill_archive(&[("package/skills/pony/SKILL.md", b"---\ndescription: safe\n---\nx")], None);
+        install_from_tarball("@fezchat/skill-pack", &archive, "1", home.path()).unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "private").unwrap();
+        std::os::unix::fs::symlink(outside.path(), home.path().join("packages/skill-pack/skills/pony/references")).unwrap();
+        assert!(installed_skills(home.path()).is_empty());
+        assert!(install_from_tarball("@fezchat/skill-pack", &archive, "2", home.path()).is_err());
+        assert_eq!(std::fs::read_to_string(outside.path().join("secret.txt")).unwrap(), "private");
+    }
+
+
+    #[test]
+    fn skill_support_scripts_keep_execute_bits_but_never_special_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let archive = skill_archive(&[
+            ("package/skills/pony/SKILL.md", b"---\ndescription: safe\n---\nx"),
+            ("package/skills/pony/scripts/run.sh", b"#!/bin/sh\nexit 97\n"),
+        ], None);
+        install_from_tarball("@fezchat/skill-pack", &archive, "1", home.path()).unwrap();
+        let dir = home.path().join("packages/skill-pack/skills/pony");
+        assert_eq!(std::fs::metadata(dir.join("scripts/run.sh")).unwrap().permissions().mode() & 0o7777, 0o755);
+        assert_eq!(std::fs::metadata(dir.join("SKILL.md")).unwrap().permissions().mode() & 0o7777, 0o644);
+    }
+
+
+    #[test]
+    fn conflicting_archive_files_are_preflighted_before_installation() {
+        for files in [
+            vec![("package/skills/pony/SKILL.md", b"---\ndescription: x\n---\n".as_slice()), ("package/skills/pony/SKILL.md", b"duplicate".as_slice())],
+            vec![("package/skills/pony/SKILL.md", b"---\ndescription: x\n---\n".as_slice()), ("package/skills/pony", b"file ancestor".as_slice())],
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            assert!(install_from_tarball("@fezchat/skill-pack", &skill_archive(&files, None), "1", home.path()).is_err());
+            assert!(!home.path().join("packages/skill-pack").exists());
+        }
+    }
+
 }

@@ -1,0 +1,173 @@
+[
+  {
+    "case": "relay-trust",
+    "solo": [
+      7,
+      7
+    ],
+    "hire": [
+      10,
+      10
+    ],
+    "verdicts": [
+      {
+        "aArm": "hire",
+        "result": {
+          "a": {
+            "scores": [
+              2,
+              2,
+              2,
+              2,
+              2
+            ],
+            "reason": "(1) Correctly separates authenticity from honesty: signature validity proves the pubkey holder authored the event, not that the relay reports truthfully or completely, and notes relays may reject/filter/misreport. (2) States that per-kind rules (replaceable/addressable 'latest only' MUST) exist but retention is implementation-dependent, so clients querying different relays or times get inconsistent subsets — divergence from withheld/varying event sets. (3) Explicitly addresses NIP-11: the advertised owner/admin pubkey is metadata, 'not cryptographic proof of behavior,' and safeguard 2 says to distrust relay-advertised ownership rather than treat it as proven. (4) Accurate on limits: storage is convention with no MUST enforcing persistence; NIP-09 is optional/SHOULD and per NIP-09 it is impossible to delete from all relays and clients. (5) Three implementable safeguards with correct citations: multi-relay aggregation with cross-validation of ids/timestamps; local NIP-01 serialization/Schnorr verification; NIP-09 treated as advisory with the required client-side check that the deletion pubkey matches the referenced event's author. No invented guarantees; minor looseness in saying NIP-01 'mandates' relay validation."
+          },
+          "b": {
+            "scores": [
+              2,
+              1,
+              0,
+              2,
+              2
+            ],
+            "reason": "(1) Strong: signatures give authenticity (Schnorr/secp256k1 per NIP-01) but do not prevent false timestamps, selective suppression, or withholding; authenticity != completeness. (2) Only partly: correctly notes relays may return divergent subsets via filters/limit and no consistency guarantee, but never states the converse — that identical deterministic rules (e.g., replaceable-event latest-wins / lowest-id tie-break in NIP-01) converge only when clients hold the same event set. (3) Absent: NIP-11 is never mentioned; the relay's advertised owner/self pubkey is not addressed at all as a bootstrap/trust input versus something proven by signatures, despite being a stated premise of the task. (4) Accurate: storage is optional relay behavior, NIP-09 is optional and uses SHOULD, relays may ignore requests, and no cross-relay deletion mechanism exists. (5) Three usable safeguards with correct NIP-01/NIP-09 citations (independent serialization+signature verification, multi-relay quorum with divergence flagging, retaining originals and treating deletions as hints); 'consistent across relays = more trustworthy' is hedged rather than presented as a guarantee."
+          },
+          "recoveredMissingBrace": true
+        }
+      },
+      {
+        "aArm": "solo",
+        "result": {
+          "a": {
+            "scores": [
+              2,
+              1,
+              0,
+              2,
+              2
+            ],
+            "reason": "C1: Correctly separates authenticity (Schnorr/secp256k1 per NIP-01, proves origin from the claimed pubkey) from truth, and names false timestamps, selective suppression and withholding — accurate and specific. C2: Explains divergence causes (filter/limit subsets, timing, relay implementation) but never states the actual condition — identical deterministic rules (e.g., NIP-01 replaceable/addressable latest-wins) converge only when clients see the same event set — so only partial. C3: NIP-11 is never mentioned anywhere in the brief despite the prompt's explicit owner-pubkey premise; the trust/bootstrap point is absent entirely. C4: Accurate — storage is convention not mandate, NIP-09 is optional and SHOULD-level, no cross-relay erasure mechanism. C5: Three implementable safeguards (independent client-side verification of NIP-01 serialization+sig, ≥3-relay quorum with divergence flagging, retain local originals and treat kind-5 as advisory per NIP-09); citations accurate, no invented guarantees, though it omits NIP-09's MUST that the referenced event's pubkey match the deletion request's pubkey."
+          },
+          "b": {
+            "scores": [
+              2,
+              2,
+              2,
+              2,
+              2
+            ],
+            "reason": "C1: States signature validity proves authorship, not relay honesty, and notes relays may reject/filter/misreport — correct authenticity vs. delivery split, reinforced by the explicit availability/freshness distinctions section. C2: Covers both halves — the deterministic latest-only rule for replaceable/addressable kind ranges in NIP-01, plus the fact that retention/filtering/timing yield inconsistent subsets across relays, so identical membership is not guaranteed. C3: Explicitly says the NIP-11 owner pubkey is metadata, not cryptographic proof of relay behavior, and the safeguard tells implementers to distrust relay-advertised ownership — correctly demotes it from guarantee to trust input. C4: Accurate — storage is convention with no MUST for persistence, NIP-09 is optional/draft and SHOULD-level, and it correctly reflects NIP-09's 'impossible to delete from all relays and clients.' C5: Three implementable safeguards with accurate citations, including NIP-09's client MUST-validate that the referenced event's pubkey matches the deletion request pubkey; no invented guarantees. Minor imprecision: NIP-01 does not literally 'mandate' relay-side signature validation, but this does not create a false guarantee."
+          },
+          "recoveredMissingBrace": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "private-workspace",
+    "solo": [
+      null,
+      10
+    ],
+    "hire": [
+      null,
+      7
+    ],
+    "verdicts": [
+      {
+        "aArm": "hire",
+        "unavailable": "private-workspace-judge-0: saved answer is incomplete"
+      },
+      {
+        "aArm": "solo",
+        "result": {
+          "a": {
+            "scores": [
+              2,
+              2,
+              2,
+              2,
+              2
+            ],
+            "reason": "C1: Explicitly states roster filtering is 'UI-only, unenforceable' and that a malicious client bypasses it; plaintext content is 'visible to all relay subscribers'. C2: Cleanly separates authentication from authorization ('NIP-42 establishes authentication (identity), not authorization (policy)') and requires the relay to validate the authenticated pubkey against the roster for both reads and writes, matching NIP-42's auth-required/restricted semantics. C3: Correctly describes NIP-44/NIP-59 layering (kind:13 seal inside kind:1059 wrap with random ephemeral key) and states the client 'must verify seal pubkey matches author' — the NIP-17 MUST that prevents sender impersonation via the rumor pubkey. C4: Requires the agent to verify the sender is a member before executing DM-borne tasks, and to verify sender signature/roster membership on channel events. C5: Gives a concrete design (NIP-44-encrypt kind-47103 content, keep channel tag cleartext for routing, relay AUTH + roster gate, gate kind:1059 to p-tagged recipient per NIP-59), with accurate NIP-01/42/44/59 citations and an explicit 'No' to the privacy question. Weakness: the 'shared key derived from channel ID + roster members' is under-specified (NIP-44 is pairwise), but it is flagged as client-side and does not misstate any NIP."
+          },
+          "b": {
+            "scores": [
+              2,
+              2,
+              1,
+              1,
+              1
+            ],
+            "reason": "C1: Correct — client-side roster filtering gives 'zero server-enforced privacy' and plaintext kind-47103 is 'globally readable' under NIP-01 filter semantics. C2: Correct — AUTH authenticates identity but does not define a read policy; the relay decides independently (minor imprecision in implying auth-required only blocks unauthenticated clients, ignoring the 'restricted:' case, but the core point is right). C3: Partly correct — describes the NIP-44/seal/gift-wrap chain, but states the 'p-tag hidden from relay', which is factually wrong (the kind:1059 p tag is public routing metadata, which is precisely why NIP-17/59 tell relays to serve wraps only to the p-tagged user; the answer contradicts itself later). It never mentions the NIP-17 requirement to verify the kind:13 seal pubkey equals the rumor pubkey, i.e. the inner authenticated sender. C4: Partly correct — 'verify sender pubkey matches roster before executing' is stated, but with no distinction between the random wrapper key, the seal signer, and the rumor author, so the actual authorization check for DMs is left ambiguous. C5: Partly correct — proposes gift-wrapping channel events to roster members and relay AUTH plus p-tag enforcement, but conflates 'wrap per member' with 'shared secret derived from roster keys', contains the p-tag error, and garbles the NIP-17/NIP-59 spam-protection citation. It does avoid a blanket privacy claim."
+          },
+          "recoveredMissingBrace": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "roster-ordering",
+    "solo": [
+      6,
+      6
+    ],
+    "hire": [
+      6,
+      6
+    ],
+    "verdicts": [
+      {
+        "aArm": "hire",
+        "result": {
+          "a": {
+            "scores": [
+              0,
+              1,
+              2,
+              1,
+              2
+            ],
+            "reason": "C1: Accepts the false premise verbatim — claims 'Kind 47102 is addressable (30000–40000 range per NIP-01)', which is wrong (47102 falls outside all NIP-01 ranges; it would be a custom/undefined kind, and relays are under no obligation to replace it); no flag of the error. C2: Verifies Schnorr sig and recomputes id per NIP-01 serialization, and the filter pins authors=owner and #d=roster_id, but the forgery section never states the pubkey must equal the expected owner key nor that the d value must match the intended roster — partial. C3: Correctly states latest created_at wins and ties break to lowest event id in lexical order, matching NIP-01. C4: Only says 'accept the latest available; log divergence' — no explicit high-water-mark rule forbidding rollback to a cached-older roster, and no statement that a valid old signature cannot reveal that newer state exists. C5: Clear offline limitation plus concrete fail-closed policy: convergence across both relays or created_at within N seconds, cache TTL T, and refusal to execute if stale/offline; also adds a kind-5 (NIP-09) revocation check (though the a-tag example '30102:...' is inconsistent with the stated kind)."
+          },
+          "b": {
+            "scores": [
+              0,
+              2,
+              2,
+              1,
+              1
+            ],
+            "reason": "C1: Same premise error, asserted with a false citation — 'NIP-01 §Kinds: 30000 ≤ n < 40000' does not cover 47102; no identification of the error or call for custom semantics. C2: Complete identity check — Schnorr signature verification, id recomputation from canonical serialization, and explicit 'confirm pubkey equals workspace owner', plus (owner, d-tag) scoping in the query. C3: Correctly quotes NIP-01's newest-created_at rule and the lowest-lexical-id tiebreak. C4: Notes replay/withholding is expected and that the newer event reflects owner intent, but gives no rule that a replayed older roster must not overwrite already-known newer state, and does not explain that signature validity says nothing about freshness. C5: States offline clients get only eventual consistency and denies if 'both relays offline', but supplies no staleness bound, no cache TTL, and no reconciliation requirement — a single online relay serving a replayed old roster would pass, so the policy is not actually fail-closed on freshness."
+          }
+        }
+      },
+      {
+        "aArm": "solo",
+        "result": {
+          "a": {
+            "scores": [
+              0,
+              2,
+              2,
+              1,
+              1
+            ],
+            "reason": "C1: Accepts the false premise and asserts '47102 is addressable (NIP-01 §Kinds: 30000 ≤ n < 40000)' — 47102 falls in no defined range and is not addressable; no custom-semantics caveat. C2: Verifies Schnorr sig, recomputes the id from the canonical serialization, explicitly requires pubkey == workspace owner, and filters on the d-tag roster id — all three checks present. C3: Correctly states highest created_at wins with tie-break on lowest event id in lexical order, quoting NIP-01. C4: Only says 'accept the newest returned' and notes replay is expected; no monotonic ratchet against locally cached newer state and no statement that a valid signature on an old event cannot reveal a withheld newer version. C5: Correctly explains offline/withholding yields eventual consistency only, and fails closed on absent/revoked member or both relays down, but gives no concrete staleness bound, refresh interval, or reconciliation rule across the two relays."
+          },
+          "b": {
+            "scores": [
+              0,
+              1,
+              2,
+              1,
+              2
+            ],
+            "reason": "C1: Same premise error — 'Kind 47102 is addressable (30000–40000 range per NIP-01)', which is arithmetically false; no flag that custom replacement semantics would be needed. C2: Requires signature verification and id reconstruction, and the filter pins authors and #d, but never states as a check that the pubkey must equal the expected owner or that non-owner/wrong-d events must be rejected; also inconsistently references the a-tag as '30102:owner_pubkey:roster_id'. C3: Correct — latest created_at, tie broken by lowest hex id per NIP-01. C4: Says 'accept the latest available; log divergence' but does not forbid rolling back to a replayed older event when a newer one is already known, nor note that an old valid signature cannot prove no newer roster exists; the freshness window only indirectly touches this. C5: Explains the offline client cannot be instantly notified, and gives a concrete fail-closed policy: relay convergence or created_at within N=300s, cache validity T=3600s, mandatory refresh, and refusal to execute if no fresh roster — with N/T explicitly labeled application choices."
+          }
+        }
+      }
+    ]
+  }
+]

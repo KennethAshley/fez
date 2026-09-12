@@ -59,7 +59,7 @@ export default function activate(api: GuiExtensionAPI): void {
     const check = useCallback(async () => {
       setChecking(true);
       try { setConnected(await secrets.has("token")); }
-      catch (error) { setError(String(error)); }
+      catch (error) { setError(current => current ?? String(error)); }
       finally { setChecking(false); }
     }, []);
 
@@ -69,7 +69,7 @@ export default function activate(api: GuiExtensionAPI): void {
         setConfig(parseConfig(saved));
         setChannels(channels);
         setLoaded(true);
-      } catch (err) { setError(String(err)); }
+      } catch (err) { setError(current => current ?? String(err)); }
     }, []);
 
     useEffect(() => {

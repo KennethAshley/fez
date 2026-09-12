@@ -3,31 +3,64 @@ title: Skills
 description: SKILL.md instruction packs an agent reads on demand — a separate tier from tools (MCP servers).
 ---
 
-A **skill** is an instruction pack: one `SKILL.md` file with a `name:` and
-`description:` in its frontmatter and a body of prose an agent can read. It's
-not code and it doesn't run anything — it's know-how, the same shape Claude's
-own Skills and Cursor's plugin rules use. This is a separate tier from
-[tools](/concepts/tools) (MCP servers): a tool gives an agent a new
-*capability*, a skill gives it *instructions* for a capability it already has.
+A **skill** is an instruction pack: a `SKILL.md` file with a `name:` and
+`description:` in its frontmatter, plus any supporting files in its folder.
+This is a separate tier from [tools](/concepts/tools) (MCP servers): a tool
+gives an agent a capability; a skill gives it instructions for using one.
 
-## Attach — in the agent editor
+## Import — from GitHub
 
-Skills install as ordinary packages (`fez install`), landing under
-`~/.fez/packages/<name>/skills/*.md`. A persona doesn't get every installed
-skill automatically — you attach the ones it needs from the desktop app's
-agent editor, the same review step as attaching a tool.
+In **Tools → Add tools**, paste a GitHub link and choose **Review GitHub source**.
+You do not need to enter a tool name. The Extensions gallery's GitHub input
+and install offers in DMs use the same review.
+
+You can paste any of these link shapes:
+
+- An exact skill: `https://github.com/owner/repo/blob/main/skills/example/SKILL.md`
+- A directory: `https://github.com/owner/repo/tree/main/skills`
+- A repository: `https://github.com/owner/repo`
+
+An exact `SKILL.md` link selects that skill. Directory and repository links
+list the discovered skills and persona definitions so you can choose which
+to import. Fez records the source and installs the exact commit shown in the
+review. Each selected skill keeps its complete folder, including references,
+templates, and scripts; importing does not execute those scripts.
+
+For a plugin built for another host, the review explicitly offers a
+**Skills-only import** and lists detected features that are not included,
+such as lifecycle hooks, MCP configuration, or executable host integrations.
+Importing its instructions does not activate that plugin's runtime or
+persistent modes. The instructions can still guide an agent to use its
+enabled tools, so review what you assign.
+
+A [native Fez package](/concepts/extensions#installing) instead receives a
+full-package component and permissions review. Its GitHub source must already
+contain the declared built outputs: Fez does not build the repository or run
+installation scripts. Unsupported or missing components block installation.
+
+## Assign — to an agent
+
+Importing makes skills available on this computer; it does not assign them
+to an agent. Use **Assign to agent** in Tools, or choose individual skills in
+the agent editor. Imported persona definitions are separate selections, not
+personas automatically created from skills.
+
+Skills live in their installed package, typically under
+`~/.fez/packages/<name>/skills/<skill>/SKILL.md`. Existing flat `.md` skill
+packages remain supported.
 
 ## Load — on demand
 
-Only a skill's `name` and `description` ride in the system prompt at spawn —
-cheap enough to carry a dozen of them without bloating context. The full body
-stays behind the `fez_load_skill` tool, so an agent fetches the instructions
-only when a task actually calls for them, then acts on them in the same turn.
+For ordinary assigned skills, only the name and description enter the system
+prompt at spawn. The agent uses `fez_load_skill` to read the full instructions
+when needed.
 
-## Install — from chat
+## Activate a manual skill
 
-DM `@fez` a GitHub URL to a Claude-plugin- or Cursor-rules-shaped repo and it
-converts on the fly: each `SKILL.md` (or equivalent) becomes a skill in the
-resulting package, with the source URL and commit recorded as provenance. The
-desktop shows what's inside — skills only, no executable code — before you
-approve the install.
+Skills declaring `disable-model-invocation: true` are excluded from the agent's automatic
+skill menu and loader. After assigning one, its owner can activate it for the
+current turn by starting a message to the agent with `/skill skill-name` or
+`/skill-name`. In a channel, use `@agent /skill skill-name`.
+
+This is an explicit owner request for that turn. Quoted instructions, messages
+from other participants, and a foreign plugin's hooks do not activate it.

@@ -95,6 +95,7 @@ const runProcess: EvaluationProcess = (python, args, options) => new Promise((re
 
 function field(ctx: SubmissionContext, key: string, pattern?: RegExp): string {
   const value = ctx.config[key];
+  // eslint-disable-next-line no-control-regex -- Reject or strip control characters from untrusted text.
   if (typeof value !== "string" || !value || value.length > 4096 || /[\x00-\x1f\x7f]/.test(value) || (pattern && !pattern.test(value))) {
     throw Error(`Configure a valid Ridges ${key}`);
   }

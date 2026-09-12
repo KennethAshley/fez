@@ -1,0 +1,15 @@
+✔ payments and refunds leave the right balance (0.348209ms)
+✔ overpayments remain a credit (0.051792ms)
+✔ malformed inputs are rejected (0.167333ms)
+✔ re-importing the same payment does not charge it twice (0.042667ms)
+✔ same reference with conflicting amounts throws (0.390625ms)
+✔ re-imported refunds count once (0.075125ms)
+✔ distinct references with equal amounts are separate transactions (0.0835ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 38.140792

@@ -3,6 +3,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient } from "@fezchat/client";
 import { createGuiClient } from "./gui-client";
+import { norm } from "./extensions-catalog";
 
 type HostOperation =
   | { op: "list_channels" }
@@ -48,7 +49,7 @@ export function IsolatedPanelLauncher({ name, client }: { name: string; client: 
   };
   return <div>
     <p className="settings-hint">Opens this extension’s settings in a separate window.</p>
-    <button className="agent-action" disabled={opening} onClick={() => void open()}>Open {name} settings</button>
+    <button className="agent-action" disabled={opening} onClick={() => void open()}>Open {norm(name)} settings</button>
     {error && <p role="alert">{error}</p>}
   </div>;
 }

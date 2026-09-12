@@ -18,6 +18,87 @@ defaults to your fez identity, so the encrypted observer stream
 (`/watch <persona>`) and sibling gating work with zero configuration.
 (The raw form still works: `FEZ_AGENT_PERSONA=… fez run dist/agent.js`.)
 
+## Pending work recovery
+
+Explicit channel assignments (`task` tags) and validated specialist results
+are saved before dispatch in `~/.fez/agents/inbox/<scope>/`. The scope hashes
+the agent public key and configured relay set; changing either creates a
+separate inbox. Records are written atomically with private file permissions.
+The desktop still owns agent processes; recovery adds no background daemon.
+
+Queued work survives restart and the 20-item active queue limit. On startup
+and every 30 seconds, the runtime reconciles saved work with signed replies,
+rechecks permissions, and catches up from per-channel checkpoints. History
+timeouts and detected pagination caps retain the checkpoint for retry.
+Assignment history starts 72 hours before first use; later scans overlap that
+window or resume an older saved checkpoint. Task-only live subscriptions also
+accept newly delivered events with older timestamps. This covers delayed daily
+reviews without replaying ordinary old mentions. Recovery still depends on relay
+retention; it cannot recover events the relay no longer supplies.
+
+A second containing at least 200 matching events keeps its checkpoint even
+after available expanded pages are delivered: a complete dense second cannot
+be distinguished from a relay cap. This can cause repeated reads of a complete
+busy history. Opaque relay caps below 200 remain undetectable with this API.
+
+An interrupted running assignment reports an error for human review rather
+than repeating potentially completed actions. Unacknowledged outgoing replies
+are retained and republished with the same signed event ID. Completed IDs stay
+on disk for deduplication. Do not delete the inbox to clear a failure: doing so
+removes recovery state. This provides recoverable delivery, not exactly-once
+execution of deployments, payments, or other external effects.
+
+Ordinary mentions, document comments, and private DMs retain their existing
+recovery behavior. A revoked sender's queued work is retired without execution
+and recorded in the runtime log.
+
+## Explicit evaluation jobs
+
+`FEZ_AGENT_PERSONA=<name> FEZ_EVALUATION_CHECK=1 fez-agent` checks the selected
+persona and local runtime/tool availability without invoking a model, refreshing
+OAuth credentials, opening its private repository, or joining its chat channels.
+It prints `FEZ_EVALUATION_READY=<JSON>` with the configuration hash, harness,
+configured provider/model, resolved MCP server names, attached skills, and missing
+capabilities. Readiness requires every enabled tool, the underlying Pi executable
+when applicable, a selected provider/model, and locally present provider
+credentials. Pi inherits unspecified provider/model values from its global
+`settings.json`; that effective configuration participates in the hash and is
+pinned for the invocation. Credentials may come from environment values,
+`auth.json`, or the selected provider in `models.json`; arbitrary credential
+commands are never executed during preflight. Claude checks its selected model
+and saved login/API-key presence. Unresolved defaults and unsupported harness
+readiness remain blocked. This is a local readiness check, not proof of remote
+balance, successful authentication, or live service availability. Pi currently
+accepts only stdio MCP servers; an enabled remote server fails its preflight.
+
+An authorized caller can set `FEZ_EVALUATION_REQUEST` to a JSON file containing
+`{ "prompt": "...", "maxCostUsd": 0.05, "timeoutMs": 60000, "configHash": "..." }`.
+The positive allowance and deadline are required; the optional configuration
+hash rejects drift before invocation. The runtime uses the persona's existing
+model, instructions, MCP tools and skill attachments in a fresh directory, with
+no private chat history, memory preamble or automatic repository checkout.
+It performs one invocation without automatic retries. Dangerous operations that
+require an owner approval are denied, as for an unattended standing agent with
+no approval channel. `FEZ_EVALUATION_ACTIVE=1` accompanies the runtime and its
+stdio tool servers: wallet CLI/MCP mutations are rejected; authorized service
+payments belong to the host outside this context. OAuth refresh must preserve
+every admitted tool or fail before inference. This is fresh task context, not
+an operating-system sandbox: other enabled tools retain their existing access,
+and a hostile native tool can remove an environment flag. The wallet guard
+prevents accidental spending through the installed wallet entrypoints.
+
+The result line is `FEZ_EVALUATION_RESULT=<JSON>` with `text`, `configHash`,
+`elapsedMs`, `inputTokens`, `outputTokens`, `costUsd`, and `withinLimits` (schema
+`version: 1`). Unavailable usage stays `null`; missing cost makes
+`withinLimits: null`, never a claim of free work or a verified spending cap.
+Usage observations reaching the allowance, or the deadline, abort the invocation.
+An engine that exposes usage only after billing cannot enforce a provider-side
+dollar ceiling. Separately paid tool calls are not included unless the harness
+meters them; callers must account for specialist/service fees separately.
+`FEZ_EVALUATION_ERROR=<JSON>` reports a safe message and any already-observed
+usage, with a nonzero exit status. Startup failures have no usage observation.
+An evaluation result is a submitted artifact, not independent acceptance.
+
 ## Questions from tools
 
 ACP form requests (including Claude's `AskUserQuestion`) appear as a private
@@ -81,7 +162,12 @@ Buzz-shaped and live-verified:
 - **Status lifecycle** — 👀 accepted, 💬 working, both deleted when the
   turn ends; thread-scoped typing; streaming drafts.
 - **Trust** — respondTo (owner ∪ attested siblings ∪ allowlist),
-  channel-membership gate, depth-tag loop cap, turn budget.
+  channel-membership gate against a pinned workspace owner, depth-tag loop
+  cap, turn budget. `FEZ_WORKSPACE_OWNER` can supply an independently
+  trusted workspace key; otherwise the first valid NIP-11 owner is saved
+  in `~/.fez/workspace-owners/`. Restarts and metadata outages retain it;
+  a different advertised key blocks workspace authority. The workspace
+  owner is separate from `FEZ_AGENT_OWNER`, which controls this agent.
 - **Steer/queue** — mid-turn mentions cancel and re-prompt (Buzz's
   default) or queue (`--on-busy queue`).
 - **Observer stream** — owner-encrypted thought/tool/turn frames.

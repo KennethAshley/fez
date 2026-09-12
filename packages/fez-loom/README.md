@@ -1,65 +1,40 @@
 # @fezchat/loom
 
-**Describe a tool. Get a live one.** Loom is the "Uniswap for agents" idea, made
-fez-shaped: one text box, you bring the data and the prompt, an agent weaves the
-UI. The tool is a **thin client over verifiable relay data** — not a black box —
-and the good ones crystallize into installable extensions.
+Save, reopen, and share artifacts from any agent. Loom adds the **▣ artifacts**
+library and a **☆ save** button to the artifact pane. The included `@loom`
+persona is an optional builder; other agents can produce live artifacts too.
 
-## How it works
+## Use it
 
-`@loom` is a builder agent. Ask it for a tool over your workspace data:
+1. Ask an agent for a chart, tracker, or small app over your workspace data.
+2. Open its artifact and select **☆** to save it.
+3. Reopen it from **▣ artifacts**, or share a copy into its original channel.
 
-> @loom give me a live board of open approvals
+Cards show the title, author, channel, and update date. Artifacts run only when
+opened through Fez's existing viewer. Live tools read through the core data
+bridge; actions still require the user's consent.
 
-It ships a **live artifact** — sandboxed, self-contained HTML with one channel
-back to fez: a **read-only** bridge.
+## Saving and updates
 
-- `window.fez.query(q)` → Promise of rows
-- `window.fez.subscribe(q, cb)` → live rows, re-fires on change, returns unsubscribe
+Saves are local to this device, separated by account and workspace relay.
+They retain the original author, channel, and thread. Received live refinements
+with the same author, thread, and title update the saved copy. Offline copies
+remain available when a newer version hasn't been received.
 
-`q` is the fez query language in plain words: `open approvals`, `open tasks`,
-`pages this week`, `mentions`, `runs`. Rows: `{ id, title, group, who?, done?, ts, meta? }`.
+Sharing publishes a new, user-signed copy at the channel level after confirmation.
+If the original channel is unavailable or archived, sharing is disabled.
 
-## The trust model (why this is safe)
+Older saves used one device-wide store with no account or workspace. When their
+original artifacts are loaded in the current workspace, the library offers
+**Import older saves**. Import copies the verified artifacts into this account's
+library and leaves the old storage intact. Open the original channel to load
+its artifacts if an older save isn't offered yet.
 
-The tool runs in an origin-null iframe: no cookies, no parent DOM, **no keys, no
-network egress** (CSP `connect-src 'none'`). The only data it can touch is what a
-**bounded, validated query** returns. It can render anything and read what you
-let it; it can do nothing else.
+Extension export is deferred. The library focuses on saving, reopening, and
+sharing artifacts; it doesn't turn them into installable packages.
 
-Write-back — a tool that publishes *as you* — is the wallet shape: the tool can
-only **propose** a bounded, allowlisted action, and the host describes it to you
-and publishes only on your explicit per-write consent. It never holds a key.
+## Implementation
 
-- `window.fez.react(messageId, emoji)` — add a reaction, as you
-- `window.fez.message(text)` — post into the tool's own thread, as you
-- `window.fez.task(text, done)` — tick/untick a checkbox on a page or doc, as you
-
-Writes are bound to the channel (and thread) the tool was published into —
-never to whichever channel you happen to be looking at. Reads are free;
-every write asks.
-
-Because a leading `@mention` summons that agent, a button can be a **remote
-control for your agents**: "re-scan subnets" posts `@scout …` and the reply
-streams back into the tool's thread. Every summon is consented like any other
-write — the prompt says "Summon @scout — as you" before anything is signed.
-
-## The crystallize surface (gui part)
-
-Loom's gui part owns what happens when a tool is worth keeping:
-
-- **★ keep** — in the tool pane's header; lifts a tool out of scrollback
-- **▣ tools** — a rail view listing kept tools; reopen any in the pane
-- **⇪ share** — publish a kept tool back into its home channel
-- **⤓ export** — scaffold it into a real, publishable fez extension
-
-The sandbox and the read/consent bridge stay in fez core — the boundary that
-contains untrusted generated HTML can't be declared by an extension, and any
-agent can emit a live artifact, not just `@loom`. Uninstall loom and the
-crystallize surface vanishes; tools already shared into channels keep working.
-
-## Status
-
-Experimental. The `@loom` builder persona, the read bridge (`artifact:live` in
-fez core), the tool pane, consented write-back, and the crystallize surface
-(★ keep → ▣ tools → ⇪ share → ⤓ export) all ship.
+The GUI uses the host's artifact action, navigation, and `openTool` interfaces.
+Core owns the sandbox and live read/consent bridge. Uninstalling Loom removes
+the library UI; artifacts already published in channels keep working.

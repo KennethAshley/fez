@@ -1,0 +1,8 @@
+test/synth.test.ts:
+(pass) draws tasks from the pool by index, wrapping around [0.02ms]
+(pass) every posting gets a fresh identity [0.20ms]
+
+ 301 pass
+ 0 fail
+ 974 expect() calls
+Ran 301 tests across 34 files. [7.49s]

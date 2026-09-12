@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-10T03:11:01.638Z",
+  "persona": "drift",
+  "target": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+  "hours": 0.05,
+  "grossRao": "5000000",
+  "network": "test",
+  "accountedUsdIncludingReservation": 17.476563000000006
+}

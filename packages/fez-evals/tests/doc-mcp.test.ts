@@ -22,6 +22,7 @@ vi.mock("@fezchat/protocol", async importOriginal => {
   return {
     ...actual, getKey: () => Buffer.from(key).toString("hex"), resolveRelays: () => ["ws://docs.invalid"],
     fetchRelayInfo: async () => ({ pubkey: pk }),
+    pinWorkspaceOwner: (_relay: string, advertised?: string) => advertised,
     RelayConnection: class {
       async connect() {}
       async query(filters: Filter[]) { return [...new Map(filters.flatMap(f => harness.events.filter(e => matchFilter(f, e)).sort((a, b) => b.created_at - a.created_at).slice(0, f.limit)).map(e => [e.id, e])).values()]; }

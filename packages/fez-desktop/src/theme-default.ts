@@ -47,6 +47,7 @@ export const BUILT_IN_DEFAULT = {
     "--viz-ok": "#43a56c",
     "--viz-fail": "#fb4934",
     "--font-mono": 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
+    "--font-ui": '-apple-system, "SF Pro Text", Helvetica, sans-serif',
   },
   light: {
     "--bg0": "#fbf1c7",
@@ -72,5 +73,6 @@ export const BUILT_IN_DEFAULT = {
     "--viz-ok": "#79740e",
     "--viz-fail": "#9d0006",
     "--font-mono": 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
+    "--font-ui": '-apple-system, "SF Pro Text", Helvetica, sans-serif',
   },
 };

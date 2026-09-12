@@ -32,9 +32,9 @@ package's `package.json`:
   loaded only by a relay started with `--extensions`. The relay holds no
   signing key, so a relay part can *record and serve* but never speak.
 - **headless** — commands and scheduled tasks that run beside the
-  owner's key, loaded by the **TUI and the sentinel** — the half that CAN
-  speak on the relay. This is the */obsidian* path — and why the system
-  works with no GUI at all.
+  owner's key, loaded by the TUI. Permitted background parts also load in
+  the desktop worker or optional sentinel. This is the */obsidian* path;
+  headless operation works without a GUI.
 - **workspace** — gives a `repo:` persona a working checkout.
 - **gui** — panels, cards, thread and page views only the desktop renders,
   each behind a permission the install dialog names (`personas` is the
@@ -42,7 +42,7 @@ package's `package.json`:
 - **bin** — npm's own `bin` map, honored: executables land in
   `~/.fez/bin`.
 - **background** — opts the headless part's scheduled tasks into the
-  always-on [sentinel](/self-hosting). An allowlist, not a default:
+  desktop worker or optional [headless sentinel](/self-hosting). An allowlist, not a default:
   an extension written for the TUI would otherwise start doing its
   foreground job a second time inside the always-on process.
 - **`skill`** — an MCP server definition, merged into the machine's tool
@@ -77,7 +77,16 @@ fez link <dir>          # dev-install a local package: build, register parts, sm
 
 The desktop's extension gallery installs the same packages with no node or
 npm on the machine — it fetches the tarball itself. Gui parts appear live;
-headless and relay parts load when their host restarts.
+headless and relay parts load when their host restarts. The current source
+desktop runs background headless parts in a separate process; Quit and reopen
+the app to restart it. Closing the window keeps it alive.
+
+For GitHub sources, Fez reviews a native package's complete declared components
+and permissions at an exact commit. The repository or selected package directory
+must include its built outputs; the desktop does not build code or run install
+scripts. Plugins for other hosts can instead offer an explicit
+[skills-only import](/concepts/skills#import--from-github), with unsupported
+integrations listed before approval.
 
 Removal keeps the tool *definition*: personas may still declare it, and any
 secret values you filled are yours ([custody](/concepts/tools#secrets)).

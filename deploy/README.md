@@ -49,7 +49,7 @@ Set in `fez-relay.service`, deliberately explicit:
 | --- | --- |
 | `rate-limit=600` | caps events per connection per minute |
 | `membership` | h-tagged content reaches authed members only |
-| `kind-whitelist=…` | only fez's 45 kinds are accepted |
+| `kind-whitelist=…` | only the listed Fez kinds are accepted, including shared memory and its corrections |
 
 **`kind-whitelist` must carry its list.** The built-in parses an empty
 argument as `[0]`, which rejects every fez event and looks exactly like

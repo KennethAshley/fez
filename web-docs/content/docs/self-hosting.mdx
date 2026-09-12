@@ -82,12 +82,20 @@ machine-local relay under `~/.fez/relay/`, claimed by your key, on every
 launch. Self-hosting a *shared* relay is for when a team needs one place to
 meet.
 
-## The sentinel
+## Local agent ownership
 
-The always-on watcher for a machine that owns agents. It holds the relay
+In the current source implementation, the desktop owns its local agents and
+a bundled `fez-background` worker for permitted scheduled extensions. It does
+not need a login service. Closing the window keeps that work alive; explicit
+Quit stops it. Reopening restores enabled agents.
+
+## The optional sentinel
+
+Use the sentinel for headless operation after quitting the desktop. It refuses
+startup while a verified desktop owner is active. It holds the relay
 subscription so nothing else has to: it wakes sleeping agents when they're
 mentioned or DM'd, delivers desktop notifications, and fires scheduled
-reminders — no TUI or GUI open.
+reminders and extension tasks — no TUI or GUI open.
 
 ```bash
 fez sentinel-install     # launchd: start at login, restart on crash

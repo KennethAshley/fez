@@ -16,8 +16,9 @@ export function nodeStatePersistence(file?: string): StatePersistence {
     read: () => {
       try {
         return fs.readFileSync(stateFile, "utf-8");
-      } catch {
-        return undefined;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
       }
     },
     write: (text) => {

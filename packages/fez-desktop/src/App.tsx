@@ -5,11 +5,13 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyEvent, installNotificationClick } from "./notify";
-import { FezClient, dmConvoKey, setStatePersistence, type Artifact, type InputHistoryEntry, type PendingInput, type MediaAttachment, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
+import { FezClient, dmConvoKey, latestArtifacts, setStatePersistence, type Artifact, type InputHistoryEntry, type PendingInput, type MediaAttachment, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
 import { embedUrls, mediaKind } from "./media-kind";
 import { BrowserWire, rustSigner } from "./wire";
 import { relaySet, setRelays } from "./relay";
 import { fetchRelayInfo } from "../../../src/protocol/nip11";
+import { parseWorkspaceInvite } from "../../fez-client/src/workspace-invite";
+import { normalizeWorkspaceRelay } from "../../fez-client/src/workspace-owner";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
@@ -38,12 +40,14 @@ import { listen } from "@tauri-apps/api/event";
 // voice is stderr — this is how its failure reaches a human (same
 // module-level wiring as updater.ts).
 void listen<string>("agent-install-failed", (e) => toast.error(e.payload));
+void listen<string>("always-on-error", (e) => toast.error(e.payload));
 import { startSummoner } from "./summoner";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setChannelOpener, setPanelOpener, setToolOpener, setGuestDmOpener, extensionNavViews, navChannelId, extensionArtifactActions, type ArtifactAction, type NavView } from "./gui-extensions";
 import type { MountRender } from "./mount-result";
 import { GuestThreadView, addGuest, listGuests, removeGuest, useGuestUnreads } from "./guest-threads";
 import { MountPoint } from "./MountPoint";
 import { matchAction, nextUnreadChannel } from "./keymap";
+import { moveChannel, orderChannels, useChannelOrder } from "./channel-order";
 import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
 import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers, gitInstallOffers, GitInstallOffer } from "./InstallOffer";
@@ -60,11 +64,13 @@ import { runCommand } from "./commands";
 import { startUpdateCheck } from "./updater";
 import Onboarding from "./Onboarding";
 import AiSetupDialog from "./AiSetupDialog";
+import QuitDialog from "./QuitDialog";
 import FirstRun, { FirstTask } from "./FirstRun";
 import HistoryStatus from "./HistoryStatus";
 import { isNostrKeyInput, pubkeyFromInput, resolvePubkeyInput } from "./public-key";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
 import { messageDecorators, settingsPanelForSource, extensionSettingsPanels } from "./gui-extensions";
+import { norm } from "./extensions-catalog";
 import { EMOJI, searchEmoji } from "./emoji";
 import HireProposalCard from "./HireProposalCard";
 import "./App.css";
@@ -195,23 +201,16 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
         throw new Error(`couldn't start your local workspace: ${detail}`, { cause: err });
       }
     }
-    const wire = new BrowserWire(relaySet(), rustSigner(pubkey));
+    const wire = new BrowserWire(relaySet(), rustSigner(pubkey, ACCOUNT));
     const client = new FezClient(wire);
-    await client.start();
-
-    // An invite accepted during onboarding is claimed HERE, with the
-    // final identity — you cannot be a member before you are anybody,
-    // and claiming it earlier would bind the membership to a key that
-    // is about to be replaced.
-    // An invite is a relay URL now — the workspace IS the relay, so
-    // "joining" is opening it. Nothing to claim against a community id.
-    const pendingRelay = localStorage.getItem("fez-pending-invite");
-    if (pendingRelay) {
-      localStorage.removeItem("fez-pending-invite");
-      try {
-        await client.openWorkspace(pendingRelay);
-      } catch { /* unreachable relay — the rail still remembers it */ }
+    const pendingInvite = localStorage.getItem("fez-pending-invite");
+    if (pendingInvite) {
+      const invitation = parseWorkspaceInvite(pendingInvite);
+      if (normalizeWorkspaceRelay(relaySet()[0]) !== invitation.relay) throw new Error("Pending invite does not match the selected relay");
+      client.state.open(invitation.relay, undefined, invitation.owner);
     }
+    await client.start();
+    if (pendingInvite) localStorage.removeItem("fez-pending-invite");
     // A relay provisioned with --owner arrives CLAIMED but empty — the
     // in-app claim flow (where the owner names the first channel) never
     // runs for it, so the owner lands in a workspace with no rooms and
@@ -324,6 +323,10 @@ function BootError({ message, onRetry }: { message: string; onRetry: () => void 
 }
 
 export default function App() {
+  return <><QuitDialog /><BootApp /></>;
+}
+
+function BootApp() {
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
   const [connected, setConnected] = useState(true);
   const [relayHealth, setRelayHealth] = useState<{ url: string; connected: boolean }[]>([]);
@@ -361,7 +364,7 @@ export default function App() {
       // identity anyway, and a missing brain degrades with its own
       // honest message downstream).
       try {
-        await invoke<string>("get_identity", { account: ACCOUNT });
+        await invoke<string>("get_pubkey", { account: ACCOUNT });
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
@@ -519,6 +522,10 @@ function Shell({
     setHidden(next);
   };
   const [showStowed, setShowStowed] = useState(false);
+  const [channelOrder, saveChannelOrder] = useChannelOrder(client.pubkey, wire.relays[0]);
+  const draggedChannel = useRef<string | undefined>(undefined);
+  const [channelDrop, setChannelDrop] = useState<{ id: string; after: boolean }>();
+  const [channelOrderStatus, setChannelOrderStatus] = useState("");
   // A live tool's proposed write, awaiting the human's yes/no — the wallet
   // prompt. The tool never signs; this dialog is the only path to publish.
   const [toolConsent, setToolConsent] = useState<{ desc: string; resolve: (ok: boolean) => void }>();
@@ -677,34 +684,22 @@ function Shell({
       });
     }) as never);
     client.on("reminderDue", ((note: string) => {
-      void (async () => {
-        // The sentinel delivers OS notifications when it's alive — one
-        // notifier per machine (same rule as the summoner). Otherwise
-        // this window is the only deliverer, so it owes a real native
-        // notification (same mechanism as the dmMessage handler above),
-        // not just an in-app toast.
-        const sentinel = await invoke<boolean>("runner_status").catch(() => false);
-        if (!sentinel) {
-          notifyEvent({
-            key: `reminder:${note}`,
-            kind: "needs_action",
-            title: "⏰ Reminder",
-            body: note,
-            label: "Reminders",
-          });
-        }
-      })();
+      notifyEvent({
+        key: `reminder:${note}`,
+        kind: "needs_action",
+        title: "⏰ Reminder",
+        body: note,
+        label: "Reminders",
+      });
     }) as never);
 
-    // The desktop's own summon host — spawns @-mentioned agents from
-    // this live subscription while the app is open, deferring entirely
-    // to a running sentinel (see summoner.ts). Same wire the rest of
-    // Shell already reads/writes; no new props threaded in.
+    // Native startup takes ownership and restores local work before the
+    // live summon subscription starts; it reconciles while this app lives.
     const stopSummoner = startSummoner({
       wire,
       ownerPubkey: client.pubkey,
       relays: relaySet(),
-      toast: (m) => toast.info(m, 0),
+      toast: (m) => toast.error(m),
     });
 
     return () => {
@@ -851,8 +846,7 @@ function Shell({
         break;
       case "next-unread":
       case "prev-unread": {
-        const order = [...client.state.workspace.channels.keys()];
-        const dest = nextUnreadChannel(order, unreads, scope?.channelId, action === "next-unread" ? 1 : -1);
+        const dest = nextUnreadChannel(visibleChannelOrder, unreads, scope?.channelId, action === "next-unread" ? 1 : -1);
         if (dest) void openChannel(dest);
         break;
       }
@@ -1013,8 +1007,42 @@ function Shell({
     return (
       <button
         key={channel.id}
-        className={`channel${active ? " active" : ""}${muted.has(channel.id) ? " muted" : ""}`}
-        title={`${members} member${members === 1 ? "" : "s"} in this workspace — right-click for options`}
+        className={`channel${active ? " active" : ""}${muted.has(channel.id) ? " muted" : ""}${channelDrop?.id === channel.id ? (channelDrop.after ? " drop-after" : " drop-before") : ""}`}
+        title={`${members} member${members === 1 ? "" : "s"} in this workspace — drag to reorder, Alt+Shift+↑/↓ to move, right-click for options`}
+        aria-keyshortcuts="Alt+Shift+ArrowUp Alt+Shift+ArrowDown"
+        draggable
+        onDragStart={(e) => {
+          draggedChannel.current = channel.id;
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("application/x-fez-channel", channel.id);
+          setCtxMenu(undefined);
+        }}
+        onDragOver={(e) => {
+          if (!canMoveChannel(draggedChannel.current, channel.id)) { setChannelDrop(undefined); return; }
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "move";
+          const rect = e.currentTarget.getBoundingClientRect();
+          setChannelDrop({ id: channel.id, after: e.clientY > rect.top + rect.height / 2 });
+        }}
+        onDragLeave={() => setChannelDrop(undefined)}
+        onDragEnd={() => { draggedChannel.current = undefined; setChannelDrop(undefined); }}
+        onDrop={(e) => {
+          const id = draggedChannel.current;
+          if (!id || !canMoveChannel(id, channel.id)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const rect = e.currentTarget.getBoundingClientRect();
+          reorderChannel(id, channel.id, e.clientY > rect.top + rect.height / 2);
+          draggedChannel.current = undefined;
+          setChannelDrop(undefined);
+        }}
+        onKeyDown={(e) => {
+          if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          moveChannelBy(channel.id, e.key === "ArrowUp" ? -1 : 1);
+        }}
         onClick={() => void openChannel(channel.id)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -1056,7 +1084,7 @@ function Shell({
   // everyone) or hidden (this machine only). Kept aside so they can be
   // restored, never silently dropped.
   const stowed: { id: string; name: string; archived: boolean }[] = [];
-  for (const channel of client.state.workspace.channels.values()) {
+  for (const channel of orderChannels(client.state.workspace.channels.values(), channelOrder)) {
     if (channel.archived || hidden.has(channel.id)) {
       stowed.push({ id: channel.id, name: channel.name, archived: !!channel.archived });
       continue;
@@ -1069,6 +1097,31 @@ function Shell({
       ownChannels.push(channel);
     }
   }
+
+  const channelGroups = [ownChannels, ...bridged.values()];
+  const visibleChannelOrder = channelGroups.flatMap(group => group.map(channel => channel.id));
+  const groupByChannel = new Map(channelGroups.flatMap(group => group.map(channel => [channel.id, group] as const)));
+  const canMoveChannel = (id: string | undefined, target: string) =>
+    !!id && id !== target && groupByChannel.has(id) && groupByChannel.get(id) === groupByChannel.get(target);
+  const channelNeighbor = (id: string, direction: number) => {
+    const group = groupByChannel.get(id) ?? [];
+    return group[group.findIndex(channel => channel.id === id) + direction]?.id;
+  };
+  const reorderChannel = (id: string, target: string, after: boolean) => {
+    if (!canMoveChannel(id, target)) return;
+    // Retain stowed and not-yet-loaded IDs so hiding or a partial relay replay doesn't lose their place.
+    const next = moveChannel([...new Set([...channelOrder, ...client.state.workspace.channels.keys()])], id, target, after);
+    try {
+      saveChannelOrder(next);
+      const group = orderChannels(groupByChannel.get(id) ?? [], next);
+      const index = group.findIndex(channel => channel.id === id);
+      setChannelOrderStatus(`#${group[index].name} moved to position ${index + 1} of ${group.length}`);
+    } catch { toast.error("Could not save channel order. Please try again."); }
+  };
+  const moveChannelBy = (id: string, direction: number) => {
+    const target = channelNeighbor(id, direction);
+    if (target) reorderChannel(id, target, direction > 0);
+  };
 
   // Which extension's settings modal is open, by panel name.
   const [extSettings, setExtSettings] = useState<string | undefined>(undefined);
@@ -1083,6 +1136,7 @@ function Shell({
     <div className="shell" style={{ "--rail-w": `${railW}px`, "--pane-w": `${paneW}px` } as React.CSSProperties}>
       <BootSplash loading={false} />
       <Toaster />
+      <div className="channel-order-status" role="status">{channelOrderStatus}</div>
       {!connected && (
         <div className="conn-bar">
           {relayHealth.length > 1 ? `all ${relayHealth.length} relays unreachable` : "relay disconnected"} — reconnecting…
@@ -1283,13 +1337,16 @@ function Shell({
             {dmConvos.slice(0, 10).map(([key, convo]) => {
               const group = key.includes("+");
               const active = view.kind === "dm" && view.convoKey === key;
-              return (
-                <HoverCard key={key} client={client} pk={key}>
-                  <button className={active ? "channel active" : "channel"} onClick={() => openDm(key)}>
-                    {!group && <Avatar pk={key} size={16} title={client.dmTitle(key)} />}
-                    {group ? <span className="group-mark">&</span> : <span className={client.isOnline(key) ? "dot on" : "dot off"} />} {client.dmTitle(key)}
-                    {convo.unread > 0 && !active && <span className="badge">{convo.unread}</span>}
-                  </button>
+              const row = (
+                <button key={key} className={active ? "channel active" : "channel"} onClick={() => openDm(key)}>
+                  {!group && <Avatar pk={key} size={16} title={client.dmTitle(key)} quip={false} />}
+                  {group ? <span className="group-mark">&</span> : <span className={client.isOnline(key) ? "dot on" : "dot off"} />} {client.dmTitle(key)}
+                  {convo.unread > 0 && !active && <span className="badge">{convo.unread}</span>}
+                </button>
+              );
+              return group ? row : (
+                <HoverCard key={key} client={client} pk={key} onProfile={() => setPane({ kind: "profile", pk: key })}>
+                  {row}
                 </HoverCard>
               );
             })}
@@ -1305,9 +1362,9 @@ function Shell({
                 .sort(([apk, an], [bpk, bn]) => Number(client.isOnline(bpk)) - Number(client.isOnline(apk)) || an.localeCompare(bn))
                 .slice(0, 8);
               return cast.map(([pk, agentName]) => (
-                <HoverCard key={pk} client={client} pk={pk}>
+                <HoverCard key={pk} client={client} pk={pk} onProfile={() => setPane({ kind: "profile", pk })}>
                   <button className="channel cast" onClick={() => openDm(pk)}>
-                    <Avatar pk={pk} size={16} title={agentName} />
+                    <Avatar pk={pk} size={16} title={agentName} quip={false} />
                     <span className={client.isOnline(pk) ? "dot on" : "dot off"} /> {agentName}
                   </button>
                 </HoverCard>
@@ -1555,7 +1612,7 @@ function Shell({
       )}
       {view.kind === "guest" && (() => {
         const guest = listGuests().find((g) => g.pk === view.pk);
-        return guest ? <GuestThreadView key={guest.pk} wire={wire} selfPk={client.pubkey} guest={guest} /> : null;
+        return guest ? <GuestThreadView key={guest.pk} wire={wire} selfPk={client.pubkey} guest={guest} client={client} /> : null;
       })()}
       {view.kind === "home" && (
         <HomeView
@@ -1609,6 +1666,14 @@ function Shell({
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
       {ctxMenu && (
         <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+          <button disabled={!channelNeighbor(ctxMenu.channelId, -1)} onClick={() => {
+            moveChannelBy(ctxMenu.channelId, -1);
+            setCtxMenu(undefined);
+          }}>move up</button>
+          <button disabled={!channelNeighbor(ctxMenu.channelId, 1)} onClick={() => {
+            moveChannelBy(ctxMenu.channelId, 1);
+            setCtxMenu(undefined);
+          }}>move down</button>
           <button
             onClick={() => {
               const newest = client.messages(ctxMenu.channelId).at(-1);
@@ -1766,7 +1831,7 @@ function Shell({
                 space-betweens them, and wrapping both in a row put them
                 in one box together at the left. */}
             <header className="pane-head">
-              <span className="wiki-title">{extSettings}</span>
+              <span className="wiki-title">{norm(extSettings)}</span>
               <button className="pane-close" onClick={() => setExtSettings(undefined)}>✕</button>
             </header>
             <div className="pane-body">
@@ -1832,6 +1897,7 @@ function Shell({
       {pane?.kind === "manage" && (
         <ManagePane
           client={client}
+          onProfile={(pk) => setPane({ kind: "profile", pk })}
           onOpenChannel={(channelId) => void openChannel(channelId)}
           onClose={() => setPane(undefined)}
         />
@@ -2069,20 +2135,14 @@ function ChannelView({
   // the latest per (thread, author, title) — one handle, one view. Keying
   // on the root keeps two threads' same-titled tools distinct. Non-live
   // artifacts (a distinct html/table/image each time) are left as-is.
-  const latestLive = new Map<string, Artifact>();
-  for (const a of allArtifacts) {
-    if (a.type !== "live") continue;
-    const key = [a.rootId ?? "top", a.authorName, a.title ?? ""].join(" | ");
-    const prev = latestLive.get(key);
-    if (!prev || a.ts > prev.ts) latestLive.set(key, a);
-  }
+  const latestLive = latestArtifacts(allArtifacts.filter(a => a.type === "live"));
   // One thread, one button, one pane: a tool lives in the thread that built
   // it. Inside that thread it shows its handle; the channel view shows only
   // top-level tools (no thread root) — a threaded tool is reached by opening
   // its thread, not by a handle floating loose in the channel.
   const liveTools = threadRoot
-    ? [...latestLive.values()].filter((a) => a.rootId === threadRoot)
-    : [...latestLive.values()].filter((a) => !a.rootId);
+    ? latestLive.filter((a) => a.rootId === threadRoot)
+    : latestLive.filter((a) => !a.rootId);
   // Non-live artifacts (html/image/table) render inline, but scope to their
   // thread the SAME way as tools: a thread shows its own, the channel shows
   // only top-level ones. An artifact built inside a thread stays there —
@@ -2892,25 +2952,24 @@ function DmView({
               to, in the same grammar as their rail row — face, presence,
               name. A group shows its little pile instead. */}
           {group ? (
-            <span className="party-pile">
-              {peers.filter((pk) => pk !== client.pubkey).slice(0, 3).map((pk) => (
-                <span key={pk} className="party-pile-face">
-                  <Avatar pk={pk} size={18} title={client.displayName(pk)} quip={false} />
-                </span>
-              ))}
-            </span>
-          ) : (
-            <Avatar pk={convoKey} size={20} title={client.dmTitle(convoKey)} quip={false} />
-          )}
-          {group ? (
-            client.dmTitle(convoKey)
-          ) : (
             <>
-              <HoverCard client={client} pk={convoKey}>
-                <button className="author" title="profile" onClick={() => onProfile(convoKey)}>{client.dmTitle(convoKey)}</button>
-              </HoverCard>
-              <span className={client.isOnline(convoKey) ? "dot on" : "dot off"} />
+              <span className="party-pile">
+                {peers.filter((pk) => pk !== client.pubkey).slice(0, 3).map((pk) => (
+                  <span key={pk} className="party-pile-face">
+                    <Avatar pk={pk} size={18} title={client.displayName(pk)} quip={false} />
+                  </span>
+                ))}
+              </span>
+              {client.dmTitle(convoKey)}
             </>
+          ) : (
+            <HoverCard client={client} pk={convoKey} onProfile={() => onProfile(convoKey)}>
+              <button className="author dm-profile-trigger" aria-label={`View ${client.dmTitle(convoKey)}'s profile`} onClick={() => onProfile(convoKey)}>
+                <Avatar pk={convoKey} size={20} title={client.dmTitle(convoKey)} quip={false} />
+                {client.dmTitle(convoKey)}
+                <span className={client.isOnline(convoKey) ? "dot on" : "dot off"} />
+              </button>
+            </HoverCard>
           )}
           <span className="dm-note">⚷ end-to-end encrypted{group ? " · every participant sees every message" : ""}</span>
         </div>
@@ -3586,9 +3645,9 @@ function Bubble({
       >
         <Avatar pk={msg.authorPk} title={msg.authorName} size={30} />
       </button>
-      {cardAt && <UserCard pk={msg.authorPk} at={cardAt} client={client} onClose={() => setCardAt(null)} />}
+      {cardAt && <UserCard pk={msg.authorPk} at={cardAt} client={client} onProfile={() => onAuthor?.()} onClose={() => setCardAt(null)} />}
       <div className="bubble-head">
-        <HoverCard client={client} pk={msg.authorPk}>
+        <HoverCard client={client} pk={msg.authorPk} onProfile={onAuthor}>
           <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
         </HoverCard>
         {(() => {

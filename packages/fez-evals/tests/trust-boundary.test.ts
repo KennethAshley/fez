@@ -330,12 +330,11 @@ describe("createChannel (owner-signed only)", () => {
   });
 
   test("a non-owner is refused", async () => {
-    // Take ownership away and the same call must fail — the check is
-    // "am I the owner", not "is there a community".
-    const owner = client.state.workspace.owner;
-    client.state.describe({ owner: MALLORY });
+    // A separate workspace has its own immutable owner.
+    const relay = client.state.workspace.relay;
+    client.state.open("wss://mallory-workspace.example", undefined, MALLORY);
     await expect(client.createChannel("nope")).rejects.toThrow(/owner/);
-    client.state.describe({ owner });
+    client.state.open(relay);
   });
 
 });

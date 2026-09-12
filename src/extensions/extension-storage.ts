@@ -48,7 +48,11 @@ export function makeStorage(name: string, dataDir: string = fezHome("extension-d
   };
   const save = async (data: Record<string, unknown>): Promise<void> => {
     await fs.mkdir(dataDir, { recursive: true });
-    await fs.writeFile(file, JSON.stringify(data, null, 2), "utf-8");
+    const tmp = `${file}.${crypto.randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(tmp, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
+      await fs.rename(tmp, file);
+    } finally { await fs.rm(tmp, { force: true }); }
   };
 
   return {

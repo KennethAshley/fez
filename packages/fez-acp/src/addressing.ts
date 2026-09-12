@@ -11,6 +11,8 @@
  *   summoning B to answer A, straight into the depth cap).
  * - Name matching is the auto-spawn bootstrap: a mention of a
  *   not-yet-running agent can't carry its p-tag.
+ * - Explicit task tags address their worker independently of prose;
+ *   the caller still verifies the signature, author policy, and roster.
  */
 import { proseMentions } from "@fezchat/protocol";
 

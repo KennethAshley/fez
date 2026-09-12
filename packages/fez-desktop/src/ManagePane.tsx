@@ -8,6 +8,9 @@ import { invitePersona } from "./invite-persona";
 import Avatar from "./Avatar";
 import UserCard from "./UserCard";
 import { resolvePubkeyInput } from "./public-key";
+import { parseWorkspaceInvite, workspaceInvite } from "../../fez-client/src/workspace-invite";
+import { resolveWorkspaceOwner } from "../../fez-client/src/workspace-owner";
+import { pinDesktopWorkspaceOwner } from "./wire";
 
 /**
  * Channel/workspace management — Buzz's ChannelManagementSheet as a fez
@@ -20,10 +23,12 @@ import { resolvePubkeyInput } from "./public-key";
 export default function ManagePane({
   client,
   onOpenChannel,
+  onProfile,
   onClose,
 }: {
   client: FezClient;
   onOpenChannel: (channelId: string) => void;
+  onProfile: (pk: string) => void;
   onClose: () => void;
 }) {
   const current = client.state.currentChannel();
@@ -85,7 +90,7 @@ export default function ManagePane({
             )}
           </div>
         ))}
-        {card && <UserCard pk={card.pk} at={card} client={client} onClose={() => setCard(null)} />}
+        {card && <UserCard pk={card.pk} at={card} client={client} onProfile={onProfile} onClose={() => setCard(null)} />}
 
         {amCreator && <InviteBox client={client} onResult={flash} />}
 
@@ -108,7 +113,7 @@ export default function ManagePane({
         )}
 
         <div className="manage-section">invite link</div>
-        <InviteCode communityName={client.state.workspace.name} />
+        <InviteCode communityName={client.state.workspace.name} owner={client.state.workspace.owner} />
 
         {amCreator && (
           <CreateRow
@@ -147,7 +152,7 @@ function isLoopback(url: string): boolean {
  * skipped, and when every relay is loopback we say so instead of
  * producing a code that cannot work.
  */
-function InviteCode({ communityName }: { communityName: string }) {
+function InviteCode({ communityName, owner }: { communityName: string; owner?: string }) {
   const [copied, setCopied] = useState(false);
   const relays = relaySet();
   const reachable = relays.find((r) => !isLoopback(r));
@@ -172,8 +177,8 @@ function InviteCode({ communityName }: { communityName: string }) {
     );
   }
 
-  // The workspace IS the relay — an invite is its URL, nothing more.
-  const code = `fez-join:${reachable}`;
+  if (!owner) return <p className="settings-hint">Connect to a trusted workspace before sharing an invite.</p>;
+  const code = workspaceInvite(reachable, owner);
   return (
     <>
       <code
@@ -206,13 +211,10 @@ function JoinByCode({
   const [pending, setPending] = useState(false);
   const join = async () => {
     if (pending) return;
-    // An invite is just a relay now. The workspace IS the relay, so
-    // there is no community id to carry and nothing to look up — the
-    // old fez-join:<relay>#<community> form is still accepted, with the
-    // trailing id ignored, so codes already in circulation keep working.
-    const match = /^fez-join:([^#]+)(?:#.*)?$/i.exec(code.trim());
-    if (!match) return onResult("✗ not an invite code — expected fez-join:<relay>");
-    const relay = match[1].trim();
+    let invitation: ReturnType<typeof parseWorkspaceInvite>;
+    try { invitation = parseWorkspaceInvite(code); }
+    catch (error) { return onResult(`✗ ${error instanceof Error ? error.message : String(error)}`); }
+    const { relay, owner: expectedOwner } = invitation;
     // The code stays in the input until the join lands — an unreachable
     // relay used to clear it first and report nothing, so a mistyped
     // invite was simply gone.
@@ -223,10 +225,13 @@ function JoinByCode({
       const info = await fetchRelayInfo(relay);
       if (!info) throw new Error("relay unavailable — check the invite and try again");
       if (!info.pubkey) throw new Error("this relay has no workspace owner yet");
+      const known = client.state.known.find(w => w.relay === relay)?.owner;
+      const owner = resolveWorkspaceOwner(known, info.pubkey, expectedOwner);
+      await pinDesktopWorkspaceOwner(relay, info.pubkey, owner);
       // A workspace switch needs a fresh client and subscriptions. Merely
       // changing its state kept reading and publishing on the old relay.
       await setRelays([url.href], { requirePersistence: true });
-      client.state.open(url.href, info.name);
+      client.state.open(url.href, info.name, owner);
       window.location.reload();
     } catch (err) {
       onResult(`✗ couldn't open ${relay}: ${err instanceof Error ? err.message : String(err)}`);

@@ -26,6 +26,8 @@ export const KIND_AGENT_ATTESTATION = 47006;
  * ["e", workEventId]? (the merge, 47003 result, or message accepted),
  * ["h", channelId]?. Content: short plaintext of what was done.
  * Positive-only by construction: published on acceptance, nothing otherwise.
+ * A payment receipt can back a chit only when signer, agent, and explicit
+ * work id match. A receipt alone is never evidence of accepted work.
  * Valid on any relay — validity is only the issuer's signature — so an
  * agent republishing chits it received where it's being evaluated is
  * expected behavior. See docs/superpowers/specs/2026-09-05-salt-reputation-design.md.
@@ -72,8 +74,9 @@ export const KIND_AGENT_AUDIT = 47020;
  */
 export const KIND_TURN_METRIC = 47030;
 
-/** A payment, e-tagged to the message it paid for. Signed by the payer;
- * verifiable by anyone against the block it names. */
+/** A payment, optionally e-tagged to the work it paid for. Signed by the
+ * payer; verifiable against the block it names. This records payment,
+ * including prepaid leases, not acceptance — acceptance needs a chit. */
 export const KIND_PAYMENT_RECEIPT = 47040;
 
 // 47041 is RESERVED: the bazaar's npub↔hotkey binding kind (fez-bazaar
@@ -137,12 +140,12 @@ export const KIND_PAIRING = 24134;
  *
  * Trust — flattening the STRUCTURE does not hand authority to the RELAY:
  *
- * - The workspace's **owner** is a pubkey the relay advertises in NIP-11
- *   (`pubkey`, the standard administrative-contact field). Buzz makes the
- *   relay sign its own roster; fez keeps a person signing, so moving hosts
- *   and keeping the key keeps the workspace.
- * - 47101/47102/30047 count only when signed by that owner. A relay that
- *   lies about its owner can only make its own events be ignored.
+ * - The workspace's **owner** is pinned from a trusted invite/configuration,
+ *   or from the first valid NIP-11 `pubkey` discovery. Later metadata cannot
+ *   rotate that pin; unavailable metadata does not erase it.
+ * - 47101/47102/30047 count only when signed by the trusted owner (with
+ *   roster-admin moderation where supported). A conflicting advertised
+ *   owner blocks bootstrap rather than changing whose signatures count.
  * - Regular (non-replaceable) kinds: relays keep every version; among the
  *   owner's events with the same d-tag the highest created_at wins, ties
  *   broken by lowest id, resolved client-side.
@@ -276,6 +279,19 @@ export const KIND_THREAD_SUMMARY = 39005;
  * like any agent.
  */
 export const KIND_WORKFLOW_RUN = 47200;
+
+/** Shared channel fact: append-only plaintext, tagged ["h", channelId], signed by a workspace member. */
+export const KIND_MEMORY = 47210;
+
+/**
+ * Correct or forget one shared fact without deleting its history. ["h", channelId]
+ * and exactly one ["e", originalMemoryId] target a kind-47210 fact in that channel.
+ * Only its author or a current workspace moderator may update it. The newest
+ * authorized update wins (lowest id on timestamp ties); its timestamp must be
+ * later than the original. Empty content forgets the fact; nonempty content
+ * replaces or restores it. Readers apply current membership and removal rules.
+ */
+export const KIND_MEMORY_UPDATE = 47211;
 
 /**
  * Agent engram — NIP-AE persistent agent memory (Buzz's spec,

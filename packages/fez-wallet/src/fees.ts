@@ -116,7 +116,7 @@ export async function burnRun(amountTao?: string, netuid = DEFAULT_NETUID): Prom
   requireWalletMutationAllowed();
   const pair = requirePersonaPair(BURN_VAULT);
   const config = loadConfig();
-  requireRehearsalNetwork(config.network);
+  requireRehearsalNetwork(config.network, config.endpoints.tao);
   const api = await subtensorFor(config.endpoints.tao);
   const free = (await api.query.system.account(pair.address)).data.free.toBigInt();
   const GAS_BUFFER = 5_000_000n; // keep the vault alive to burn another day

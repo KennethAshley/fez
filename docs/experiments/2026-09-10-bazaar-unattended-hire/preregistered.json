@@ -1,0 +1,21 @@
+{
+  "at": "2026-09-10T05:16:55.758627+00:00",
+  "successRequires": [
+    "one fresh signed paid task",
+    "real coding engine runs on the Air",
+    "automatic commit and push",
+    "signed success received by installed buyer MCP",
+    "existing and new repository tests pass",
+    "10 buyer checks pass",
+    "protected main unchanged"
+  ],
+  "failureRule": "No manual code edits, commit, push, or delivery replay after task submission. Any required recovery means this unattended test failed.",
+  "budget": {
+    "cumulativeCapUsd": 20,
+    "reservationUsd": 3,
+    "testnetLeaseTao": 0.015,
+    "airWatchdogSeconds": 660,
+    "stopAtReportedModelUsd": 1
+  },
+  "comparison": "Same failing baseline in a new repository and fresh agent session."
+}

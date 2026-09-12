@@ -1,3 +1,5 @@
+import { decodeAddress, encodeAddress } from "@polkadot/util-crypto";
+import { endpointFor } from "./networks.js";
 import { readEntry } from "./store.js";
 import { pairFromStored } from "./derive.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
@@ -58,9 +60,9 @@ export function requirePersonaPair(persona: string) {
 /** The write verbs are testnet-only for now (mainnet enablement is gated on
  * the roadmap's criteria) — refuse finney in a sentence, never silently.
  * ponytail: when mainnet opens, self-stake needs a consent story too. */
-export function requireRehearsalNetwork(network: Network): void {
-  if (network === "finney") {
-    throw new Error("register/stake/unstake are testnet-only for now — switch with: fez-wallet network test");
+export function requireRehearsalNetwork(network: Network, endpoint: string): void {
+  if (network !== "test" || endpoint !== endpointFor("test")) {
+    throw new Error("wallet writes are testnet-only and require the standard testnet endpoint — switch with: fez-wallet network test");
   }
 }
 
@@ -75,7 +77,7 @@ export async function stakePersona(persona: string, amount: string, netuid = DEF
   requireWalletMutationAllowed();
   const pair = requirePersonaPair(persona);
   const config = loadConfig();
-  requireRehearsalNetwork(config.network);
+  requireRehearsalNetwork(config.network, config.endpoints.tao);
   const parsed = parseAmount(amount, TAO_DECIMALS, "TAO");
   const api = await subtensorFor(config.endpoints.tao);
   // Balance-checked here for the plain refusal the spec asks for — the
@@ -94,7 +96,7 @@ export async function unstakePersona(persona: string, amount: string, netuid = D
   requireWalletMutationAllowed();
   const pair = requirePersonaPair(persona);
   const config = loadConfig();
-  requireRehearsalNetwork(config.network);
+  requireRehearsalNetwork(config.network, config.endpoints.tao);
   const parsed = parseAmount(amount, TAO_DECIMALS, "TAO"); // alpha shares TAO's 9 decimals
   const api = await subtensorFor(config.endpoints.tao);
   const staked = await stakedAlpha(api, netuid, pair.address, pair.address);
@@ -176,30 +178,45 @@ export async function personaStatus(persona: string, netuid = DEFAULT_NETUID): P
 /* ── escrow (spec 2026-09-03): a hire that pays, no custodian ──────────
  * All persona-signed and root-free, so mcp.ts imports them and agents
  * escrow each other. The chain is the state: an escrow is identified by
- * its three participants + amount, so release/refund re-derive it from
+ * its three participants, so release/refund re-derive it from
  * the same args — no registry to drift. */
 import { escrowAddress, openEscrow, approveRelease, type MultisigApi } from "./chains/escrow.js";
 
-const hex64 = (pk: string, role: string) => {
-  if (!/^[0-9a-f]{64}$/i.test(pk.replace(/^0x/, "")) && !/^5[1-9A-HJ-NP-Za-km-z]{47,48}$/.test(pk)) {
-    throw new Error(`${role} must be an ss58 address`);
-  }
-  return pk;
-};
+/** Check the checksum and network address format before preparing a transfer. */
+export function isTaoAddress(address: string): boolean {
+  try { return /^5[1-9A-HJ-NP-Za-km-z]{47,48}$/.test(address) && encodeAddress(decodeAddress(address), 42) === address; }
+  catch { return false; }
+}
 
-export interface EscrowResult { escrow: string; txHash: string; executed?: boolean }
+export function requireExpectedPayer(actual: string, expected?: string): void {
+  if (expected !== undefined && (!isTaoAddress(expected) || actual !== expected)) {
+    throw new Error("payer address changed — review the wallet and approve again");
+  }
+}
+
+function requireEscrowParties(poster: string, worker: string, arbiter: string): void {
+  if (![poster, worker, arbiter].every(isTaoAddress)) throw new Error("escrow participants must be checksummed ss58 addresses");
+  if (new Set([poster, worker, arbiter]).size !== 3) throw new Error("escrow requires three distinct participants");
+}
+
+export interface EscrowResult {
+  escrow: string; txHash: string; executed?: boolean;
+  payerAddress: string; network: "test"; poster: string; worker: string; arbiter: string; amount: string;
+}
 
 /** Poster funds a 2-of-3 escrow for a hire. worker+arbiter are ss58 addresses. */
-export async function escrowOpen(persona: string, worker: string, arbiter: string, amount: string): Promise<EscrowResult> {
+export async function escrowOpen(persona: string, worker: string, arbiter: string, amount: string, opts: { expectedPayer?: string } = {}): Promise<EscrowResult> {
   requireWalletMutationAllowed();
   const pair = requirePersonaPair(persona);
   const config = loadConfig();
-  requireRehearsalNetwork(config.network);
-  hex64(worker, "worker"); hex64(arbiter, "arbiter");
-  const api = (await subtensorFor(config.endpoints.tao)) as unknown as MultisigApi;
+  requireRehearsalNetwork(config.network, config.endpoints.tao);
+  requireExpectedPayer(pair.address, opts.expectedPayer);
+  requireEscrowParties(pair.address, worker, arbiter);
   const amountRao = parseAmount(amount, TAO_DECIMALS, "TAO").raw;
+  if (amountRao <= 0n) throw new Error("amount must be greater than zero");
+  const api = (await subtensorFor(config.endpoints.tao)) as unknown as MultisigApi;
   const { escrow, txHash } = await openEscrow(api, pair, { worker, arbiter, amountRao });
-  return { escrow, txHash };
+  return { escrow, txHash, payerAddress: pair.address, network: "test", poster: pair.address, worker, arbiter, amount: formatRao(amountRao) };
 }
 
 /** Approve paying the worker (release) or the poster (refund). The
@@ -212,15 +229,20 @@ export async function escrowApprove(
   worker: string,
   arbiter: string,
   amount: string,
-  pay: "worker" | "poster"
+  pay: "worker" | "poster",
+  opts: { expectedPayer?: string } = {}
 ): Promise<EscrowResult> {
   requireWalletMutationAllowed();
   const pair = requirePersonaPair(persona);
   const config = loadConfig();
-  requireRehearsalNetwork(config.network);
-  hex64(poster, "poster"); hex64(worker, "worker"); hex64(arbiter, "arbiter");
-  const api = (await subtensorFor(config.endpoints.tao)) as unknown as MultisigApi;
+  requireRehearsalNetwork(config.network, config.endpoints.tao);
+  requireExpectedPayer(pair.address, opts.expectedPayer);
+  requireEscrowParties(poster, worker, arbiter);
+  if (![poster, worker, arbiter].includes(pair.address)) throw new Error("payer must be an escrow participant");
+  if (pay !== "worker" && pay !== "poster") throw new Error("escrow destination must be worker or poster");
   const amountRao = parseAmount(amount, TAO_DECIMALS, "TAO").raw;
+  if (amountRao <= 0n) throw new Error("amount must be greater than zero");
+  const api = (await subtensorFor(config.endpoints.tao)) as unknown as MultisigApi;
   const destination = pay === "worker" ? worker : poster;
   // The fee burn skims RELEASES only — a refund is not a settlement, the
   // poster gets every rao back. Both approvals run through this same
@@ -228,7 +250,7 @@ export async function escrowApprove(
   const split = pay === "worker" ? splitFee(amountRao) : undefined;
   const fee = split && split.feeRao > 0n && split.vault ? { vault: split.vault, feeRao: split.feeRao } : undefined;
   const { executed, txHash } = await approveRelease(api, pair, { poster, worker, arbiter }, destination, amountRao, fee);
-  return { escrow: escrowAddress(poster, worker, arbiter), txHash, executed };
+  return { escrow: escrowAddress(poster, worker, arbiter), txHash, executed, payerAddress: pair.address, network: "test", poster, worker, arbiter, amount: formatRao(amountRao) };
 }
 
 /** Pure read: what the escrow address holds right now. */

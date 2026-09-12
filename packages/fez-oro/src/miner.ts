@@ -16,6 +16,7 @@ type Attempt = z.infer<typeof attemptSchema>;
 async function read(file: string): Promise<unknown | undefined> {
   let handle;
   try { handle = await open(file, 'r'); }
+  // eslint-disable-next-line preserve-caught-error -- Raw filesystem errors can expose private receipt paths.
   catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw Error('Cannot read ORO receipt; preserve it before recovery'); }
   try {
     if ((await handle.stat()).size > 65536) throw Error();
@@ -46,6 +47,7 @@ function pending(status: SubmissionStatus, saved?: Attempt): SubmissionStatus {
 }
 async function safe<T>(fn: () => Promise<T>): Promise<T> {
   try { return await fn(); }
+  // eslint-disable-next-line preserve-caught-error -- Validation errors can contain private configuration values.
   catch (e) { if (e instanceof z.ZodError) throw Error('Invalid ORO response or configuration; private values suppressed'); throw e; }
 }
 

@@ -33,7 +33,7 @@ it("offers Open existing channel for a normalized match and opens that ID withou
   document.body.append(host);
   const root = createRoot(host);
   try {
-    await act(async () => root.render(React.createElement(ManagePane, { client, onOpenChannel, onClose: () => {} })));
+    await act(async () => root.render(React.createElement(ManagePane, { client, onOpenChannel, onProfile: () => {}, onClose: () => {} })));
     const input = host.querySelector<HTMLInputElement>('input[placeholder="channel name"]')!;
     const button = input.parentElement!.querySelector("button")!;
     const type = async (value: string) => act(async () => {

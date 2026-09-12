@@ -1,9 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { nip44, nip59, type Event, type EventTemplate, type Filter } from "nostr-tools";
 import type { Wire, WireEvent, WireFilter, DmRumor, RelayInfoDoc } from "@fezchat/client";
 import { fetchRelayInfo } from "../../../src/protocol/nip11.js";
 import { RelayConnection } from "../../../src/protocol/relay.js";
+import { unwrapGiftWrap } from "../../../src/protocol/dm.js";
+import { normalizeWorkspaceRelay, resolveWorkspaceOwner } from "../../fez-client/src/workspace-owner.js";
 
 /**
  * Browser Wire for @fezchat/client — the same eight-function seam the TUI
@@ -20,13 +22,26 @@ import { RelayConnection } from "../../../src/protocol/relay.js";
  * Custody: crypto goes through a SIGNER seam. The app passes rustSigner
  * — the key stays in Rust (macOS keychain → in-process cache), the
  * webview asks for signatures and DM crypto over the invoke bridge, and
- * a fully compromised webview could misuse those operations while the
- * app is open but cannot exfiltrate the identity (Buzz's model). Tests
- * and node hosts pass a 64-hex secret instead, which builds the
+ * normal messaging never needs the secret. This signer alone is not a
+ * sandbox: the shared webview still has identity-export and process IPC.
+ * Tests and node hosts pass a 64-hex secret instead, which builds the
  * in-process localSigner — same seam, keys where the host wants them.
  */
 
 const KIND_DM = 14;
+
+/** Shares immutable trust storage with agents before a desktop identity is ready. */
+export async function pinDesktopWorkspaceOwner(relay: string, advertised?: string, expected?: string): Promise<string | undefined> {
+  if (!isTauri()) return resolveWorkspaceOwner(undefined, advertised, expected);
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalizeWorkspaceRelay(relay)));
+  const id = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
+  const pinned = await invoke<string | null>("workspace_owner_pin", { id }) ?? undefined;
+  const owner = resolveWorkspaceOwner(pinned, advertised, expected);
+  if (!owner || pinned !== undefined) return owner;
+  const saved = await invoke<string | null>("workspace_owner_pin", { id, value: owner }) ?? undefined;
+  if (!saved) throw new Error("Workspace owner pin was not saved");
+  return resolveWorkspaceOwner(saved, advertised, expected ?? owner);
+}
 
 /** A rumor as the signer hands it back — pre-signature event shape. */
 interface Rumor {
@@ -50,25 +65,25 @@ export interface WireSigner {
 }
 
 /** The app's signer: Rust holds the key; this side never sees it. */
-export function rustSigner(pubkey: string): WireSigner {
+export function rustSigner(pubkey: string, account?: string): WireSigner {
   return {
     pubkey,
     async sign(tmpl) {
       return JSON.parse(
-        await invoke<string>("sign_event", { kind: tmpl.kind, content: tmpl.content, tags: tmpl.tags, createdAt: tmpl.created_at })
+        await invoke<string>("sign_event", { account, kind: tmpl.kind, content: tmpl.content, tags: tmpl.tags, createdAt: tmpl.created_at })
       ) as WireEvent;
     },
-    encrypt: (peer, plaintext) => invoke<string>("nip44_encrypt", { peer, plaintext }),
-    decrypt: (peer, ciphertext) => invoke<string>("nip44_decrypt", { peer, ciphertext }),
+    encrypt: (peer, plaintext) => invoke<string>("nip44_encrypt", { account, peer, plaintext }),
+    decrypt: (peer, ciphertext) => invoke<string>("nip44_decrypt", { account, peer, ciphertext }),
     async wrapDm(kind, content, tags, recipients) {
-      return JSON.parse(await invoke<string>("dm_wrap_all", { kind, content, tags, recipients })) as {
+      return JSON.parse(await invoke<string>("dm_wrap_all", { account, kind, content, tags, recipients })) as {
         rumorId: string;
         wraps: WireEvent[];
       };
     },
     async unwrap(event) {
       try {
-        return JSON.parse(await invoke<string>("dm_unwrap", { event: JSON.stringify(event) })) as Rumor;
+        return JSON.parse(await invoke<string>("dm_unwrap", { account, event: JSON.stringify(event) })) as Rumor;
       } catch {
         return undefined; // not for us — same silence as the local path
       }
@@ -94,13 +109,7 @@ export function localSigner(keyHex: string): WireSigner {
       const wraps = recipients.map((pk) => nip59.createWrap(nip59.createSeal(rumor, secret, pk), pk) as unknown as WireEvent);
       return { rumorId: (rumor as { id: string }).id, wraps };
     },
-    unwrap(event) {
-      try {
-        return nip59.unwrapEvent(event as unknown as Event, secret) as unknown as Rumor;
-      } catch {
-        return undefined;
-      }
-    },
+    unwrap: (event) => unwrapGiftWrap(event, secret),
   };
 }
 
@@ -232,6 +241,10 @@ export class BrowserWire implements Wire {
 
   async relayInfo(relay?: string): Promise<RelayInfoDoc | undefined> {
     return fetchRelayInfo(relay || this.urls[0]);
+  }
+
+  async pinWorkspaceOwner(relay: string, advertised?: string, expected?: string): Promise<string | undefined> {
+    return pinDesktopWorkspaceOwner(relay, advertised, expected);
   }
 
   async unwrapDm(event: WireEvent): Promise<DmRumor | undefined> {

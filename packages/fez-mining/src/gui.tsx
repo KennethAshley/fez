@@ -31,7 +31,7 @@ export default function activate(api: GuiExtensionApi): void {
   };
   async function openThreadFor(netuid: number, persona: string): Promise<void> {
     const channelId = boundChannel()?.id;
-    if (!channelId || !api.processes) throw Error("Link a channel from Mining before opening miner history.");
+    if (!client || !channelId || !api.processes) throw Error("Link a channel from Mining before opening miner history.");
     const relay = client.workspaces().find(w=>w.active)?.relay;
     if (!relay) throw Error("The active workspace relay is unavailable. Reconnect before opening history.");
     const result = await api.processes.run("fez-mine",["thread","ensure","--netuid",String(netuid),"--persona",persona,"--channel",channelId,"--relay",relay,"--json"]);
@@ -278,6 +278,7 @@ export default function activate(api: GuiExtensionApi): void {
     | { kind: "confirm"; netuid: number; machine?: MachineChoice; schema: ConfigField[]; values: ConfigFormValues; persona: string; message: string };
 
   function WorkspaceSetup(): JSX.Element {
+    if (!client) throw Error("Mining needs read:channels permission");
     const [channels,setChannels] = useState<MiningChannel[]>(()=>client.channelsFrom());
     const [name,setName] = useState(MINING_CHANNEL_NAME);
     const [busy,setBusy] = useState(false);

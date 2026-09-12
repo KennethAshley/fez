@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
-import type { FezClient, WireEvent } from "@fezchat/client";
+import { K, readTeamMemory, teamMemoryHeads, type FezClient } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
-
-const KIND_MEMORY = 47210;
 
 interface Memory {
   id: string;
@@ -14,12 +12,9 @@ interface Memory {
 }
 
 /**
- * The channel's SHARED team memory, as a side pane. It's just events
- * (kind 47210, tagged with the channel), so this reads them straight off
- * the wire — no special client state. Agents write these with
- * fez_remember (the `memory` skill); people and agents alike read them
- * here. Subscribed while open, so a memory saved mid-conversation
- * appears without reopening the pane.
+ * The channel's shared memory, using the same trust and correction fold
+ * as the agent tools. Live memory and governance events refresh the pane
+ * so corrections, bans, and moderator removals appear while it is open.
  */
 export default function MemoryView({
   client,
@@ -36,35 +31,47 @@ export default function MemoryView({
 }) {
   const [memories, setMemories] = useState<Memory[]>();
   const [filter, setFilter] = useState("");
+  const [error, setError] = useState<string>();
+  const [windowed, setWindowed] = useState(false);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    setMemories(undefined);
+    setError(undefined);
+    setWindowed(false);
     if (!channelId) {
       setMemories([]);
       return;
     }
     let live = true;
-    const toMemory = (e: WireEvent): Memory => ({
-      id: e.id,
-      pk: e.pubkey,
-      author: client.displayName(e.pubkey),
-      text: e.content,
-      ts: e.created_at,
-    });
-    void wire
-      .query([{ kinds: [KIND_MEMORY], "#h": [channelId], limit: 500 }])
-      .then((events) => {
-        if (!live) return;
-        setMemories(events.map(toMemory).sort((a, b) => b.ts - a.ts));
-      })
-      .catch(() => live && setMemories([]));
-    const unsub = wire.subscribe([{ kinds: [KIND_MEMORY], "#h": [channelId], since: Math.floor(Date.now() / 1000) }], (e) => {
-      setMemories((prev) => (prev?.some((m) => m.id === e.id) ? prev : [toMemory(e), ...(prev ?? [])]));
-    });
+    let generation = 0;
+    const load = async () => {
+      const request = ++generation;
+      try {
+        const context = await readTeamMemory(wire, client.state.workspace.owner, channelId, client.pubkey);
+        if (!live || request !== generation) return;
+        setMemories([...teamMemoryHeads(context.events, channelId, context.state)]
+          .filter(([, e]) => e.content.trim())
+          .map(([id, e]) => ({ id, pk: e.pubkey, author: client.displayName(e.pubkey), text: e.content, ts: e.created_at }))
+          .sort((a, b) => b.ts - a.ts || a.id.localeCompare(b.id)));
+        setWindowed(context.windowed);
+        setError(undefined);
+      } catch (err) {
+        if (!live || request !== generation) return;
+        setMemories(undefined);
+        setError(err instanceof Error ? err.message : "Could not load team memory. Retry.");
+      }
+    };
+    const unsub = wire.subscribe([
+      { kinds: [K.MEMORY, K.MEMORY_UPDATE], "#h": [channelId], since: Math.floor(Date.now() / 1000) },
+      { kinds: [K.MEMBERSHIP, K.BAN_LIST, K.CHANNEL], since: Math.floor(Date.now() / 1000) },
+    ], () => { void load(); });
+    void load();
     return () => {
       live = false;
       unsub();
     };
-  }, [channelId, client, wire]);
+  }, [channelId, client, wire, retry]);
 
   const q = filter.trim().toLowerCase();
   const shown = (memories ?? []).filter((m) => !q || m.text.toLowerCase().includes(q));
@@ -93,7 +100,7 @@ export default function MemoryView({
     <aside className="pane">
       <header className="pane-head">
         <span>◈ memory{channelName ? ` · #${channelName}` : ""}</span>
-        <button className="pane-close" onClick={onClose}>✕</button>
+        <button className="pane-close" aria-label="Close memory" onClick={onClose}>✕</button>
       </header>
       <div className="pane-body">
         <div className="settings-hint">
@@ -109,17 +116,21 @@ export default function MemoryView({
             {((memories?.length ?? 0) > 4 || filter) && (
               <input
                 className="manage-input"
+                aria-label="Search memory"
                 placeholder="search memory…"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 onKeyDown={(e) => e.stopPropagation()}
               />
             )}
-            {memories === undefined ? (
+            {windowed && <div className="settings-hint">Showing the newest 500 memory events per relay. Older facts may exist.</div>}
+            {error ? (
+              <div role="alert" className="pane-empty">{error} <button className="agent-action" onClick={() => setRetry(n => n + 1)}>Retry</button></div>
+            ) : memories === undefined ? (
               <div className="pane-empty">loading…</div>
             ) : shown.length === 0 ? (
               <div className="pane-empty">
-                {q ? `nothing matches "${filter}"` : "nothing remembered yet — ask an agent to remember something and it lands here"}
+                {q ? `nothing matches "${filter}" in the loaded memory` : "no current facts in the loaded memory — ask an agent to remember something"}
               </div>
             ) : (
               shown.map((m) => (

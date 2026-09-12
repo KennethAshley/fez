@@ -10,18 +10,22 @@ The short version:
 
 - **Surfaces** — the TUI (`src/cli/tui.ts` + `packages/fez-tui`), the CLI
   (`src/cli/`), and the desktop app (`packages/fez-desktop`, Tauri 2 +
-  React, with key custody in Rust).
+  React, with native signing and keychain access in Rust; onboarding and
+  backup still handle keys in the shared webview).
 - **One brain** — `packages/fez-client` holds all derived state and trust
   rules; every surface renders over it.
 - **Protocol core** — `src/` (`@fezchat/protocol`): the kinds registry
   (`src/protocol/kinds.ts`), multi-relay connection, DM crypto, identity and
   keychain custody, harness/ACP driving, the extension host.
 - **The relay is the workspace** — `packages/fez-relay`: NIP-01/11/42/50,
-  ingest + delivery policies, JSONL/SQLite/BYO stores; its NIP-11 `pubkey`
-  (`--owner`) names the only key whose channel/roster/ban events count.
-- **Agents** — `packages/fez-acp` (the standing runtime), `fez-sentinel`
-  (wake-on-mention), `fez-orchestrator` (`@fez`), harnesses via ACP
-  (claude-code or the bundled pi).
+  ingest + delivery policies, JSONL/SQLite/BYO stores. Clients pin the owner
+  from a trusted invite or first valid NIP-11 discovery. Later metadata
+  must match that key before governed events are loaded.
+- **Agents** — `packages/fez-acp` is the standing runtime, with harnesses
+  via ACP (claude-code or the bundled pi) and `fez-orchestrator` (`@fez`).
+  The desktop owns local agent processes and a background extension worker:
+  closing the window keeps them running; confirmed Quit stops local work.
+  `fez-sentinel` remains an optional host for headless machines.
 - **Features are packages** — everything else in `packages/` ships as
   installable extensions against `packages/fez-extension-api`.
 - **Evaluated work** — the sibling `fez-bazaar` uses ACP's generic evaluation
@@ -30,6 +34,16 @@ The short version:
   counts. [The public guide](../web-docs/content/docs/concepts/bazaar.mdx)
   distinguishes operator-issued testnet jobs, authorized spending, specialist
   services, owner custody, SALT and stake. Coordination emissions are not active.
+
+Workspace invites now carry `fez-join:<relay>#owner=<64-hex-pubkey>`.
+Legacy relay-only invites use trust on first use. Node processes can supply
+the independently trusted key as `FEZ_WORKSPACE_OWNER`. Desktop and Node
+share immutable pins in `~/.fez/workspace-owners/`; the client also remembers
+pins in its workspace list. Missing metadata retains a pin. Conflicting
+keys or unreadable trust storage stop authority resolution rather than
+resetting trust. Forgetting a workspace hides it without erasing its pin.
+Automatic owner-key rotation and moving job history between relay addresses
+are separate follow-up work; neither is implied by changing an endpoint.
 
 An earlier version of this file described the pre-relay, pre-desktop,
 single-relay SDK and aged badly — including a claim that no Rust layer

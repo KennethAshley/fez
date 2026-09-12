@@ -33,6 +33,8 @@ export { FezTUI } from "./cli/tui.js";
 export { PackageManager, skillEntryFor, type FezPackage, type FezManifest } from "./extensions/package-manager.js";
 export * from "./protocol/kinds.js";
 export { requestInput, type InputForm, type InputResponse, type InputOrigin } from "../packages/fez-client/dist/agent-input.js";
+/** Channel work uses the same result and acceptance rules as the shared client. */
+export { completeWork, workResult, acceptWork } from "../packages/fez-client/dist/work-completion.js";
 /** Standing runtimes use the same roster and moderation rules as GUI clients. */
 export { WorkspaceState } from "../packages/fez-client/dist/workspace-state.js";
 export { MAX_CHAIN_DEPTH } from "./protocol/limits.js";
@@ -68,7 +70,7 @@ export { parseSkillSource, describeSkillSpec, wellKnownSource, installHint, mach
 export { findMcpServer, registerMcpServer, loadMcpServersFromSettings, resolveDeclaredSkills } from "./extensions/mcp-servers.js";
 /** Connections — sign in, don't paste (MCP OAuth). See extensions/connections.ts. */
 export { CONNECTIONS, connectionEntry, connectService, disconnectService, freshToken, withFreshOAuth, markOAuthServer, readConnection, isStale, type ConnectionEntry } from "./extensions/connections.js";
-export { skillsInstalled, parseSkillMd, type InstalledSkill } from "./extensions/skills-md.js";
+export { skillsInstalled, parseSkillMd, readSkillInstructions, type InstalledSkill } from "./extensions/skills-md.js";
 export { getKey, setKey, loadOrCreateKey, listKeys, exportKey, importKey } from "./identity/keys.js";
 /** A background process needs the PATH a person has, not the one launchd gives it. */
 export { adoptUserPath, whichBinary } from "./shared/user-path.js";
@@ -94,3 +96,4 @@ export type { FezExtensionAPI, FezExtension, NostrAccess, PanelHandle, InputHand
 export { loadExtensions, registeredScheduledTasks, setNostrBackend, setWorkspaceBackend } from "./extensions/extensions.js";
 /** NIP-11 — the workspace's identity card: who owns this relay, and what it advertises. */
 export { fetchRelayInfo, httpFromRelay, type RelayInfo } from "./protocol/nip11.js";
+export { pinWorkspaceOwner } from "./shared/workspace-owner.js";

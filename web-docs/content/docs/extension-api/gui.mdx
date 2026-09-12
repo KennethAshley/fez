@@ -30,6 +30,7 @@ Build with `esbuild --format=iife --global-name=__fezExt --platform=browser
 | Method | What it adds | Permission |
 | --- | --- | --- |
 | `registerSettingsPanel(name, render, opts?)` | a card in Settings → Extensions. The panel is filed under *your extension's* name regardless of the `name` argument — one extension can't impersonate another. `opts.source` links it to a channel source so the rail offers a settings button | `ui` |
+| `registerAgentProfileSection(label, render)` | extra facts in agent reputation views. `render({ pubkey, persona? }, host?)` supports elements or mount/dispose. `persona` is present only for a local agent; never use a foreign display name to select a local account. Sections show their extension source and disappear on unload | `ui` |
 | `registerGuiCommand(name, run)` | a composer slash command; return `""` to emit nothing | `commands` |
 | `registerMessageDecorator(match, render)` | a card mounted under matching message bodies (how the poll card enters) | `ui` |
 | `registerThreadView(name, match, render)` | a lens on a whole thread, keyed on the root message's content; rendered *above* the replies — an index of the conversation, not a substitute | `ui` |

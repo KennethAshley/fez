@@ -7,17 +7,8 @@ import type { Wire } from "@fezchat/client";
 // drag the node-flavored CLI graph into the webview bundle.
 import { DM_FUZZ_WINDOW_S } from "../../../src/protocol/dm.js";
 
-/**
- * The desktop's half of workstream 1 (de-sentinel spec): summon agents
- * from the app's own live subscription while it is open. Policy lives
- * in the shared SummonEngine; this file is the host — Tauri spawn
- * mechanics, wire queries, and the one-summoner-per-machine gate.
- *
- * Gate: if a sentinel is alive (~/.fez/sentinel.pid), the desktop
- * defers ENTIRELY — the sentinel is the machine's summoner. Checked
- * per event with a 10s cache (the sentinel may start/stop while the
- * app is open).
- */
+/** Desktop-owned summons share policy with the optional headless sentinel.
+ * Native startup claims local ownership before this host subscribes. */
 
 const KIND_MESSAGE = 47103;
 const KIND_DOC_COMMENT = 40101;
@@ -30,16 +21,38 @@ export function startSummoner(opts: {
   relays: string[];
   toast: (msg: string) => void;
 }): () => void {
-  const { wire, ownerPubkey, relays, toast } = opts;
+  let disposed = false;
+  let stop: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let lastError: string | undefined;
+  // Reconcile extension changes and worker exits without overlapping starts.
+  // Hiding the native window leaves this subscription mounted.
+  const reconcile = async () => {
+    try {
+      await invoke<{ background: boolean; restored: number }>("start_desktop_runtime", {
+        owner: opts.ownerPubkey, relays: opts.relays.join(","),
+      });
+      if (disposed) return;
+      stop ??= subscribeSummoner(opts);
+      lastError = undefined;
+    } catch (err) {
+      if (disposed) return;
+      const message = err instanceof Error ? err.message : String(err);
+      if (message !== lastError) opts.toast(`Local agents and integrations couldn't start: ${message}. Retrying in 30 seconds.`);
+      lastError = message;
+    } finally {
+      if (!disposed) timer = setTimeout(() => void reconcile(), 30_000);
+    }
+  };
+  void reconcile();
+  return () => {
+    disposed = true;
+    clearTimeout(timer);
+    stop?.();
+  };
+}
 
-  let sentinelCheck: { verdict: boolean; at: number } = { verdict: false, at: 0 };
-  async function sentinelAlive(): Promise<boolean> {
-    if (Date.now() - sentinelCheck.at < 10_000) return sentinelCheck.verdict;
-    const verdict = await invoke<boolean>("runner_status").catch(() => false);
-    sentinelCheck = { verdict, at: Date.now() };
-    return verdict;
-  }
-
+function subscribeSummoner({ wire, ownerPubkey, relays, toast }: Parameters<typeof startSummoner>[0]): () => void {
   // Courtesy half of single ownership (the agent's boot-time yield is
   // the guard): a persona whose key beat presence within the TTL is
   // alive SOMEWHERE — don't spawn a duplicate for it. Advisory only;
@@ -65,13 +78,13 @@ export function startSummoner(opts: {
     // key CLI-side; the announcement retries resolution once it exists.
     personaPubkey: (name) => invoke<string>("get_pubkey", { account: `agent:${name}` }).catch(() => undefined),
     agentAlive: async (name) => {
-      if (await invoke<boolean>("agent_alive", { persona: name }).catch(() => false)) return true;
+      if (await invoke<boolean>("agent_alive", { persona: name, bin: "fez-agent" }).catch(() => false)) return true;
       const pk = await host.personaPubkey(name).catch(() => undefined);
       return !!pk && Date.now() - (lastBeat.get(pk) ?? 0) < PRESENCE_TTL_MS;
     },
     registryEntry: async (name) => {
-      const rows = await invoke<{ persona: string; channels: string[]; repo?: string; line?: string }[]>("spawned_agents").catch(() => []);
-      const row = rows.find((r) => r.persona === name);
+      const rows = await invoke<{ persona: string; bin?: string; channels: string[]; repo?: string; line?: string }[]>("spawned_agents").catch(() => []);
+      const row = rows.find((r) => r.persona === name && (r.bin ?? "fez-agent") === "fez-agent");
       return row ? { channels: row.channels, work: row.repo ? { repo: row.repo, line: row.line } : undefined } : undefined;
     },
     spawn: async (persona, channels, work) => {
@@ -96,7 +109,6 @@ export function startSummoner(opts: {
       }
     },
     restart: async (persona, channels, work) => {
-      await invoke("kill_agent", { persona }).catch(() => {});
       try {
         await invoke("spawn_agent", {
           persona,
@@ -105,6 +117,7 @@ export function startSummoner(opts: {
           relays: relays.join(","),
           repo: work?.repo ?? null,
           baseBranch: work?.line ?? null,
+          manual: true,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -141,7 +154,6 @@ export function startSummoner(opts: {
     ],
     (event) => {
       void (async () => {
-        if (await sentinelAlive()) return; // the sentinel is the summoner
         if (event.kind === KIND_GIFT_WRAP) {
           if (!dmWatchLive) return;
           const recipient = event.tags.find((t: string[]) => t[0] === "p")?.[1];

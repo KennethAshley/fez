@@ -48,7 +48,9 @@ venv/
 *.log
 dev/relay.mjs
 dev/relay-events.jsonl
+dev/experiments/coordination/.*.*/
 
 # built relay bundle — deploy/deploy.sh rebuilds it every time
 deploy/fez-relay.mjs
 .worktrees/
+.claude/worktrees/

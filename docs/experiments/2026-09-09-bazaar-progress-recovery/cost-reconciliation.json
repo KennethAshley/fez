@@ -1,0 +1,10 @@
+{
+  "modelUsd": 0.012712,
+  "walletRealMoneyUsd": 0,
+  "newTasks": 0,
+  "newPayments": 0,
+  "cumulativeReportedUsdApprox": 2.783463,
+  "conservativeCumulativeAccountedUsd": 14.476563,
+  "authorizedCumulativeUsd": 20,
+  "basis": "Configured per-token prices; remote reservations from earlier trials remain held. No provider invoice reconciliation."
+}

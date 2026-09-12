@@ -1,0 +1,38 @@
+diff --git a/invoice.mjs b/invoice.mjs
+index 1844724..f636096 100644
+--- a/invoice.mjs
++++ b/invoice.mjs
+@@ -2,11 +2,19 @@ export function invoiceBalance(invoiceCents, payments) {
+   if (!Number.isSafeInteger(invoiceCents) || invoiceCents < 0) {
+     throw new TypeError("invalid invoice amount");
+   }
++  const seen = new Map();
+   let paid = 0;
+   for (const payment of payments) {
+     if (!payment || typeof payment.ref !== "string" || !payment.ref.trim() || !Number.isSafeInteger(payment.cents)) {
+       throw new TypeError("invalid payment");
+     }
++    if (seen.has(payment.ref)) {
++      if (seen.get(payment.ref) !== payment.cents) {
++        throw new TypeError("conflicting payment reference");
++      }
++      continue;
++    }
++    seen.set(payment.ref, payment.cents);
+     paid += payment.cents;
+   }
+   return invoiceCents - paid;
+diff --git a/invoice.test.mjs b/invoice.test.mjs
+index 82b1368..fc9a800 100644
+--- a/invoice.test.mjs
++++ b/invoice.test.mjs
+@@ -15,3 +15,9 @@ test("malformed inputs are rejected", () => {
+ test("re-importing the same payment does not charge it twice", () => {
+   assert.equal(invoiceBalance(12500, [{ ref: "P1", cents: 5000 }, { ref: "P1", cents: 5000 }]), 7500);
+ });
++test("reusing a reference with a different amount throws", () => {
++  assert.throws(() => invoiceBalance(12500, [{ ref: "P1", cents: 5000 }, { ref: "P1", cents: 4000 }]), TypeError);
++});
++test("re-importing the same refund does not refund it twice", () => {
++  assert.equal(invoiceBalance(12500, [{ ref: "pay", cents: 5000 }, { ref: "R1", cents: -1000 }, { ref: "R1", cents: -1000 }]), 8500);
++});

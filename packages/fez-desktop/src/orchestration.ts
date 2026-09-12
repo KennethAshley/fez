@@ -78,6 +78,11 @@ export async function latestSentFor(read: ReadFn, pk: string): Promise<Orchestra
   return [...records].reverse().find((r) => r.picked.pk === pk && r.sentTaskId && !r.hire);
 }
 
+/** Payment and delivery belong to the agreed task, even after a newer proposal. */
+export async function findByTask(read: ReadFn, pk: string, taskId: string): Promise<OrchestrationRecord | undefined> {
+  return (await load(read)).find((record) => record.picked.pk === pk && record.sentTaskId === taskId);
+}
+
 /** The latest record for exactly this proposal (same candidate, same task
  *  text) — how a remounted card recovers its decided state instead of
  *  re-offering buttons and double-logging. */

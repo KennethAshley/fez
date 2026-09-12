@@ -7,6 +7,7 @@ import path from "path";
 import os from "os";
 import chalk from "chalk";
 import { type SkillEntry, type SkillSpec } from "./skill-source.js";
+import { safeSkillPath, skillResourceFiles } from "./skills-md.js";
 
 /**
  * The npm command used for every extension install (npm and git paths).
@@ -52,6 +53,8 @@ export interface FezManifest {
   bin?: Record<string, string>;
   fez: {
     type: "integration" | "agent" | "extension" | "persona-pack";
+    /** Legacy migration guessed this manifest; its name is not package identity. */
+    reconstructed?: boolean;
     /** What this package says it needs — see extension-permissions.ts. Recorded at install. */
     permissions?: string[];
     /**
@@ -84,8 +87,8 @@ export interface FezManifest {
       defaults?: Record<string, string>;
     };
     /**
-     * Skill packages: a directory of SKILL.md files, installed AS-IS into
-     * this package's own dir (packages/<base>/<dir>/*.md) — never
+     * Skill packages: skill directories with SKILL.md and support files, installed AS-IS into
+     * this package's own dir (legacy <dir>/*.md also supported) — never
      * ~/.fez/skills/ (no legacy flat dir, no symlink index). Discovery
      * reads them straight from there; see skills-md.ts.
      */
@@ -286,6 +289,22 @@ export class PackageManager {
     }
   }
 
+  /** Prevent aliases from splitting a package's data, grants and agent attachments. */
+  assertPackageIdentity(base: string, manifestName?: string): void {
+    const packagesDir = this.home("packages");
+    if (!manifestName || !existsSync(packagesDir)) return;
+    for (const id of fsSync.readdirSync(packagesDir)) {
+      const installed = this.installedManifest(id);
+      if (!installed?.name || installed.fez?.reconstructed) continue;
+      if (id === base && installed.name !== manifestName) {
+        throw new Error(`${base} belongs to ${installed.name}, not ${manifestName} — refusing`);
+      }
+      if (id !== base && installed.name === manifestName) {
+        throw new Error(`${manifestName} is already installed as ${id}; consolidate its data and agent attachments under ${base} before installing.`);
+      }
+    }
+  }
+
   /** The load index: a flat entry pointing into the package dir. Symlink
    *  first; copy when the filesystem refuses — the package dir stays the
    *  record either way. */
@@ -392,10 +411,10 @@ export class PackageManager {
     }
 
     const manifest = await this.readManifest(name);
+    await this.runInstallHook(name, manifest);
     pkg.version = options.version || "latest";
     pkg.type = manifest?.fez?.type || "extension";
     pkg.config = manifest?.fez;
-    await this.runInstallHook(name, manifest);
     await this.recordPermissions(name, manifest);
     await this.saveRegistry();
 
@@ -562,6 +581,7 @@ export class PackageManager {
 
   private async runInstallHook(name: string, manifest: FezManifest | null): Promise<void> {
     if (!manifest || !manifest.fez) return;
+    this.assertPackageIdentity(name, manifest.name);
 
     // Bin-collision check FIRST, before the package dir even exists —
     // installParts can persist a settings write on its own (parts.background:
@@ -790,42 +810,47 @@ export class PackageManager {
     console.log(chalk.green(`   👥 ${installed.length} persona(s) from pack "${name}" — fez agent <name> to run one`));
   }
 
-  /**
-   * Install a package's SKILL.md files into ITS OWN package dir —
-   * `<dir>/*.md` copied straight across via `materializeIntoPackage` (the
-   * path-escape gate included), never ~/.fez/personas or a legacy
-   * ~/.fez/skills/ flat dir. Discovery (skills-md.ts) reads them from
-   * there directly, so materializing the dir is the whole install — no
-   * settings write, no symlink index, no frontmatter validation here
-   * (skillsInstalled skips a file missing `description:` at read time).
-   * A package declaring `fez.skills` with no matching dir in its source
-   * is a manifest bug, not a user-facing failure — warn and move on.
-   */
+  /** Copy complete skill trees as data; neither scripts nor package hooks run here. */
   private async installSkillsPart(name: string, config: { dir?: string }): Promise<void> {
     const dir = config.dir ?? "skills";
-    // A manifest-declared dir is attacker-controlled (never re-validated) —
-    // same escape gate skills-md.ts's skillsInstalled enforces at read
-    // time, required here too so a hostile dir gets a clean skip instead
-    // of readdir-ing outside the package and then dying mid-loop on
-    // materializeIntoPackage's throw.
-    if (path.isAbsolute(dir) || dir.split(/[\\/]/).includes("..")) {
-      console.log(chalk.yellow(`   ⚠ skill package "${name}" declares an escaping dir "${dir}" — skipped`));
-      return;
+    if (typeof dir !== "string" || /[\\\p{Cc}]/u.test(dir) || dir.split("/").some(part => !part || part === "." || part === "..") || ["package.json", "package.tmp"].includes(dir.split("/")[0])) {
+      throw new Error(`skill directory ${dir} escapes the package or is invalid`);
     }
-    const pkgDir = this.getContentDir(this.packages.get(name)!);
-    const sourceDir = path.resolve(pkgDir, dir);
-    let files: string[];
-    try {
-      files = (await fs.readdir(sourceDir)).filter((f) => f.endsWith(".md"));
-    } catch {
+    const source = this.getContentDir(this.packages.get(name)!);
+    if (!fsSync.existsSync(path.join(source, dir))) {
+      // lstat still detects a dangling link, which must not become a silent skip.
+      try { if (fsSync.lstatSync(path.join(source, dir)).isSymbolicLink()) throw new Error("unsafe skill directory symlink"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
       console.log(chalk.yellow(`   ⚠ skill package "${name}" has no ${dir}/ directory — nothing installed`));
       return;
     }
-    for (const file of files) {
-      const dest = await this.materializeIntoPackage(name, path.join(dir, file), "skill");
-      console.log(chalk.dim(`   Installed skill ${path.basename(file, ".md")} → ${dest}`));
+    if (!fsSync.lstatSync(path.join(source, dir)).isDirectory()) throw new Error("skill source must be a directory");
+    const files = skillResourceFiles(source, dir); // Validate the complete source before touching old instructions.
+    const target = this.packageDir(name);
+    if (!safeSkillPath(target, "")) throw new Error("unsafe installed package directory");
+    const sourceDir = fsSync.realpathSync(path.join(source, dir));
+    const targetDir = path.resolve(fsSync.realpathSync(target), dir);
+    const contains = (parent: string, child: string): boolean => {
+      const relative = path.relative(parent, child);
+      return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+    };
+    if (contains(sourceDir, targetDir) || contains(targetDir, sourceDir)) throw new Error("skill source and destination overlap");
+    let existing = target;
+    for (const part of dir.split("/")) {
+      existing = path.join(existing, part);
+      try {
+        if (!fsSync.lstatSync(existing).isDirectory()) throw new Error("unsafe installed skill directory or symlink");
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
-    console.log(chalk.green(`   📄 ${files.length} skill(s) from "${name}"`));
+    if (fsSync.existsSync(targetDir)) skillResourceFiles(target, dir);
+    // Only the manifest-owned subtree is replaced; personal copies live elsewhere.
+    await fs.rm(targetDir, { recursive: true, force: true });
+    for (const relative of files) {
+      const dest = await this.materializeIntoPackage(name, relative, "skill");
+      const mode = fsSync.lstatSync(path.join(source, relative)).mode;
+      await fs.chmod(dest, mode & 0o111 ? 0o755 : 0o644);
+    }
+    console.log(chalk.green(`   📄 ${files.length} skill instruction/resource file(s) from "${name}"`));
   }
 
   private async installClaudeCodeIntegration(name: string, config: { commands?: string; evals?: string }): Promise<void> {

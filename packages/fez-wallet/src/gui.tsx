@@ -1,4 +1,5 @@
 import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
+import { registerWalletReputation } from "./gui-reputation.js";
 import type { SpendEntry } from "./log.js";
 import type { Network } from "./storage-mirror.js";
 import qrcode from "qrcode-generator";
@@ -266,7 +267,8 @@ export default function activate(api: GuiExtensionApi): void {
     const [now, setNow] = useState(Date.now() / 1000);
     const [spend, setSpend] = useState<{ txHash: string } | undefined>(undefined);
 
-    const react = (emoji: string) => () => void client.toggleReaction(channelId, msgId, emoji);
+    const react = (emoji: string) => () => void client.toggleReaction(channelId, msgId, emoji)
+      .catch(err => api.toast?.(`Decision failed: ${String(err)}`, "error"));
     // The TIME of each reaction rides along: requestStatus only counts a
     // decision made inside the consent window, so a late ✅ renders as
     // expired instead of "waiting for a transfer" the wallet refused.
@@ -870,6 +872,7 @@ export default function activate(api: GuiExtensionApi): void {
 
   // ── wallet panel ─────────────────────────────────────────────────
   api.registerSettingsPanel("Wallet", () => <WalletPanel />);
+  registerWalletReputation(api);
 
   function WalletPanel(): JSX.Element {
     const [addresses, setAddresses] = useState<AddressBook>({});

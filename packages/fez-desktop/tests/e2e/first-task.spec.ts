@@ -20,7 +20,7 @@ for (const connected of [false, true]) {
         update_persona: () => "",
         agent_alive: () => false,
         codex_brain_status: () => JSON.stringify({ installed: true, authed: true, adapterReady: true }),
-      }, { identities: { default: bytesToHex(owner) } });
+      }, { identities: { default: bytesToHex(owner) }, denyIdentityExport: true });
       await page.addInitScript(() => {
         const native = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } }).__TAURI_INTERNALS__;
         const original = native.invoke;

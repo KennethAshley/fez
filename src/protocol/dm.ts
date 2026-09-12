@@ -1,5 +1,6 @@
 import * as nip59 from "nostr-tools/nip59";
-import { getPublicKey } from "nostr-tools/pure";
+import * as nip44 from "nostr-tools/nip44";
+import { getPublicKey, validateEvent, verifyEvent } from "nostr-tools/pure";
 import type { Event } from "nostr-tools";
 
 /**
@@ -107,22 +108,33 @@ export function buildGroupDmWraps(
 }
 
 /**
+ * Decryption alone does not authenticate a rumor's claimed sender.
+ * Keep seal validation shared by headless DMs and the browser's local signer.
+ */
+export function unwrapGiftWrap(event: Event, mySecret: Uint8Array): ReturnType<typeof nip59.createRumor> | undefined {
+  try {
+    if (event.kind !== KIND_GIFT_WRAP || !verifyEvent(event)) return undefined;
+    const seal: Event = JSON.parse(nip44.decrypt(event.content, nip44.getConversationKey(mySecret, event.pubkey)));
+    if (seal.kind !== 13 || !verifyEvent(seal)) return undefined;
+    const rumor: ReturnType<typeof nip59.createRumor> = JSON.parse(
+      nip44.decrypt(seal.content, nip44.getConversationKey(mySecret, seal.pubkey))
+    );
+    if (!validateEvent(rumor) || typeof rumor.id !== "string" || rumor.pubkey !== seal.pubkey) return undefined;
+    return rumor;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Unwrap a gift wrap addressed to us. Returns undefined for wraps that
  * aren't ours, aren't chat rumors, or don't decrypt — all ignorable by
  * design (relays can be sloppy; #p filters can be loose).
  */
 export function unwrapDm(event: Event, mySecret: Uint8Array): DmRumor | undefined {
-  if (event.kind !== KIND_GIFT_WRAP) return undefined;
   try {
-    const rumor = nip59.unwrapEvent(event, mySecret) as {
-      kind: number;
-      id: string;
-      pubkey: string;
-      content: string;
-      created_at: number;
-      tags: string[][];
-    };
-    if (rumor.kind !== KIND_DM || typeof rumor.content !== "string") return undefined;
+    const rumor = unwrapGiftWrap(event, mySecret);
+    if (!rumor || rumor.kind !== KIND_DM) return undefined;
     const myPk = getPublicKey(mySecret);
     const recipients = rumor.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]);
     const recipient = recipients[0];

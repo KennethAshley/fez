@@ -1,6 +1,6 @@
 # @fezchat/sentinel
 
-The watcher that never sleeps. It keeps the fleet alive while you are gone — waking agents you are not there to summon, carrying word of a DM or a mention, running the rites that fire on a schedule, and speaking for the dead when a spawn fails silently. The smart inner service; the babysitter is whatever the operator has.
+The optional headless runtime: it wakes sleeping agents, delivers notifications, and runs scheduled extension tasks without the desktop. In the current source implementation, the desktop owns its local agents and a bundled `fez-background` worker; desktop users do not need a sentinel service.
 
 ## What it watches
 
@@ -12,6 +12,8 @@ A gift-wrapped DM or an `@name` from the owner (or an attested sibling) wakes a 
 fez sentinel                 # foreground
 fez sentinel-install         # a launchd agent (macOS), alive at login
 ```
+
+Quit the desktop before starting the headless sentinel; a live desktop owner refuses a second runtime. Closing the desktop window keeps its local work running, while explicit Quit stops it.
 
 The relay comes from your settings, not a baked-in pin. It signs invites and attestations as you — summoning introduces an agent on your authority.
 

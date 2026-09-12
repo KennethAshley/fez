@@ -13,7 +13,9 @@ export const TEST_CHANNEL = "00000000-0000-4000-8000-000000000001";
 export const OTHER_CHANNEL = "00000000-0000-4000-8000-000000000002";
 export interface RuntimePrompt { type: "prompt"; id: number; session: number; instruction: string }
 
-export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { relayInfoAvailable = true } = {}) {
+export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { relayInfoAvailable = true, skills = [] }: {
+  relayInfoAvailable?: boolean; skills?: { id: string; content: string; setting?: string }[];
+} = {}) {
   const repo = fileURLToPath(new URL("../../../../", import.meta.url));
   const cache = path.join(repo, "node_modules/.cache");
   await fs.mkdir(cache, { recursive: true });
@@ -35,11 +37,18 @@ export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { rel
   relay.events.push(owner.signEvent({ kind: 47102, tags: [["d", "roster"], ["p", ownerPk, "owner"], ["p", agentPk, "bot"]], content: "" }));
   await fs.mkdir(path.join(testHome, ".fez/personas"), { recursive: true });
   await fs.mkdir(path.join(testHome, ".fez/agents"), { recursive: true });
-  await fs.writeFile(path.join(testHome, ".fez/personas/scope-test.md"), "---\nharness: test-harness\n---\nRuntime routing test.\n");
+  for (const skill of skills) {
+    const dir = path.join(testHome, ".fez/packages/test-skills/skills", skill.id);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "SKILL.md"), skill.content);
+  }
+  if (skills.length) await fs.writeFile(path.join(testHome, ".fez/packages/test-skills/package.json"), JSON.stringify({ fez: { skills: {} } }));
+  const skillDecls = skills.length ? `skills: [${skills.map(skill => `${skill.id}${skill.setting ? `(${skill.setting})` : ""}`).join(", ")}]\n` : "";
+  await fs.writeFile(path.join(testHome, ".fez/personas/scope-test.md"), `---\nharness: test-harness\n${skillDecls}---\nRuntime routing test.\n`);
   await fs.writeFile(path.join(testHome, ".fez/agents/scope-test.key"), Buffer.from(agentKey).toString("hex"), { mode: 0o600 });
   const wire = new RelayConnection({ urls: [relay.url] });
   await wire.connect();
-  const child = fork(bundle, [], {
+  const launch = () => fork(bundle, [], {
     cwd: testHome, silent: true, execArgv: [],
     env: {
       PATH: process.env.PATH,
@@ -48,10 +57,12 @@ export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { rel
       FEZ_AGENT_CHANNELS: `${TEST_CHANNEL},${OTHER_CHANNEL}`, FEZ_AGENT_ON_BUSY: onBusy,
     },
   });
+  let child = launch();
   const prompts: RuntimePrompt[] = [];
   const aborted: number[] = [];
   let ready = false;
   let output = "";
+  const attach = () => {
   child.stdout?.on("data", (data) => { output += data; });
   child.stderr?.on("data", (data) => { output += data; });
   child.on("message", (message: RuntimePrompt | { type: "ready" } | { type: "aborted"; id: number }) => {
@@ -59,6 +70,8 @@ export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { rel
     else if (message.type === "prompt") prompts.push(message);
     else aborted.push(message.id);
   });
+  };
+  attach();
   const wait = async (predicate: () => boolean, label: string) => {
     try { await waitFor(() => predicate() || child.exitCode !== null, 15_000, label); }
     catch (error) { throw new Error(`${String(error)}\n${output}`, { cause: error }); }
@@ -78,7 +91,15 @@ export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { rel
   try { await wait(() => ready, "runtime subscriptions ready"); }
   catch (error) { await stop(); throw error; }
   return {
-    relay, owner, agentPk, prompts, aborted, wait, stop,
+    relay, owner, agentPk, prompts, aborted, wait, stop, testHome,
+    async restart(beforeStart?: () => Promise<void>) {
+      const exited = once(child, "exit"); child.kill("SIGKILL"); await exited;
+      // MiniRelay stores ephemerals; a real relay does not replay dead process heartbeats.
+      relay.events = relay.events.filter(event => event.kind < 20000 || event.kind >= 30000);
+      await beforeStart?.();
+      ready = false; child = launch(); attach();
+      await wait(() => ready, "restarted runtime ready");
+    },
     get output() { return output; },
     publish: wire.publish.bind(wire),
     async send(content: string, tags: string[][] = [["h", TEST_CHANNEL]], kind = 47103) {

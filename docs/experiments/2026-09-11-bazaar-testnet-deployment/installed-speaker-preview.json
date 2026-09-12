@@ -1,0 +1,1 @@
+{"readiness":{"version":1,"ready":true,"configHash":"f29c1bf74065090934f89b89fc65ba020c561dda1498df1b6fe53d459e6646be","persona":"speaker","harness":"claude-code","provider":"anthropic","model":"claude-opus-5","tools":["fez","speech"],"skills":[],"missingTools":[]},"location":"this computer","rewardDestination":{"ownerControlled":true}}

@@ -89,6 +89,7 @@ export default function activate(api: ThemeApi): void {
       "--viz-ok": "#43a56c",
       "--viz-fail": "#fb4934",
       "--font-mono": FACE,
+      "--font-ui": '-apple-system, "SF Pro Text", Helvetica, sans-serif',
     },
 
     /**
@@ -125,6 +126,7 @@ export default function activate(api: ThemeApi): void {
       "--viz-ok": "#79740e",
       "--viz-fail": "#9d0006",
       "--font-mono": FACE,
+      "--font-ui": '-apple-system, "SF Pro Text", Helvetica, sans-serif',
     },
   });
 }

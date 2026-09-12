@@ -1,0 +1,15 @@
+{
+  "task_id": "db0d783276ec26ec7fe17613fa1b76c11d71d711b02bc8dd89b412cbe3df513b",
+  "task_type": "repo-work",
+  "task_state": "claimed",
+  "progress": [
+    {
+      "miner": "npub16wn077ykv8maqjres3g9dp5gkpdreyryusw0cdxvhcvrgfc6txsq3gju4d",
+      "message": "lebron: ts: \"reusing a reference with a different amount throws\" and \"re-importing the same refund does not refund it twice\". No existing tests were",
+      "created_at": 1789011494
+    }
+  ],
+  "answers": [],
+  "successful_answers": 0,
+  "note": "A miner claimed this task, but no final result arrived during this wait. A claim is not proof it is still running. Use bazaar_wait with task_id to check again without paying or posting another task."
+}

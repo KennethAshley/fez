@@ -1,0 +1,163 @@
+{
+  "repairs": [
+    {
+      "file": "relay-trust-judge-0.json",
+      "repair": "Insert the missing closing brace before B and append the missing root closing brace; no content changes.",
+      "originalSha256": "5ab4f150d02bc35f31d596e5d7e91a475c901c14994908e4d66258f101c6e659"
+    }
+  ],
+  "scores": [
+    {
+      "case": "relay-trust",
+      "solo": [
+        8,
+        null
+      ],
+      "hire": [
+        8,
+        null
+      ],
+      "verdicts": [
+        {
+          "aArm": "hire",
+          "originalUnavailable": "JSON Parse error: Expected '}'",
+          "result": {
+            "a": {
+              "scores": [
+                2,
+                1,
+                1,
+                2,
+                2
+              ],
+              "reason": "C1: Correctly limits signatures to authenticity ('relays cannot forge signatures') and separates this from inventory honesty, omission, delay and suppression (2). C2: Says relays hold different subsets and no consensus exists, but never states the key nuance that identical rules converge only when clients hold the same event set, and that withholding is the divergence mechanism (mentioned only obliquely as 'potential suppression') (1). C3: Only one sentence \u2014 'NIP-11's owner pubkey advertisement provides no enforcement mechanism'; does not explain that it is an unauthenticated self-reported HTTP document usable only as a bootstrap/trust input (1). C4: Accurate on both permanence and erasure \u2014 cites NIP-01 replaceable-event 'MAY be discarded' and correctly reads NIP-09 as 'SHOULD delete', not mandatory, plus NIP-09's explicit impossibility statement (2). C5: Three implementable safeguards; multi-relay cross-check, created_at vs. discovery-time auditing, and NIP-09 deletion-request rebroadcast matching NIP-09's 'clients SHOULD broadcast deletion request events to other relays'; no invented guarantees (2)."
+            },
+            "b": {
+              "scores": [
+                2,
+                1,
+                2,
+                1,
+                2
+              ],
+              "reason": "C1: Correct and specific \u2014 id = sha256(serialized event), signature check, and explicitly notes this does not prevent omission, staleness, or false NIP-11 metadata (2). C2: States relays are independent with no consensus and different clients see different subsets, but omits the conditional convergence point (same rules + same events) and does not name withholding as the divergence cause (1). C3: Correctly frames NIP-11 'pubkey' as self-reported and unverified, and flags false NIP-11 metadata as a relay lie vector (2). C4: Conclusions right but misreads the source: NIP-09 'Relay Usage' MAY refers to relays validating that referenced events share the requester's pubkey, not to deletion being optional; NIP-09 actually says relays SHOULD delete. Replaceable-kind range given loosely (kinds 0, 10000-20000, omits 3 and addressable 30000-40000) (1). C5: Three implementable safeguards \u2014 mandatory client-side signature verification (NIP-01), >=3 independent relays with divergence treated as availability gaps, and client-side archiving with NIP-09 deletions as signals not enforcement; no invented guarantees (2)."
+            }
+          },
+          "recoveredMissingBraces": true
+        },
+        {
+          "aArm": "solo",
+          "unavailable": "relay-trust-judge-1: incomplete answer"
+        }
+      ]
+    },
+    {
+      "case": "private-workspace",
+      "solo": [
+        7,
+        null
+      ],
+      "hire": [
+        9,
+        null
+      ],
+      "verdicts": [
+        {
+          "aArm": "hire",
+          "result": {
+            "a": {
+              "scores": [
+                2,
+                2,
+                1,
+                2,
+                2
+              ],
+              "reason": "C1: Explicitly states UI roster filtering is client-side only and that NIP-01 content is an arbitrary plaintext string any subscriber can fetch by kind/tag \u2014 correct. C2: Correctly frames NIP-42 as a signed kind-22242 identity proof that 'does not enforce authorization'; relay ACL is separate relay policy. C3: Describes seal/gift-wrap layering and notes the kind-1059 wrapper uses a random key, but never states that the authenticated sender is the kind-13 seal signer nor that clients MUST check the seal pubkey equals the rumor pubkey (NIP-17 Encrypting); 'verify sender's pubkey' is left ambiguous as to which layer \u2014 partial. C4: Strong \u2014 'Agent independently validates task-sender pubkey against an admin-signed roster event before acting. Never assume relay auth or encryption proves membership,' applied to both channel and DM paths. C5: Concrete: rotating symmetric group key for kind-47103 distributed via NIP-17 wraps, relay ACL mapping authed pubkey\u2192channel, relay serves kind-1059 only to the p-tagged authenticated recipient; citations to NIP-01/42/59/17 are accurate; concludes workspace is not private."
+            },
+            "b": {
+              "scores": [
+                2,
+                2,
+                2,
+                0,
+                1
+              ],
+              "reason": "C1: Correct \u2014 plaintext kind-47103 is readable by any subscriber; UI filtering is client-side only. C2: Correct \u2014 NIP-42 'proves pubkey identity but does NOT enforce read policy'; relays must implement allowlist checks per subscription. C3: Correct and specific \u2014 seal kind-13 identifies the sender, gift wrap kind-1059 uses a random one-time pubkey, and 'sender authentication via sealed kind-13 signature'; cites NIP-59 Spam Protection and NIP-17 Relays for p-tag/AUTH gating. C4: Fails the core trap \u2014 claims 'DMs: Only roster members by cryptographic design\u2014only the recipient's private key decrypts kind-1059.' Decryptability by the agent says nothing about who may send; any stranger can gift-wrap a task command to the agent's pubkey, so the agent must authorize the inner seal author against the roster. No sender-authorization step for the agent is specified. C5: Thin and partly inaccurate: no encryption design at all for channel messages (only 'trust the relay'); recommends 'kind-17 DMs' which does not exist (NIP-17 defines kind 14/15 rumors); miscites NIP-42 'Signed Event Verification' (about validating the AUTH event) as the basis for roster checks; and asserts an unwarranted blanket authorization guarantee for DMs."
+            },
+            "recoveredMissingBrace": true
+          }
+        },
+        {
+          "aArm": "solo",
+          "unavailable": "private-workspace-judge-1: incomplete answer"
+        }
+      ]
+    },
+    {
+      "case": "roster-ordering",
+      "solo": [
+        5,
+        6
+      ],
+      "hire": [
+        6,
+        8
+      ],
+      "verdicts": [
+        {
+          "aArm": "hire",
+          "result": {
+            "a": {
+              "scores": [
+                0,
+                1,
+                2,
+                1,
+                2
+              ],
+              "reason": "C1: Accepts the false premise and compounds it, asserting 'Kind 47102 (addressable, NIP-01 \u00a7Kinds: 30000 \u2264 n < 40000)' \u2014 47102 is outside every NIP-01 range, so no error identified and no custom-semantics path given. C2: Requires Schnorr sig check, pubkey == known owner key, and id == sha256 of serialization; the roster identifier is only handled implicitly via the '#d' filter, not verified on the received event. C3: Correctly states highest created_at wins, tie broken by lexicographically lowest id, correctly attributed to NIP-01. C4: Names the core detection problem ('cannot distinguish whether (a) no update exists, or (b) a relay is censoring'), but never states a monotonic anti-rollback rule (never regress below a cached newer version) and the 'abort if responses diverge' rule only accidentally covers replay. C5: Concrete fail-closed policy \u2014 query \u22652 relays, abort on divergence, freshness threshold (~5 min), abort on stale/undefined member status."
+            },
+            "b": {
+              "scores": [
+                0,
+                1,
+                2,
+                1,
+                1
+              ],
+              "reason": "C1: Same premise error, asserting 'Kind 47102 (addressable, NIP-01 \u00a730000\u201340000 range)'; 47102 is not addressable and no alternative kind or custom semantics is proposed. C2: Verifies sig over canonical serialization and pubkey == hardcoded owner; d-tag/address matching only appears in the query filter, and it omits id-hash verification, adding an unjustified \u00b160s created_at window. C3: States newest created_at then lowest lexical id with an accurate NIP-01 quote, though it mislabels the NIP-01 rule as 'application policy' and step 3 is muddled. C4: Gestures at needing 'client-side version history' and notes signatures give 'no semantic proof of currency', plus correctly cites NIP-09 deletions as advisory, but never states a clear no-rollback rule. C5: Has a freshness window (1 hour) and denies absent/revoked members, but weakens fail-closed by designating one relay 'authoritative for tiebreaker fallback' and only alerting (not aborting) on disagreement; also nonsensically rejects execution whenever timestamps tie."
+            },
+            "recoveredMissingBrace": true
+          }
+        },
+        {
+          "aArm": "solo",
+          "result": {
+            "a": {
+              "scores": [
+                1,
+                1,
+                2,
+                1,
+                1
+              ],
+              "reason": "C1: Fails the premise check \u2014 asserts 'Kind 47102 (addressable, NIP-01 \u00a730000\u201340000 range)'. Per NIP-01, 47102 falls outside every defined range (regular <10000/4-45/1/2, replaceable 10000-20000, ephemeral 20000-30000, addressable 30000-40000), so it is undefined and needs a 30000-39999 kind or explicit custom relay semantics; scored 1 only because it does not receive credit for identifying anything, but the misstatement is an affirmative error \u2014 no credit warranted beyond none... [correction: no identification of error] => credit withheld. C2: Requires sig verification and pubkey==hardcoded owner, and filters on #d, but adds a broken rule ('reject created_at outside \u00b160 seconds of system time') that would reject nearly every legitimately older roster, making the check unimplementable; partial. C3: Correctly states highest created_at, then lowest lexical id, quoting NIP-01. C4: Only gestures at replay ('no semantic proof of currency') and gives a circular rule requiring proof that created_at 'provably exceeds the withheld version's timestamp'; never states a persisted high-water-mark/no-rollback rule, and only vaguely notes undetectability. C5: Has a freshness threshold (1 hour) and abort-on-ambiguous-tie, but 'designate one relay authoritative for tiebreaker fallback' invites accepting the censoring/replaying relay's state, undermining fail-closed reconciliation."
+            },
+            "b": {
+              "scores": [
+                1,
+                2,
+                2,
+                1,
+                2
+              ],
+              "reason": "C1: Same premise error \u2014 states 'Kind 47102 (addressable, NIP-01 \u00a7Kinds: 30000 \u2264 n < 40000)', which contradicts NIP-01; 47102 is in no defined range and would require custom semantics or a kind in 30000-39999. No identification of the error. C2: Requires Schnorr signature verification over the canonical serialization, pubkey equal to the known owner key, id == sha256 of serialization, and filters on the workspace #d identifier; complete and specific. C3: Correctly gives highest created_at wins, tie broken by lexicographically lowest id, citing NIP-01. C4: Captures that a client 'cannot distinguish whether (a) no update exists, or (b) a relay is censoring' \u2014 the undetectability point \u2014 but never states a persisted newest-known-version high-water mark forbidding rollback to a replayed older signed roster; partial. C5: Concrete fail-closed policy: query \u22652 independent relays, abort on divergence, freshness threshold (e.g. <5 min), require member present and revoked:false, abort on stale/undefined status."
+            },
+            "recoveredMissingBrace": true
+          }
+        }
+      ]
+    }
+  ]
+}

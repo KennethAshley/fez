@@ -5,10 +5,12 @@ import { z } from "zod";
 import type { Filter } from "nostr-tools";
 import { wikiSlug, orderVersions, assertDocBase, docCommentThreads } from "../../fez-client/src/docs.js";
 import { WorkspaceState } from "../../fez-client/src/workspace-state.js";
+import { LESSON_PREFIX, parseLesson } from "../../fez-client/src/lessons.js";
 import type { WireEvent } from "../../fez-client/src/index.js";
 import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
 import { attachedSkills, loadSkillBody } from "./skills.js";
 import { registerConnectionTools } from "./connections.js";
+import { DurableWork, workDirectory } from "../../../src/shared/durable-work.js";
 import { acceptWork, completeWork, workResult } from "../../fez-client/src/work-completion.js";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import {
@@ -25,6 +27,7 @@ import {
   allowedMediaHosts,
   fetchAttachment,
   fetchRelayInfo,
+  pinWorkspaceOwner,
   loadSettings,
 } from "@fezchat/protocol";
 
@@ -209,7 +212,7 @@ server.registerTool("fez_complete_work", {
   inputSchema: {
     requestId: z.string().regex(/^[a-f0-9]{64}$/),
     status: z.enum(["success", "error"]),
-    summary: z.string().min(1).max(8000),
+    summary: z.string().min(1).max(8000).describe("The actual answer or deliverable, shown directly to the requester. Include useful details; do not replace the answer with a description of what you did."),
     capability: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/).describe("capability used, e.g. speech, transcription, coding"),
     artifacts: z.array(z.string()).max(16).default([]).describe("HTTPS deliverable URLs or signed artifact event ids"),
   },
@@ -220,7 +223,9 @@ server.registerTool("fez_complete_work", {
     const prior = await relay.query([{ kinds: [47103], authors: [myPubkey], "#result": [requestId] }]);
     const existing = prior.find(e => workResult(e, request));
     if (existing) return text(`Already submitted: ${existing.id}. Acceptance belongs to the requester.`);
-    const event = sign(template);
+    const inbox = new DurableWork(workDirectory(myPubkey, relayUrls));
+    const event = inbox.delivery(requestId, () => sign(template));
+    if (event.pubkey !== myPubkey || !workResult(event, request)) throw new Error("Saved result does not match this assignment");
     await relay.publish(event);
     return text(`Submitted result ${event.id}. The requester has been notified. Do not post another callback; acceptance is still pending.`);
   } catch (e) { return { ...text(e instanceof Error ? e.message : String(e)), isError: true }; }
@@ -423,26 +428,33 @@ server.registerTool(
 
 async function memHeads() {
   if (!owner) throw new Error("memory tools need FEZ_AGENT_OWNER");
-  const events = await relay.query([{ kinds: [KIND_AGENT_ENGRAM], authors: [myPubkey], "#p": [owner] }]);
+  const result = await relay.queryWithStatus([{ kinds: [KIND_AGENT_ENGRAM], authors: [myPubkey], "#p": [owner] }]);
+  if (result.failures.length) throw new Error("Private memory read is incomplete. Retry before reading or changing memory.");
   const convKey = conversationKey(secret, owner);
-  return { convKey, heads: engramHeads(events as never, myPubkey, owner, convKey) };
+  return { convKey, heads: engramHeads(result.events, myPubkey, owner, convKey) };
 }
 
 server.registerTool(
   "fez_mem_set",
   {
     description:
-      'Write a persistent memory record that survives session recycles. slug "core" = your identity/rules/goals (a full rewrite); "mem/<topic>" = an individual fact.',
-    inputSchema: { slug: z.string(), value: z.string() },
+      'Write private memory across sessions. "core" = identity/rules/goals (full rewrite); "mem/<topic>" = a fact. "mem/lessons/<topic>" = a candidate lesson: JSON string with when (scope/condition, <=400 chars), action (<=4000), evidence (observed correction/check, <=4000), source (actual message/task/artifact/check-log reference, <=1000). Read before correcting a topic. value null forgets a mem/ entry, not core.',
+    inputSchema: { slug: z.string(), value: z.string().nullable() },
   },
   async ({ slug, value }) => {
     if (!isValidSlug(slug)) return text(`Bad slug "${slug}" — use "core" or mem/<lowercase-alnum>.`);
+    if (slug === "core" && value === null) return text("core cannot be forgotten — rewrite it instead.");
+    if (slug.startsWith(LESSON_PREFIX) && value !== null) {
+      const lesson = parseLesson(value);
+      if (!lesson) return text("Bad lesson: use JSON with nonempty when (<=400), action (<=4000), evidence (<=4000), source (<=1000) strings.");
+      value = JSON.stringify(lesson);
+    }
     const { convKey, heads } = await memHeads();
     const createdAt = Math.max(Math.floor(Date.now() / 1000), (heads.get(slug)?.event.created_at ?? 0) + 1);
-    const body = slug === "core" ? { slug, profile: value } : { slug, value };
-    const template = buildEngramEvent(convKey, owner!, body as never, createdAt);
-    await relay.publish(finalizeEvent({ ...template, pubkey: myPubkey } as never, secret));
-    return text(`${slug} written (${value.length} chars).`);
+    const body = slug === "core" ? { slug, profile: value! } : { slug, value };
+    const template = buildEngramEvent(convKey, owner!, body, createdAt);
+    await relay.publish(finalizeEvent(template, secret));
+    return text(value === null ? `${slug} forgotten (history retained).` : `${slug} written (${value.length} chars).`);
   }
 );
 
@@ -459,11 +471,12 @@ server.registerTool(
 
 server.registerTool(
   "fez_mem_list",
-  { description: "List your persistent memory slugs.", inputSchema: {} },
-  async () => {
+  { description: 'List your persistent memory slugs. Use prefix "mem/lessons/" to find candidate lessons, then fez_mem_get for the condition, action, and evidence.', inputSchema: { prefix: z.string().optional() } },
+  async ({ prefix }) => {
     const { heads } = await memHeads();
     const rows = [...heads.values()]
       .filter((h) => h.body.value !== null || h.body.slug === "core")
+      .filter((h) => !prefix || h.body.slug.startsWith(prefix))
       .map((h) => `• ${h.body.slug}`);
     return text(rows.join("\n") || "(no memory yet)");
   }
@@ -482,7 +495,7 @@ async function trustedDocEvents(filter: Filter): Promise<WireEvent[]> {
   ]);
   if (result.failures.length) throw new Error("Could not read the current document version and membership. Retry before writing.");
   const state = new WorkspaceState();
-  state.describe({ owner: info?.pubkey });
+  state.describe({ owner: pinWorkspaceOwner(relayUrls[0], info?.pubkey) });
   for (const kind of [47102, 30047]) for (const event of result.events.filter(e => e.kind === kind)) state.absorb(event);
   if (!state.isMember(myPubkey)) throw new Error("Document tools require workspace membership.");
   return result.events.filter(event => filter.kinds?.includes(event.kind) && state.isMember(event.pubkey));

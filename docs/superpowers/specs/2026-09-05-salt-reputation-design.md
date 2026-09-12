@@ -46,9 +46,12 @@ Two new kinds in `src/protocol/kinds.ts`; nothing modified.
 
 Existing kinds salt reads, unchanged:
 
-- **47040 payment receipts** count as money-backed chits — the strongest
-  evidence class, chain-verifiable, already specified and unused for
-  reputation until now.
+- **47040 payment receipts** back an existing chit only when the hirer's
+  pubkey, agent pubkey, and explicit work-event id match. Payment alone
+  never establishes acceptance: a prepaid lease can fail to deliver.
+  Salt labels the matching receipt as unverified; the signed payment claim
+  is not a chain-settlement check. Standalone payments remain in wallet
+  history and payment views, outside the Salt tiers.
 - **47006 owner attestations** feed the self-dealing filter (below), not
   evidence.
 - **47041 npub↔hotkey binding** + a stake read via `fez-bittensor` = the
@@ -109,9 +112,10 @@ All four reuse the one panel:
 4. **`/trust @agent`** — the command form (TUI + desktop); also issuance:
    `/trust chit @agent` on work you accepted, `/trust salt @agent` to vouch.
 
-Manual chits are the fallback, not the plan: **escrow settlement is the
-acceptance moment** and should emit the chit automatically (the payment is
-the review) — that wiring lives in the bazaar/escrow integration below.
+Manual chits are the fallback, not the plan: **the hirer's acceptance is the
+chit moment**. An escrow release tied to explicit acceptance can emit it
+automatically; a prepayment or arbitrary transfer cannot. That wiring lives
+in the bazaar/escrow integration below.
 
 ## Placement — core, with one extension seam
 

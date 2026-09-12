@@ -1,7 +1,7 @@
 {
   "name": "@fezchat/loom",
-  "version": "0.2.2",
-  "description": "Loom for fez — describe a tool over your channel data and @loom weaves a live, streaming UI (sandboxed; reads the relay freely, every write asks you first). Keep the good ones in the ▣ tools gallery; the best crystallize into extensions.",
+  "version": "0.2.3",
+  "description": "Save, reopen, and share artifacts from any agent. Includes @loom as an optional live-tool builder.",
   "type": "module",
   "fez": {
     "type": "extension",
@@ -16,7 +16,8 @@
       "publish",
       "personas",
       "ui"
-    ]
+    ],
+    "minFezVersion": "0.2.2"
   },
   "scripts": {
     "build": "esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=automatic --outfile=dist/gui.js",

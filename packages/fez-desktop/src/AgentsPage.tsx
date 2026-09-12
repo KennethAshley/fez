@@ -111,14 +111,13 @@ export default function AgentsPage({
     <main className="main">
     <div className="fez-page wide">
       <header className="page-head">
-        <h1 className="page-title">agents</h1>
+        <h1 className="page-title">Agents</h1>
         <p className="page-sub">
-          Every agent here is a persona on this machine. Give one a tool and it can use it on its
-          next spawn.
+          Your team, their tools, and the work they can help with.
         </p>
         <div className="page-rule">
           <button className="page-fact page-fact-action" onClick={onCreate}>
-            + new agent
+            + New agent
           </button>
           <span className="page-fact">{fact}</span>
         </div>
@@ -128,8 +127,7 @@ export default function AgentsPage({
         <div className="page-empty">
           <div className="page-empty-line">No agents yet.</div>
           <div className="page-empty-how">
-            An agent is a persona file plus a harness. Make one and mention it in any channel to wake
-            it.
+            Create an agent, give it a role, and mention it in a channel to start working.
           </div>
         </div>
       ) : (

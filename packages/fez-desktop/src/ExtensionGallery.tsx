@@ -5,12 +5,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FezClient } from "@fezchat/client";
 import { reloadGuiExtensions } from "./gui-extensions";
-import { CATALOG, CONNECTABLE, CONNECTION_CATEGORIES, SENSITIVE, norm, permLabel, githubUrl, npmUrl, type CatalogEntry, type ConnectableEntry } from "./extensions-catalog";
+import { CATALOG, CONNECTABLE, CONNECTION_CATEGORIES, SENSITIVE, norm, permLabel, githubUrl, npmUrl, installExtension, useInstalledExtensions, type CatalogEntry, type ConnectableEntry } from "./extensions-catalog";
 import { useConfig } from "./config-store";
 import { generateArtifact } from "./artifact-sprite";
 import { AnimatedSprite } from "@fezchat/ui";
 import { ServiceIcon } from "./brand-icons";
-import { GitInstallOffer } from "./InstallOffer";
+import { GitInstallOffer, isGitHubSource } from "./InstallOffer";
 
 /**
  * The install gallery — discover the official fez extensions and install
@@ -28,16 +28,15 @@ const GALLERY = CATALOG;
 
 export function ExtensionGallery({
   client,
-  installed,
   onInstalled,
   onNotice,
 }: {
   client: FezClient;
-  installed: Set<string>;
   onInstalled: () => void;
   onNotice: (text: string) => void;
 }) {
   const [confirming, setConfirming] = useState<GalleryEntry>();
+  const installed = useInstalledExtensions();
   const [installing, setInstalling] = useState<string>();
   // Connections: which sign-in is mid-flight, and the last failure.
   const [connecting, setConnecting] = useState<string>();
@@ -74,7 +73,7 @@ export function ExtensionGallery({
   const installedVer = useConfig().versions;
   const [latest, setLatest] = useState<Record<string, string>>({});
 
-  const isInstalled = (entry: GalleryEntry) => [...installed].some((i) => norm(i) === norm(entry.name));
+  const isInstalled = (entry: GalleryEntry) => installed.has(norm(entry.name));
 
   // When the installed set / recorded versions change, ask npm for latest on
   // the ones we installed (a fez link-era install has no recorded version, so
@@ -123,9 +122,8 @@ export function ExtensionGallery({
     setConfirming(undefined);
     setInstalling(entry.name);
     try {
-      await invoke<string>("install_package", { name: entry.name });
-      // A gui part appears live; headless/relay parts need a restart.
-      await applyLive();
+      await installExtension(client, entry.name);
+      onInstalled();
       onNotice(`✓ ${entry.title} installed — ${entry.where}`);
     } catch (err) {
       onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
@@ -137,8 +135,8 @@ export function ExtensionGallery({
   const update = async (entry: GalleryEntry) => {
     setInstalling(entry.name);
     try {
-      await invoke<string>("install_package", { name: entry.name });
-      await applyLive();
+      await installExtension(client, entry.name);
+      onInstalled();
       onNotice(`✓ ${entry.title} updated to ${latest[norm(entry.name)] ?? "latest"}`);
     } catch (err) {
       onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
@@ -146,6 +144,34 @@ export function ExtensionGallery({
       setInstalling(undefined);
     }
   };
+
+  const consent = confirming && (
+    <div className="consent-backdrop" onClick={() => setConfirming(undefined)}>
+      <div className="consent-modal" role="dialog" aria-modal="true" aria-label={`Install ${confirming.title}`} onClick={(e) => e.stopPropagation()} onKeyDown={e => { if (e.key === "Escape") setConfirming(undefined); }}>
+        <div className="ext-modal-head lit">
+          <span className="artifact-slot">
+            <AnimatedSprite sprite={generateArtifact(confirming.name)} scale={3} />
+          </span>
+          <span>
+            Install <strong>{confirming.title}</strong> <code>{confirming.name}</code>?
+          </span>
+        </div>
+        <div className="settings-hint">It asks for:</div>
+        <ul className="gallery-perms">
+          {confirming.permissions.map((p) => (
+            <li key={p} className={SENSITIVE.has(p) ? "sensitive" : ""}>
+              {SENSITIVE.has(p) ? "⚠ " : "· "}
+              {permLabel(p)} <code>{p}</code>
+            </li>
+          ))}
+        </ul>
+        <div className="ext-modal-actions">
+          <button className="mini" onClick={() => setConfirming(undefined)}>cancel</button>
+          <button className="mini primary" onClick={() => void run(confirming)}>install & grant</button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (detail) {
     const done = isInstalled(detail);
@@ -210,6 +236,7 @@ export function ExtensionGallery({
             <div className="pane-empty">no readme published</div>
           )}
         </div>
+        {consent}
       </div>
     );
   }
@@ -412,42 +439,16 @@ export function ExtensionGallery({
         );
       })}
 
-      {confirming && (
-        <div className="consent-backdrop" onClick={() => setConfirming(undefined)}>
-          <div className="consent-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="ext-modal-head lit">
-              <span className="artifact-slot">
-                <AnimatedSprite sprite={generateArtifact(confirming.name)} scale={3} />
-              </span>
-              <span>
-                Install <strong>{confirming.title}</strong> <code>{confirming.name}</code>?
-              </span>
-            </div>
-            <div className="settings-hint">It asks for:</div>
-            <ul className="gallery-perms">
-              {confirming.permissions.map((p) => (
-                <li key={p} className={SENSITIVE.has(p) ? "sensitive" : ""}>
-                  {SENSITIVE.has(p) ? "⚠ " : "· "}
-                  {permLabel(p)} <code>{p}</code>
-                </li>
-              ))}
-            </ul>
-            <div className="ext-modal-actions">
-              <button className="mini" onClick={() => setConfirming(undefined)}>cancel</button>
-              <button className="mini primary" onClick={() => void run(confirming)}>install & grant</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {consent}
 
       {view !== "connections" && (
         <div className="gallery-from-url">
-          <div className="settings-hint">install a prompt pack from GitHub — markdown skills only, repos with code are refused</div>
-          <form onSubmit={(e) => { e.preventDefault(); if (/^(https:\/\/)?github\.com\/[\w.-]+\/[\w.-]+/.test(urlDraft.trim())) setSubmitted(urlDraft.trim()); }}>
-            <input value={urlDraft} onChange={(e) => setUrlDraft(e.target.value)} placeholder="github.com/owner/repo" />
-            <button className="mini" type="submit">inspect</button>
+          <div className="settings-hint">Add a Fez package or import instructions from GitHub. Review the supported features before installing.</div>
+          <form onSubmit={(e) => { e.preventDefault(); if (isGitHubSource(urlDraft)) setSubmitted(urlDraft.trim()); }}>
+            <input aria-label="GitHub source" value={urlDraft} onChange={(e) => { setUrlDraft(e.target.value); setSubmitted(undefined); }} placeholder="GitHub repository, skill file, or folder URL" />
+            <button className="mini" type="submit" disabled={!isGitHubSource(urlDraft)}>inspect</button>
           </form>
-          {submitted && <GitInstallOffer key={submitted} url={submitted} authorName="you" client={client} />}
+          {submitted && <GitInstallOffer key={submitted} url={submitted} authorName="you" client={client} inspectOnMount />}
         </div>
       )}
     </div>

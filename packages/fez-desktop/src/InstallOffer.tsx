@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
-import { PERM_LABEL, SENSITIVE, norm, permLabel, catalogEntry, installExtension } from "./extensions-catalog";
+import { PERM_LABEL, SENSITIVE, norm, permLabel, catalogEntry, installExtension, useInstalledExtensions } from "./extensions-catalog";
 import { flash } from "./toast";
+import { reloadGuiExtensions } from "./gui-extensions";
 import { generateArtifact } from "./artifact-sprite";
 import { AnimatedSprite } from "@fezchat/ui";
 
@@ -11,10 +12,13 @@ import { AnimatedSprite } from "@fezchat/ui";
 // can't smuggle an arbitrary npm package past the consent card.
 const MARKER = /fez:install\s+(@fezchat\/[a-z0-9-]+)/gi;
 
-// @fez can also offer a persona pack straight from a GitHub repo — the git
-// counterpart to the @fezchat/* form above. Only github.com is honored (see
-// git_install.rs on the Rust side, which refuses anything with code in it).
-const GIT_MARKER = /fez:install\s+git:((?:https:\/\/)?github\.com\/[\w.-]+\/[\w.-]+(?:#[\w./-]+)?)/gi;
+// Preserve the complete GitHub source; a file or directory must not become a repo import.
+const GIT_MARKER = /fez:install\s+git:((?:https?:\/\/)?github\.com\/[^\s<>"`()[\]]+)/gi;
+
+/** Routes GitHub web sources to package inspection instead of treating them as MCP endpoints. */
+export function isGitHubSource(value: string): boolean {
+  return /^(?:https?:\/\/)?github\.com\/[^\s]+$/i.test(value.trim());
+}
 
 /** The package names offered in a message, deduped. Empty = no card. */
 export function installOffers(content: string): string[] {
@@ -33,8 +37,7 @@ export function stripInstallMarkers(content: string): string {
   return content
     .replace(/^[ \t]*fez:install[ \t]+@fezchat\/[a-z0-9-]+[ \t]*$/gim, "")
     .replace(/fez:install[ \t]+@fezchat\/[a-z0-9-]+/gi, "")
-    .replace(/^[ \t]*fez:install[ \t]+git:(?:https:\/\/)?github\.com\/[\w.-]+\/[\w.-]+(?:#[\w./-]+)?[ \t]*$/gim, "")
-    .replace(/fez:install[ \t]+git:(?:https:\/\/)?github\.com\/[\w.-]+\/[\w.-]+(?:#[\w./-]+)?/gi, "")
+    .replace(GIT_MARKER, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -58,15 +61,9 @@ export function stripArtifactMarkers(content: string): string {
  */
 export function InstallOffer({ content, authorName, client }: { content: string; authorName: string; client: FezClient }) {
   const names = installOffers(content);
-  const [installed, setInstalled] = useState<Set<string>>(new Set());
+  const installed = useInstalledExtensions();
   const [busy, setBusy] = useState<string>();
   const [confirming, setConfirming] = useState<string>();
-
-  useEffect(() => {
-    void invoke<[string, string[]][]>("list_local_extensions")
-      .then((rows) => setInstalled(new Set(rows.map(([n]) => norm(n)))))
-      .catch(() => {});
-  }, [content]);
 
   if (names.length === 0) return null;
 
@@ -77,7 +74,6 @@ export function InstallOffer({ content, authorName, client }: { content: string;
     try {
       await installExtension(client, name);
       flash(`✓ ${entry?.title ?? name} installed — ${entry?.where ?? ""}`);
-      setInstalled((s) => new Set(s).add(norm(name)));
     } catch (e) {
       flash(`✗ ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -140,81 +136,66 @@ export function InstallOffer({ content, authorName, client }: { content: string;
   );
 }
 
-interface GitPersonaFound {
-  id: string;
-  description: string;
-}
-
+interface GitPersonaFound { id: string; description: string; path: string }
 interface GitInspectReport {
+  kind: "skills" | "fez-package";
   name: string;
   skills: GitPersonaFound[];
   agents: GitPersonaFound[];
   ignored: string[];
   refused: string[];
+  unsupported: string[];
+  permissions: string[];
+  components: string[];
   sha: string;
   url: string;
   installed: boolean;
 }
-
 type GitPhase =
-  | { kind: "idle" }
-  | { kind: "inspecting" }
-  | { kind: "report"; report: GitInspectReport }
-  | { kind: "error"; message: string }
-  | { kind: "installing"; report: GitInspectReport }
-  | { kind: "done"; report: GitInspectReport };
+  | { kind: "idle" | "inspecting" }
+  | { kind: "report" | "installing" | "done"; report: GitInspectReport }
+  | { kind: "error"; message: string };
 
-/**
- * The card for `fez:install git:<github url>` — DMs only (see App.tsx's
- * DmView). Scan-gated: `inspect_git_package` runs first and shows exactly
- * what would install (or why it's refused) before any button can touch
- * disk. Same LOCAL guarantee as `InstallOffer`: this machine, this click.
- */
-/** The package name a github url installs as — mirrors git_install.rs's
- * `gh-<owner>-<repo>` normalization so a card can know "already installed"
- * before any inspect round-trip. */
-export function gitPackageName(url: string): string {
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-  const [owner = "", repo = ""] = url.replace(/^https:\/\//, "").replace(/^github\.com\//, "").split("#")[0].split("/");
-  return `gh-${norm(owner)}-${norm(repo)}`;
-}
-
-export function GitInstallOffer({ url, authorName }: { url: string; authorName: string; client: FezClient }) {
+/** One review for chat, Tools, and Extensions. Inspection chooses package semantics;
+ * the install uses its immutable revision and the exact paths the owner selected. */
+export function GitInstallOffer({ url, authorName, client, inspectOnMount = false }: {
+  url: string; authorName: string; client: FezClient; inspectOnMount?: boolean;
+}) {
   const [phase, setPhase] = useState<GitPhase>({ kind: "idle" });
-  // Every card for this url — the guide may offer the same repo in several
-  // messages — flips to "installed" together: checked on mount and again on
-  // the same event an install dispatches.
-  const [already, setAlready] = useState(false);
-  useEffect(() => {
-    const check = () =>
-      void invoke<[string, string[]][]>("list_local_extensions")
-        .then((rows) => setAlready(rows.some(([n]) => n === gitPackageName(url))))
-        .catch(() => {});
-    check();
-    window.addEventListener("fez-extensions-changed", check);
-    return () => window.removeEventListener("fez-extensions-changed", check);
-  }, [url]);
-
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const inspect = async () => {
     setPhase({ kind: "inspecting" });
     try {
-      const json = await invoke<string>("inspect_git_package", { url });
-      setPhase({ kind: "report", report: JSON.parse(json) as GitInspectReport });
-    } catch (e) {
-      setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-    }
+      const report = JSON.parse(await invoke<string>("inspect_git_package", { url })) as GitInspectReport;
+      // An old host cannot enforce selected paths or distinguish native package consent.
+      if (!["skills", "fez-package"].includes(report.kind) ||
+          ![report.skills, report.agents, report.unsupported, report.permissions, report.components, report.refused, report.ignored].every(Array.isArray) ||
+          ![...report.skills, ...report.agents].every(item => typeof item.path === "string" && item.path.length > 0) ||
+          typeof report.url !== "string" || !isGitHubSource(report.url) ||
+          typeof report.sha !== "string" || !/^[a-f0-9]{40}$/i.test(report.sha)) {
+        throw new Error("Update Fez before importing this source; its inspection must include package type and exact instruction paths.");
+      }
+      setSelectedPaths([...report.skills, ...report.agents].map(item => item.path));
+      setPhase({ kind: "report", report });
+    } catch (e) { setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e) }); }
   };
+  useEffect(() => {
+    if (inspectOnMount) void inspect();
+    // Each source mounts its own keyed card; inspecting again requires an explicit click.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, inspectOnMount]);
 
   const install = async (report: GitInspectReport) => {
+    if (phase.kind !== "report" || report.refused.length || (report.kind === "skills" && !selectedPaths.length)) return;
     setPhase({ kind: "installing", report });
     try {
-      // Pin to the sha the user actually reviewed — the branch may have
-      // moved between inspect and this click. `parse_github_url` accepts a
-      // sha as `#ref`, so this needs zero Rust-side changes.
-      await invoke<string>("install_git_package", { url: `${url.split("#")[0]}#${report.sha}` });
-      flash(`✓ ${report.name} installed`);
-      // No reloadGuiExtensions — persona packs have no gui part.
+      await invoke<string>("install_git_package", {
+        url: `${report.url.split("#")[0]}#${report.sha}`,
+        ...(report.kind === "skills" ? { selectedPaths, allowSkillsOnly: true } : {}),
+      });
+      if (report.kind === "fez-package") await reloadGuiExtensions(client).catch(() => {});
       window.dispatchEvent(new CustomEvent("fez-extensions-changed"));
+      flash(`✓ ${report.name} ${report.kind === "skills" ? "instructions imported" : "installed"}`);
       setPhase({ kind: "done", report });
     } catch (e) {
       flash(`✗ ${e instanceof Error ? e.message : String(e)}`);
@@ -222,132 +203,72 @@ export function GitInstallOffer({ url, authorName }: { url: string; authorName: 
     }
   };
 
-  if (phase.kind === "error") {
-    return (
-      <div className="install-offers">
-        <div className="install-offer unknown">⚠ {phase.message}</div>
-      </div>
-    );
-  }
-
+  if (phase.kind === "error") return <div className="install-offers git-import"><div className="install-offer unknown">
+    <div role="alert">{phase.message}</div><button className="mini" onClick={() => void inspect()}>Try inspection again</button>
+  </div></div>;
   if (phase.kind === "report" || phase.kind === "installing" || phase.kind === "done") {
     const { report } = phase;
-    // " (js, py, mjs)" — the kinds of code found, from the flagged paths.
-    // The Rust scan caps the list and appends "… and N more"; that entry has
-    // no extension worth counting, so it falls out of the summary naturally.
-    const fileKinds = (paths: string[]) => {
-      const kinds = [...new Set(paths.map((p) => p.split(".").pop() ?? "").filter((e) => /^[a-z]{1,4}$/i.test(e)))];
-      return kinds.length > 0 ? ` (${kinds.slice(0, 4).join(", ")})` : "";
-    };
-    if (report.refused.length > 0) {
-      // The verdict is the message; the inventory is evidence on demand.
-      // A repo can flag dozens of files — a wall of paths buries the one
-      // fact that matters (it has code), so the list folds behind <details>.
-      return (
-        <div className="install-offers">
-          <div className="install-offer unknown">
-            ⚠ not installable as a prompt pack — contains executable code{fileKinds(report.refused)}
-            <details className="install-offer-files">
-              <summary>show flagged files</summary>
-              <ul className="gallery-perms">
-                {report.refused.map((path) => (
-                  <li key={path}>{path}</li>
-                ))}
-              </ul>
-            </details>
-          </div>
-        </div>
-      );
-    }
-
-    const done = phase.kind === "done";
-    const installing = phase.kind === "installing";
-    return (
-      <div className="install-offers">
-        <div className={`install-offer ${done ? "lit" : "dormant"}`}>
-          <div className="install-offer-row">
-            <span className="artifact-slot">
-              <AnimatedSprite sprite={generateArtifact(url)} scale={3} />
-            </span>
-            <div className="install-offer-main">
-              <span className="install-offer-title">{authorName} suggests installing from {url}</span>
-            </div>
-            {done && <span className="gallery-install installed">installed — attach it to an agent in its editor</span>}
-            {installing && <span className="gallery-install">installing…</span>}
-          </div>
-          {!done && !installing && (
-            <div className="install-offer-consent">
-              <div className="settings-hint">
-                installs as <code>{report.name}</code> @ <code>{report.sha.slice(0, 7)}</code>
-              </div>
-              {report.skills.length > 0 && (
-                <ul className="gallery-perms">
-                  {report.skills.map((s) => (
-                    <li key={s.id}>{s.id} — {s.description}</li>
-                  ))}
-                </ul>
-              )}
-              {report.agents.length > 0 && (
-                <ul className="gallery-perms">
-                  {report.agents.map((a) => (
-                    <li key={a.id}>@{a.id} — {a.description}</li>
-                  ))}
-                </ul>
-              )}
-              {report.ignored.length > 0 && (
-                <details className="install-offer-files">
-                  <summary className="settings-hint">other repo files are ignored — only markdown installs</summary>
-                  <ul className="gallery-perms">
-                    {report.ignored.map((path) => (
-                      <li key={path}>{path}</li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-              {report.agents.length > 0 && (
-                <ul className="gallery-perms">
-                  <li className={SENSITIVE.has("personas") ? "sensitive" : ""}>
-                    {SENSITIVE.has("personas") ? "⚠ " : "· "}{PERM_LABEL.personas}
-                  </li>
-                </ul>
-              )}
-              <div className="settings-hint">These are instructions that will steer agents you run. Installs on THIS machine.</div>
-              {report.installed && (
-                <div className="settings-hint">already installed; reinstalling refreshes its skills from the repo — persona files you've edited are kept.</div>
-              )}
-              <div className="ext-modal-actions">
-                <button className="mini" onClick={() => setPhase({ kind: "idle" })}>cancel</button>
-                <button className="mini primary" onClick={() => void install(report)}>install &amp; grant</button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="install-offers">
-      <div className="install-offer dormant">
+    if (report.refused.length) return <div className="install-offers git-import"><div className="install-offer unknown" role="alert">
+      This source cannot be installed.
+      <details className="install-offer-files"><summary>Show why</summary>
+        <ul className="gallery-perms">{report.refused.map(path => <li key={path}>{path}</li>)}</ul>
+      </details>
+    </div></div>;
+    const native = report.kind === "fez-package";
+    const done = phase.kind === "done", installing = phase.kind === "installing";
+    const candidates = [...report.skills.map(item => ({ ...item, label: "Skill" })), ...report.agents.map(item => ({ ...item, label: "Persona" }))];
+    return <div className="install-offers git-import">
+      <div className={`install-offer ${done ? "lit" : "dormant"}`}>
         <div className="install-offer-row">
-          <span className="artifact-slot">
-            <AnimatedSprite sprite={generateArtifact(url)} scale={3} />
-          </span>
-          <div className="install-offer-main">
-            <span className="install-offer-title">{authorName} suggests installing from {url}</span>
-          </div>
-          {phase.kind === "inspecting" ? (
-            <span className="gallery-install">inspecting…</span>
-          ) : already ? (
-            <>
-              <span className="gallery-install installed">installed</span>
-              <button className="mini" title="fetch the repo again and refresh its skills" onClick={() => void inspect()}>reinstall…</button>
-            </>
-          ) : (
-            <button className="gallery-install" onClick={() => void inspect()}>review &amp; install</button>
-          )}
+          <span className="artifact-slot"><AnimatedSprite sprite={generateArtifact(url)} scale={3} /></span>
+          <div className="install-offer-main"><span className="install-offer-title">{authorName === "you" ? "Review" : `${authorName} suggests`} {url}</span></div>
+          {done && <span className="gallery-install installed">{native ? "Installed on this computer" : "Instructions imported. Choose an agent in Tools."}</span>}
+          {installing && <span className="gallery-install">installing…</span>}
         </div>
+        {!done && !installing && <div className="install-offer-consent">
+          <strong>{native ? "Native Fez package" : "Skills-only import"}</strong>
+          <div className="settings-hint">{report.name} @ <code>{report.sha.slice(0, 7)}</code></div>
+          {native ? <>
+            <div className="settings-hint">Installs the full package on this computer.</div>
+            <div>Components: {report.components.join(", ") || "none declared"}</div>
+            <div>Permissions to grant:</div>
+            {report.permissions.length ? <ul className="gallery-perms">{report.permissions.map(permission => <li key={permission} className={SENSITIVE.has(permission) ? "sensitive" : ""}>
+              {permLabel(permission)} <code>{permission}</code>
+            </li>)}</ul> : <div className="settings-hint">No permissions requested.</div>}
+          </> : <>
+            <p className="settings-hint">Import selected instructions. This does not install the source's plugin runtime or assign skills to an agent.</p>
+            {report.unsupported.length > 0 && <div className="git-import-unsupported">
+              <strong>Plugin features not included</strong>
+              <ul className="gallery-perms">{report.unsupported.map(feature => <li key={feature}>{feature}</li>)}</ul>
+            </div>}
+            <fieldset className="git-import-selection"><legend>Choose instructions to import</legend>
+              {candidates.map(item => <label key={item.path} className="git-import-choice">
+                <input type="checkbox" checked={selectedPaths.includes(item.path)} onChange={event => setSelectedPaths(paths => event.target.checked ? [...paths, item.path] : paths.filter(path => path !== item.path))} />
+                <span><strong>{item.label}: {item.id}</strong>{item.description && <span>{item.description}</span>}<code>{item.path}</code></span>
+              </label>)}
+              {!candidates.length && <p>No importable instructions found.</p>}
+            </fieldset>
+            {selectedPaths.some(path => report.agents.some(agent => agent.path === path)) && <div className="settings-hint">Selected personas add agent definitions: {PERM_LABEL.personas}.</div>}
+            <div className="settings-hint">These instructions can steer the agents you assign them to. Import only what you want them to use.</div>
+          </>}
+          {report.ignored.length > 0 && <details className="install-offer-files">
+            <summary className="settings-hint">Other files not included</summary>
+            <ul className="gallery-perms">{report.ignored.map(path => <li key={path}>{path}</li>)}</ul>
+          </details>}
+          {report.installed && <div className="settings-hint">already installed; importing again refreshes the selected content — persona files you've edited are kept.</div>}
+          <div className="ext-modal-actions">
+            <button className="mini" onClick={() => setPhase({ kind: "idle" })}>cancel</button>
+            <button className="mini primary" disabled={!native && !selectedPaths.length} onClick={() => void install(report)}>{native ? "Install & grant" : "Import selected instructions"}</button>
+          </div>
+        </div>}
       </div>
+    </div>;
+  }
+  return <div className="install-offers git-import"><div className="install-offer dormant">
+    <div className="install-offer-row">
+      <span className="artifact-slot"><AnimatedSprite sprite={generateArtifact(url)} scale={3} /></span>
+      <div className="install-offer-main"><span className="install-offer-title">{authorName === "you" ? "Review" : `${authorName} suggests`} {url}</span></div>
+      {phase.kind === "inspecting" ? <span className="gallery-install">inspecting…</span> : <button className="gallery-install" onClick={() => void inspect()}>review &amp; install</button>}
     </div>
-  );
+  </div></div>;
 }

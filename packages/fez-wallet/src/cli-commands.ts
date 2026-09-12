@@ -8,7 +8,7 @@ import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs, mirrorEvmAdd
 import { migrateLog } from "./log.js";
 import { burnCost, formatRao, metagraph, ownerOf, register, stakedAlpha, transferStake, uidFor, type MetagraphInfo } from "./chains/subtensor.js";
 import { TAO_DECIMALS } from "./chains/substrate.js";
-import { DEFAULT_NETUID, personaStatus, requirePersonaPair, requireRehearsalNetwork, subtensorFor } from "./stake.js";
+import { DEFAULT_NETUID, personaStatus, requirePersonaPair, requireRehearsalNetwork, requireExpectedPayer, isTaoAddress, subtensorFor } from "./stake.js";
 import { requireWalletMutationAllowed } from "./evaluation.js";
 
 /**
@@ -188,21 +188,26 @@ export async function payFromTreasury(
   adapter: ChainAdapter,
   to: string,
   amount: string,
-  opts: { memo?: string } = {},
-): Promise<{ persona: string; to: string; amount: string; txHash: string }> {
+  opts: { memo?: string; expectedPayer?: string } = {},
+): Promise<{ persona: string; payerAddress: string; network: "test"; to: string; amount: string; txHash: string }> {
   requireWalletMutationAllowed();
   const config = loadConfig();
-  requireRehearsalNetwork(config.network);
-  if (!/^5[1-9A-HJ-NP-Za-km-z]{47,48}$/.test(to)) throw new Error("recipient must be an ss58 address");
+  requireRehearsalNetwork(config.network, config.endpoints.tao);
+  if (!isTaoAddress(to)) throw new Error("recipient must be a checksummed ss58 address");
   const mnemonic = requireRoot();
   const parsed = parseAmount(amount, adapter.assets[0].decimals, adapter.assets[0].symbol);
-  const { txHash } = await adapter.transfer(treasuryPair(mnemonic), to, parsed);
-  await mirrorSpend({
-    ts: new Date().toISOString(),
-    persona: "treasury", to, amount, asset: adapter.assets[0].symbol, txHash,
-    memo: opts.memo ?? "hire", consent: "approved", network: config.network,
-  });
-  return { persona: "treasury", to, amount, txHash };
+  if (parsed.raw <= 0n) throw new Error("amount must be greater than zero");
+  const pair = treasuryPair(mnemonic);
+  requireExpectedPayer(pair.address, opts.expectedPayer);
+  const { txHash } = await adapter.transfer(pair, to, parsed);
+  try {
+    await mirrorSpend({
+      ts: new Date().toISOString(),
+      persona: "treasury", to, amount, asset: adapter.assets[0].symbol, txHash,
+      memo: opts.memo ?? "hire", consent: "approved", network: config.network,
+    });
+  } catch { /* the confirmed payment must remain recoverable even if its local log fails */ }
+  return { persona: "treasury", payerAddress: pair.address, network: "test", to, amount, txHash };
 }
 
 /* ── stake rehearsal (spec 2026-09-03) ──────────────────────────────────
@@ -247,7 +252,7 @@ export async function registerPersona(
   const hotkey = opts?.hotkeyAddress ?? requirePersonaPair(persona).address;
   const mnemonic = requireRoot();
   const config = loadConfig();
-  requireRehearsalNetwork(config.network);
+  requireRehearsalNetwork(config.network, config.endpoints.tao);
   const api = await subtensorFor(config.endpoints.tao);
 
   const existing = await uidFor(api, netuid, hotkey);
@@ -421,7 +426,7 @@ export async function payoutPersona(persona: string, amount?: string, netuid = D
   const pair = requirePersonaPair(persona);
   const mnemonic = requireRoot();
   const config = loadConfig();
-  requireRehearsalNetwork(config.network);
+  requireRehearsalNetwork(config.network, config.endpoints.tao);
   const api = await subtensorFor(config.endpoints.tao);
   const treasury = treasuryPair(mnemonic);
 

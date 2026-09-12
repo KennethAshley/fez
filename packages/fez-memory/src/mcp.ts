@@ -3,7 +3,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
-import { RelayConnection, getKey, resolveRelays } from "@fezchat/protocol";
+import { RelayConnection, getKey, resolveRelays, fetchRelayInfo, pinWorkspaceOwner } from "@fezchat/protocol";
+import { readTeamMemory, teamMemoryHeads, buildTeamMemory } from "../../fez-client/src/memory.js";
 
 /**
  * fez-memory, skill part — shared team memory for agents.
@@ -16,8 +17,9 @@ import { RelayConnection, getKey, resolveRelays } from "@fezchat/protocol";
  * reads them back, newest first, optionally filtered by keyword.
  *
  * This is the lightweight, fez-native answer to shared memory: the relay
- * IS the shared substrate, so sharing is the default. Semantic recall
- * (embeddings) can be layered on top later; this is keyword + recency.
+ * IS the shared substrate, so sharing is the default. Recall defaults to
+ * keyword + recency, with optional embeddings. Corrections and forgetting
+ * retain the original fact's id and signed history.
  *
  * Custody is the usual one: the agent's own key from FEZ_AGENT_PERSONA —
  * a memory written by @researcher is signed by @researcher.
@@ -34,35 +36,19 @@ if (!keyHex) {
 }
 const secret = Uint8Array.from(Buffer.from(keyHex, "hex"));
 const myPubkey = getPublicKey(secret);
+const relayUrls = resolveRelays();
 const relay = new RelayConnection({
-  urls: resolveRelays(),
-  authSigner: async (tmpl) => finalizeEvent(tmpl as never, secret),
+  urls: relayUrls,
+  authSigner: async (tmpl) => finalizeEvent(tmpl, secret),
 });
 
-// Channel-scoped, append-only. 47210 is a plain (non-addressable) kind so
-// each memory is a distinct event — the relay keeps them all.
-const KIND_MEMORY = 47210;
-const KIND_CHANNEL = 47101;
 const KIND_AGENT = 47000;
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
-/** Resolve a channel name-or-id to its id, so the agent can name the room it's in. */
-async function resolveChannel(raw: string): Promise<string | undefined> {
-  const channels = await relay.query([{ kinds: [KIND_CHANNEL], limit: 500 }]).catch(() => []);
-  const byId = channels.find((e) => e.tags.find((t) => t[0] === "d")?.[1] === raw);
-  if (byId) return raw;
-  const nameOf = (e: { tags: string[][]; content: string }) => {
-    const tag = e.tags.find((t) => t[0] === "name")?.[1];
-    if (tag) return tag;
-    try {
-      return (JSON.parse(e.content) as { name?: string }).name;
-    } catch {
-      return undefined;
-    }
-  };
-  const byName = channels.find((e) => nameOf(e)?.toLowerCase() === raw.toLowerCase().replace(/^#/, ""));
-  return byName?.tags.find((t) => t[0] === "d")?.[1];
+async function readMemory(channel: string, memoryId?: string) {
+  const info = await fetchRelayInfo(relayUrls[0]);
+  return readTeamMemory(relay, pinWorkspaceOwner(relayUrls[0], info?.pubkey), channel, myPubkey, memoryId);
 }
 
 /** pubkey → display name, from kind-47000 agent metadata; short hex otherwise. */
@@ -123,21 +109,18 @@ server.registerTool(
       "Save a durable fact to the channel's SHARED team memory — something worth remembering across sessions and visible to every agent and person in the channel (a decision, a preference, a gotcha, a convention). Not for chit-chat. Write the fact in plain language and name people by their @name, never by pubkey — everyone in the channel reads these.",
     inputSchema: {
       channel: z.string().describe("The channel (name like #general, or its id) whose team memory to add to."),
-      text: z.string().min(1).describe("The thing to remember, in one or two sentences."),
+      text: z.string().trim().min(1).max(4000).describe("The thing to remember, in one or two sentences."),
+      replaces: z.string().regex(/^[a-f0-9]{64}$/).optional().describe("The original memory id from fez_recall to correct. Only its author or a workspace moderator may replace it."),
     },
   },
-  async ({ channel, text: memory }) => {
-    const channelId = await resolveChannel(channel);
-    if (!channelId) return text(`no channel "${channel}" on this relay.`);
-    const vec = await embed(memory.trim());
-    const tags: string[][] = [["h", channelId]];
-    if (vec) tags.push(["emb", JSON.stringify(vec)]);
-    const event = finalizeEvent(
-      { kind: KIND_MEMORY, created_at: Math.floor(Date.now() / 1000), tags, content: memory.trim() },
-      secret
-    );
+  async ({ channel, text: memory, replaces }) => {
+    const context = await readMemory(channel, replaces);
+    const template = buildTeamMemory(context, myPubkey, memory, replaces);
+    const vec = await embed(template.content);
+    if (vec) template.tags.push(["emb", JSON.stringify(vec)]);
+    const event = finalizeEvent(template, secret);
     await relay.publish(event);
-    return text(`remembered in #${channel.replace(/^#/, "")}: "${memory.trim()}"`);
+    return text(`${replaces ? "corrected" : "remembered"} in #${context.channel.name}: "${template.content}"\nmemory id: ${replaces ?? event.id}`);
   }
 );
 
@@ -145,20 +128,21 @@ server.registerTool(
   "fez_recall",
   {
     description:
-      "Read the channel's SHARED team memory — durable facts anyone in the channel has saved. Optionally filter by keyword. Use this before answering when prior context might exist.",
+      "Read the channel's SHARED team memory — current durable facts from workspace members, with original memory ids for correction or forgetting. Optionally filter by keyword (semantic when configured). Use this before answering when prior context might exist. A history-window warning means older facts may exist.",
     inputSchema: {
       channel: z.string().describe("The channel (name or id) whose team memory to read."),
       query: z.string().optional().describe("Optional keyword filter — only memories containing it are returned."),
-      limit: z.number().optional().describe("Max memories to return (default 20, newest first)."),
+      limit: z.number().int().min(1).max(100).optional().describe("Max memories to return (default 20, newest first)."),
     },
   },
   async ({ channel, query, limit }) => {
-    const channelId = await resolveChannel(channel);
-    if (!channelId) return text(`no channel "${channel}" on this relay.`);
-    const events = await relay.query([{ kinds: [KIND_MEMORY], "#h": [channelId], limit: 500 }]).catch(() => []);
+    const context = await readMemory(channel);
+    const heads = teamMemoryHeads(context.events, context.channel.id, context.state);
+    const ids = new Map([...heads].map(([id, event]) => [event.id, id]));
+    const events = [...heads.values()].filter(e => e.content.trim());
     const nameMap = await names();
-    const q = query?.toLowerCase();
-    const cap = limit && limit > 0 ? limit : 20;
+    const q = query?.trim().toLowerCase();
+    const cap = limit ?? 20;
 
     // Semantic when a query + an embeddings endpoint are both present;
     // keyword + recency otherwise.
@@ -191,12 +175,25 @@ server.registerTool(
       .map((e) => {
         const who = nameMap.get(e.pubkey) ?? `${e.pubkey.slice(0, 8)}…`;
         const when = new Date(e.created_at * 1000).toISOString().slice(0, 10);
-        return `- [${when}] @${who}: ${e.content}`;
+        return `- [${when}] @${who} (${e.pubkey}): ${e.content}\n  memory id: ${ids.get(e.id)}`;
       });
-    if (rows.length === 0) return text(q ? `no team memory in #${channel.replace(/^#/, "")} matching "${query}".` : `no team memory in #${channel.replace(/^#/, "")} yet.`);
-    return text(`Team memory for #${channel.replace(/^#/, "")}${q ? ` (matching "${query}")` : ""}:\n${rows.join("\n")}`);
+    const window = context.windowed ? "\nHistory window: searched the newest 500 memory events per relay; older facts may exist." : "";
+    if (rows.length === 0) return text(`No current facts ${q ? `matching "${query}" ` : ""}in the loaded memory for #${context.channel.name}.${window}`);
+    return text(`Team memory for #${context.channel.name}${q ? ` (matching "${query}")` : ""}:\n${rows.join("\n")}${window}`);
   }
 );
+
+server.registerTool("fez_forget", {
+  description: "Forget a shared fact by its original memory id from fez_recall. Only its author or a workspace moderator may do this. The signed history remains on the relay; this is not erasure.",
+  inputSchema: {
+    channel: z.string().describe("Channel name or id."),
+    memoryId: z.string().regex(/^[a-f0-9]{64}$/).describe("Full original memory id from fez_recall."),
+  },
+}, async ({ channel, memoryId }) => {
+  const context = await readMemory(channel, memoryId);
+  await relay.publish(finalizeEvent(buildTeamMemory(context, myPubkey, "", memoryId), secret));
+  return text(`Forgot memory ${memoryId} in #${context.channel.name}. Its signed history remains on the relay.`);
+});
 
 await relay.connect();
 await server.connect(new StdioServerTransport());

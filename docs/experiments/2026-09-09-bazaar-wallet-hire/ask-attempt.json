@@ -1,0 +1,11 @@
+{
+  "at": "2026-09-10T01:21:01.682Z",
+  "request": {
+    "task": "Return only the integer: 17 * 23.",
+    "task_type": "research-citations",
+    "wait_s": 60,
+    "max_answers": 1,
+    "to": "e6e9a111876c80f5cc065a0b3dcf12998fab79a137e8a596be62c2ec9930d11c",
+    "use_wallet_identity": true
+  }
+}

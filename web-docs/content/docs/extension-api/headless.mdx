@@ -1,10 +1,11 @@
 ---
 title: Headless surface
-description: Slash commands, scheduled tasks, and relay access in the TUI and sentinel.
+description: Slash commands, scheduled tasks, and relay access across terminal and desktop hosts.
 ---
 
-The headless part is a single ESM bundle in `~/.fez/extensions/`. The TUI and
-the sentinel import it and call the default export:
+The headless part is a single ESM bundle in `~/.fez/extensions/`. The TUI,
+optional sentinel, and current source desktop background worker import it
+and call the default export:
 
 ```ts
 import type { FezExtensionAPI } from "@fezchat/extension-api/headless";
@@ -14,8 +15,9 @@ export default function myExtension(api: FezExtensionAPI): void {
 }
 ```
 
-A throw during load is caught per-file — one broken extension never takes the
-host down. Bundle fully (no `--packages=external`): the install directory has
+The TUI and sentinel log load failures and skip the broken file. The desktop
+worker validates every selected extension before taking ownership; a missing
+file or load failure refuses that handoff. Bundle fully (no `--packages=external`): the install directory has
 no reachable `node_modules`, so bare imports won't resolve at runtime.
 
 ## The API
@@ -25,7 +27,7 @@ no reachable `node_modules`, so bare imports won't resolve at runtime.
 | `registerCommand(name, handler)` | adds `/name`; `ctx.reply()` prints locally | `commands` |
 | `registerInputHandler(handler)` | claims raw composer input before mention routing; resolve `true` = handled | `commands` |
 | `registerUrlHandler(prefix, handler)` | claims clicks on OSC-8 hyperlinks by URL prefix (first match wins) | `ui` |
-| `registerScheduledTask(name, everyMs, run)` | periodic job — **only the sentinel runs these**; min interval 60 s; a throw is logged and retried next tick | `background` |
+| `registerScheduledTask(name, everyMs, run)` | periodic job in the desktop worker or optional sentinel; min interval 60 s; runs never overlap; a throw is logged and retried next tick | `background` |
 | `nostr` | publish, sign, subscribe, query, NIP-44 encrypt/decrypt, NIP-17 DMs | per-method, below |
 | `channels` | `list()`, `ensure(spec)`, `say(channelId, text)` | — |
 | `workspace` | `relayUrl`, `owner`, the relay's NIP-11 doc verbatim | — |
@@ -40,7 +42,12 @@ Host-only additions (not in the published types, available in the TUI):
 sensitive `system-prompt` permission; re-registering an id replaces it, and
 nobody can replace the whole prompt).
 
-Start background work with `fez sentinel`. To troubleshoot one extension,
+The desktop starts background work with the app; closing its window keeps
+work running, and explicit Quit stops it. Register tasks during extension
+load and put their network work inside the task callback: the worker waits
+for native activation before running tasks or exposing relay operations.
+
+For headless operation, quit the desktop and run `fez sentinel`. To troubleshoot one extension,
 use `fez sentinel --extensions fez-github` (use its installed directory name).
 The selection can only narrow the enabled background extensions; it does not
 grant permissions. Stop any existing sentinel before starting another.
@@ -70,7 +77,7 @@ helpers propagate these errors, so a denied publish cannot report a channel
 created or a message sent. Terminal submissions show errors in the timeline.
 
 Registration without a grant still warns and skips, and UI calls outside
-the TUI remain inert so the same extension can load in the sentinel.
+the TUI remain inert so the same extension can load in either background host.
 
 ## Channels and workspace
 
@@ -89,7 +96,7 @@ interval (the machine slept). Catch up once; never replay the backlog.
 ## UI
 
 `api.ui` degrades to inert no-ops outside the TUI, so the same bundle runs in
-the sentinel unchanged.
+the desktop worker or sentinel unchanged.
 
 - `setStatus(key, value)` — a segment in the persistent footer
 - `createSidePanel(opts)` → handle with `setText()`

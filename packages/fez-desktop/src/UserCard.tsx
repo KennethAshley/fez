@@ -16,11 +16,13 @@ export default function UserCard({
   at,
   client,
   onClose,
+  onProfile,
 }: {
   pk: string;
   at: { x: number; y: number };
   client: FezClient;
   onClose: () => void;
+  onProfile: (pk: string) => void;
 }) {
   const [timeoutOpen, setTimeoutOpen] = useState(false);
   const [banOpen, setBanOpen] = useState(false);
@@ -33,6 +35,7 @@ export default function UserCard({
   const a = cardActions(myRole, targetRole, amOwner, isSelf);
   const name = client.displayName(pk);
   const badge = targetRole === "bot" ? "agent" : targetRole;
+  const openProfile = () => { onClose(); onProfile(pk); };
 
   const act = (label: string, fn: () => Promise<unknown>) => async () => {
     try {
@@ -59,12 +62,14 @@ export default function UserCard({
         style={{ left: Math.max(8, Math.min(at.x, window.innerWidth - 268)), top: Math.max(8, Math.min(at.y, window.innerHeight - 360)) }}
       >
         <div className="ucard-top">
-          <Avatar pk={pk} size={40} title={name} quip={false} />
+          <button type="button" className="avatar-btn" aria-label={`View ${name}'s profile`} onClick={openProfile}>
+            <Avatar pk={pk} size={40} title={name} quip={false} />
+          </button>
           <div className="ucard-id">
-            <div className="ucard-name">
+            <button type="button" className="ucard-name" aria-label={`View ${name}'s profile`} onClick={openProfile}>
               {name}
               {client.isOnline(pk) && <span className="ucard-presence" title="online" />}
-            </div>
+            </button>
             <div className="ucard-npub"><CopyNpub pk={pk} compact />{badge ? ` · ${badge}` : ""}</div>
           </div>
         </div>

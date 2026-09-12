@@ -35,7 +35,7 @@ interface Ensured {
   meta?: Record<string, string>;
 }
 
-function load(opts: { info?: Record<string, unknown>; pubkey?: string; channels?: Ensured[] } = {}) {
+function load(opts: { info?: Record<string, unknown>; pubkey?: string; state?: { workspace: { owner?: string } } | null; channels?: Ensured[] } = {}) {
   const factory = new Function(
     "fetch",
     "WebSocket",
@@ -82,6 +82,7 @@ function load(opts: { info?: Record<string, unknown>; pubkey?: string; channels?
     },
     client: {
       pubkey: opts.pubkey ?? OWNER,
+      state: opts.state === null ? undefined : opts.state ?? { workspace: { owner: OWNER } },
       relayInfo: () => opts.info,
       channelsFrom: (source: string) =>
         existing
@@ -134,6 +135,19 @@ function text(node: unknown): string {
 }
 
 describe("the repos panel as shipped", () => {
+  it("uses only trusted workspace state for owner controls, never advertised metadata", () => {
+    for (const state of [null, { workspace: {} }, { workspace: { owner: "b".repeat(64) } }]) {
+      const { panels, reset } = load({ info: ADVERTISING, state });
+      reset();
+      const out = text(panels[0].render());
+      expect(out).not.toContain("start a new project");
+      expect(out).toContain("Only the workspace owner");
+    }
+    const { panels, reset } = load({ info: { ...ADVERTISING, pubkey: "b".repeat(64) } });
+    reset();
+    expect(text(panels[0].render())).toContain("start a new project");
+  });
+
   it("mounts as a component — render() must not run hooks itself", () => {
     // The host calls panel.render() during ITS OWN render. A panel
     // registered as a bare component function runs its hooks in the

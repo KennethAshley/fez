@@ -11,7 +11,9 @@ interface Draft { text: string; bindings: MentionBindings; agent?: string }
 const emptyDraft: Draft = { text: "", bindings: new Map() };
 const messageTime = (ts: number) => new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-export default function DocConversation({ client, pageKey, channelId, slug, versions, threads, focus, onFocus, onRefresh, onUndo, tab, onTab, onViewVersion }: {
+export default function DocConversation({ client, pageKey, channelId, slug, versions, threads, focus, onFocus, onRefresh, onUndo, tab, onTab, onViewVersion, hidden, onClose }: {
+  hidden: boolean;
+  onClose: () => void;
   client: FezClient;
   pageKey: string;
   channelId: string;
@@ -110,10 +112,13 @@ export default function DocConversation({ client, pageKey, channelId, slug, vers
 
   const messages = thread ? [thread, ...thread.replies] : [];
   return (
-    <aside className="doc-conversation" aria-label="Document conversation">
-      <div className="doc-activity-tabs" role="tablist" aria-label="Document activity">
-        <button id="doc-conversation-tab" role="tab" aria-selected={tab === "conversation"} aria-controls="doc-conversation-panel" onClick={() => onTab("conversation")}>Conversation</button>
-        <button id="doc-changes-tab" role="tab" aria-selected={tab === "changes"} aria-controls="doc-changes-panel" onClick={() => onTab("changes")}>Changes <span>{Math.max(0, versions.length - 1)}</span></button>
+    <aside id="wiki-conversation" className="doc-conversation" aria-label="Document conversation" hidden={hidden}>
+      <div className="doc-activity-head">
+        <div className="doc-activity-tabs" role="tablist" aria-label="Document activity">
+          <button id="doc-conversation-tab" role="tab" aria-selected={tab === "conversation"} aria-controls="doc-conversation-panel" onClick={() => onTab("conversation")}>Conversation</button>
+          <button id="doc-changes-tab" role="tab" aria-selected={tab === "changes"} aria-controls="doc-changes-panel" onClick={() => onTab("changes")}>Changes <span>{Math.max(0, versions.length - 1)}</span></button>
+        </div>
+        <button className="doc-conversation-close" aria-label="Close conversation" onClick={onClose}>×</button>
       </div>
       <div id="doc-conversation-panel" role="tabpanel" aria-labelledby="doc-conversation-tab" className="doc-discussion-scroll" hidden={tab !== "conversation"}>
         <div className="doc-discussion-scope">

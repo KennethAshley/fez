@@ -11,6 +11,15 @@ pub(crate) fn run(
     timeout: Duration,
     max_output: usize,
 ) -> Result<Output, String> {
+    run_with_lifecycle(command, timeout, max_output, |_| {}, |_| ())
+}
+
+/// Hooks let the desktop register its group under the app's lifecycle lock.
+/// The reap guard stays alive until the leader has been signalled and reaped.
+pub(crate) fn run_with_lifecycle<G>(
+    command: &mut Command, timeout: Duration, max_output: usize,
+    spawned: impl FnOnce(u32), reaping: impl FnOnce(u32) -> G,
+) -> Result<Output, String> {
     let deadline = Instant::now() + timeout;
     let mut child = command
         .process_group(0)
@@ -19,6 +28,7 @@ pub(crate) fn run(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("couldn't start command: {e}"))?;
+    spawned(child.id());
     let result = (|| {
         let mut stdout_pipe = child.stdout.take().ok_or("stdout pipe missing")?;
         let mut stderr_pipe = child.stderr.take().ok_or("stderr pipe missing")?;
@@ -78,9 +88,8 @@ pub(crate) fn run(
     // Keep the leader unreaped until AFTER signalling: otherwise its numeric
     // pid/group could be reused while we wait for inherited pipes to close.
     // SAFETY: process_group(0) created the group; WNOWAIT retains its leader.
-    unsafe {
-        libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
-    }
+    let _reap_guard = reaping(child.id());
+    unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL); }
     let _ = child.kill();
     let status = child.try_wait();
     if !matches!(&status, Ok(Some(_))) {
@@ -96,7 +105,7 @@ pub(crate) fn run(
     Ok(Output { status, stdout, stderr })
 }
 
-fn has_exited(pid: u32) -> Result<bool, String> {
+pub(crate) fn has_exited(pid: u32) -> Result<bool, String> {
     // SAFETY: info is writable, zeroed storage; this only observes our child's
     // exit. WNOHANG avoids blocking and WNOWAIT reserves the pid until cleanup.
     unsafe {

@@ -24,11 +24,13 @@ export default function HoverCard({
   pk,
   children,
   align = "left",
+  onProfile,
 }: {
   client: FezClient;
   pk: string;
   children: React.ReactNode;
   align?: "left" | "right";
+  onProfile?: () => void;
 }) {
   const [at, setAt] = useState<{ left: number; top: number; flip: boolean }>();
   const wrapRef = useRef<HTMLSpanElement>(null);
@@ -37,29 +39,44 @@ export default function HoverCard({
   const info = client.agentInfo(pk);
   const online = client.isOnline(pk);
   const status = client.statusOf(pk);
+  const Card = onProfile ? "button" : "span";
+  const show = () => {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const flip = rect.top < CARD_MAX_H + 12;
+    setAt({
+      left: align === "right" ? rect.right : rect.left,
+      top: flip ? rect.bottom + 6 : rect.top - 6,
+      flip,
+    });
+  };
 
   return (
     <span
       className="hovercard-wrap"
       ref={wrapRef}
-      onMouseEnter={() => {
-        const rect = wrapRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        // Open upward by default; flip below when the top of the
-        // viewport is closer than the card is tall.
-        const flip = rect.top < CARD_MAX_H + 12;
-        setAt({
-          left: align === "right" ? rect.right : rect.left,
-          top: flip ? rect.bottom + 6 : rect.top - 6,
-          flip,
-        });
+      onMouseEnter={show}
+      onMouseLeave={(e) => {
+        if (!e.currentTarget.querySelector(".hovercard")?.contains(document.activeElement)) setAt(undefined);
       }}
-      onMouseLeave={() => setAt(undefined)}
+      onFocus={show}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setAt(undefined); }}
+      onKeyDown={(e) => {
+        if (e.key !== "Escape") return;
+        if (e.currentTarget.querySelector(".hovercard")?.contains(document.activeElement)) {
+          e.currentTarget.querySelector<HTMLElement>("button:not(.hovercard)")?.focus();
+        }
+        setAt(undefined);
+        e.stopPropagation();
+      }}
     >
       {children}
       {open && (
-        <span
+        <Card
           className={`hovercard ${align}${at.flip ? " below" : ""}`}
+          type={onProfile ? "button" : undefined}
+          aria-label={onProfile ? `View ${name}'s profile` : undefined}
+          onClick={onProfile ? (e) => { e.stopPropagation(); setAt(undefined); onProfile(); } : undefined}
           style={{
             left: align === "right" ? undefined : at.left,
             right: align === "right" ? `calc(100vw - ${at.left}px)` : undefined,
@@ -91,7 +108,7 @@ export default function HoverCard({
           {info && !info.about && (!info.skills || info.skills.length === 0) && (
             <span className="hovercard-about dim">an agent — no description announced</span>
           )}
-        </span>
+        </Card>
       )}
     </span>
   );

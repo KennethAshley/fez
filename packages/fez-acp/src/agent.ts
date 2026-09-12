@@ -13,6 +13,7 @@ import {
   wellKnownSource,
   resolveDeclaredSkills,
   skillsInstalled,
+  readSkillInstructions,
   invokeWithRetry,
   KIND_AGENT_ENGRAM,
   registerBuiltinHarnesses,
@@ -34,6 +35,7 @@ import {
   BANS_D,
   WorkspaceState,
   fetchRelayInfo,
+  pinWorkspaceOwner,
   KIND_ARTIFACT,
   KIND_OBSERVER,
   KIND_OBSERVER_CONTROL,
@@ -70,12 +72,14 @@ import { execSync, execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { addressees, isAddressedTo } from "./addressing.js";
-import { workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
+import { workHistory } from "./work-history.js";
+import { DurableWork, workDirectory } from "../../../src/shared/durable-work.js";
+import { completeWork, workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
 import { EvaluationError, evaluationExecutableAvailable, evaluationReady, evaluationRuntime, assertEvaluationToolsUnchanged, readEvaluationRequest, runEvaluation } from "./evaluation.js";
 import { runMeteredHire } from "./hire-usage.js";
 import { deliverHire } from "./hire-delivery.js";
-import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
-import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "./skills-prompt.js";
+import { memoryPromptParts, memoryStateFromHeads, type CoreMemoryState } from "./memory-prompt.js";
+import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
 import { fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
@@ -84,6 +88,7 @@ import { hexToBytes } from "nostr-tools/utils";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 import { piThinkingLevel } from "./thinking.js";
 import { RuntimeRefresh } from "./runtime-refresh.js";
+import { bindAgentLifetime } from "./lifetime.js";
 import { RecentContexts } from "./recent-context.js";
 import { decide, claimOwnership, takeOverActive, shutdownGraced, type OwnershipIO, type PresenceBeat } from "./ownership.js";
 
@@ -730,6 +735,7 @@ async function main() {
   await relay.connect();
   const myPubkey = client.getPubkey();
   const runtimeRefresh = new RuntimeRefresh();
+  let stopRuntimeRefresh: (() => void) | undefined;
   // The existing busy gate serializes turns, including pooled-session reuse.
   let inputOrigin: InputOrigin | undefined;
   const onInput: HarnessInputHandler | undefined = owner ? (form, signal) => requestInput({
@@ -752,10 +758,10 @@ async function main() {
     if (!owner || !memConvKey) return "unknown";
     if (Date.now() - memCache.at < 30_000) return memCache.state;
     try {
-      const events = await relay.query([{ kinds: [KIND_AGENT_ENGRAM], authors: [myPubkey], "#p": [owner] }]);
-      const core = engramHeads(events as never, myPubkey, owner, memConvKey).get("core");
+      const result = await relay.queryWithStatus([{ kinds: [KIND_AGENT_ENGRAM], authors: [myPubkey], "#p": [owner] }]);
+      if (result.failures.length) throw new Error("Private memory read is incomplete");
       memCache = {
-        state: core?.body.profile ? { core: core.body.profile } : "none",
+        state: memoryStateFromHeads(engramHeads(result.events, myPubkey, owner, memConvKey)),
         at: Date.now(),
       };
     } catch {
@@ -924,6 +930,14 @@ async function main() {
     return authorPolicyAdmits(pubkey, await isSibling(pubkey));
   }
 
+  async function checkedAuthorAllowed(pubkey: string): Promise<boolean> {
+    if (authorPolicyAdmits(pubkey, false)) return true;
+    if (!owner) return false;
+    const lookup = await relay.queryWithStatus([{ kinds: [KIND_AGENT_ATTESTATION], authors: [owner], "#p": [pubkey] }]);
+    if (lookup.failures.length) throw new Error("Work authorization lookup incomplete; keeping pending work");
+    return authorPolicyAdmits(pubkey, lookup.events.length > 0);
+  }
+
   const authorPolicyAdmits = (pubkey: string, sibling: boolean): boolean =>
     authorAllowedPure({ policy: authorPolicy, author: pubkey, owner, isSibling: sibling });
 
@@ -973,6 +987,14 @@ async function main() {
   const BREAKER_COOLDOWN_MS = 10 * 60_000;
   let consecutiveFailures = 0;
   let breakerUntil = 0;
+  function recordFailure(): boolean {
+    if (++consecutiveFailures < BREAKER_THRESHOLD) return false;
+    breakerUntil = Date.now() + BREAKER_COOLDOWN_MS;
+    consecutiveFailures = 0;
+    console.error(`🛑 Breaker tripped — pausing ${BREAKER_COOLDOWN_MS / 60_000}m`);
+    closeAllSessions();
+    return true;
+  }
 
   // ── Self-bounding lifetime (Buzz VISION_REMOTE_AGENTS: "agents that
   // know when to leave"). With `idleExit:` in the persona (or
@@ -993,24 +1015,24 @@ async function main() {
     setInterval(() => {
       if (busy || Date.now() - lastAcceptedAt < idleExitMs) return;
       console.log(`🌙 quiet for ${idleExitRaw} — signing off. Mention @${personaId} to re-summon.`);
-      clearInterval(heartbeat);
-      closeAllSessions();
-      relay.disconnect();
-      process.exit(0);
+      stopAgent();
     }, 60_000).unref?.();
   }
 
-  // Workspace authority comes from NIP-11, not the persona's owner.
+  // Discovery can establish first trust; the persisted pin owns later sessions.
   // Reuse the client model for signer checks, timestamp ties and bans.
   const workspace = new WorkspaceState();
   async function refreshWorkspaceAuthority(): Promise<boolean> {
     const info = await fetchRelayInfo(relayUrls[0]);
-    if (!info?.pubkey) return false;
+    let workspaceOwner: string | undefined;
+    try { workspaceOwner = pinWorkspaceOwner(relayUrls[0], info?.pubkey); }
+    catch (error) { console.warn(`Workspace authority rejected: ${String(error)}`); return false; }
+    if (!workspaceOwner) return false;
     const membershipEvents = await relay.query([
       { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] },
       { kinds: [KIND_BAN_LIST], "#d": [BANS_D] },
     ]);
-    workspace.describe({ owner: info.pubkey });
+    workspace.describe({ owner: workspaceOwner });
     // Load the roster before bans so current admins can sign moderation.
     for (const kind of [KIND_MEMBERSHIP, KIND_BAN_LIST]) {
       for (const event of membershipEvents.filter(event => event.kind === kind)) workspace.absorb(event);
@@ -1112,6 +1134,17 @@ async function main() {
     process.exit(3);
   }
   ownershipPhase = "steady";
+  // Scheduled assignments may be published after their deterministic timestamp.
+  // ponytail: overlap72h; a longer backdated-delivery contract needs a wider window.
+  const WORK_LOOKBACK_S = 72 * 3600;
+  const workInbox = new DurableWork(workDirectory(myPubkey, relayUrls));
+  const unreconciledAtBoot = new Set(workInbox.pending().map(item => item.event.id));
+  const interruptedAtBoot = new Set(workInbox.pending().filter(item => item.state === "running").map(item => item.event.id));
+  for (const channel of channels) {
+    workInbox.cursor(channel, Math.floor(Date.now() / 1000) - WORK_LOOKBACK_S);
+    workInbox.cursor(`result:${channel}`, 0);
+  }
+  let recoveryTimer: ReturnType<typeof setInterval> | undefined = undefined;
   const steadyAt = Date.now();
   // Steady reactions: defend against claims, stand down when superseded.
   // Our take-over standing decays as its supersede beats are spent — once
@@ -1129,7 +1162,7 @@ async function main() {
       // Supersede-triggered shutdowns are never graced.
       if (shutdownGraced(seen, Date.now() - steadyAt)) return;
       console.error(`@${personaId} superseded by another instance — shutting down`);
-      process.exit(0);
+      stopAgent();
     }
   });
 
@@ -1279,8 +1312,10 @@ async function main() {
     void pooled.session.close();
     sessionPool.delete(scope);
   }
-  function closeAllSessions(): void {
-    for (const key of [...sessionPool.keys()]) dropSession(key);
+  async function closeAllSessions(): Promise<void> {
+    const sessions = [...sessionPool.values()];
+    sessionPool.clear();
+    await Promise.allSettled(sessions.map(({ session }) => session.close()));
   }
   setInterval(() => {
     const now = Date.now();
@@ -1492,8 +1527,19 @@ async function main() {
     const queued = [...pendingByScope.values()].flat().filter(existing => item.kind === "ch"
       ? existing.kind === "ch" && existing.chEvent?.tags.find(t => t[0] === "h")?.[1] === channelId
       : existing.scope === item.scope);
+    const durable = item.kind === "ch" && !!workInbox.get(item.chEvent!.id);
+    if (durable) {
+      if (workInbox.get(item.chEvent!.id)?.state !== "queued") return;
+      workInbox.queued(item.chEvent!.id, item.attempts, item.notBefore);
+    }
     if (queued.length >= QUEUE_CAP) {
-      const dropped = queued.reduce((oldest, next) => next.order < oldest.order ? next : oldest);
+      if (durable) { scheduleDrain(); return; }
+      const expendable = queued.filter(entry => !entry.chEvent || !workInbox.get(entry.chEvent.id));
+      if (!expendable.length) {
+        console.warn("Queue full — ordinary message refused; accepted assignments retained");
+        return;
+      }
+      const dropped = expendable.reduce((oldest, next) => next.order < oldest.order ? next : oldest);
       const list = pendingByScope.get(dropped.scope)!;
       list.splice(list.indexOf(dropped), 1);
       if (list.length === 0) {
@@ -1506,7 +1552,7 @@ async function main() {
     if (!list) pendingByScope.set(item.scope, (list = []));
     list.push({ ...item, order: enqueueOrder++ });
     if (!scopeOrder.includes(item.scope)) scopeOrder.push(item.scope);
-    console.log(`⏳ queued for ${item.scope} (${list.length} pending${item.attempts ? `, attempt ${item.attempts + 1}` : ""})`);
+    console.log(`⏳ queued for ${item.scope} [${(item.chEvent?.id ?? item.dm?.id ?? "").slice(0, 8)}] (${list.length} pending${item.attempts ? `, attempt ${item.attempts + 1}` : ""})`);
   }
 
   let drainTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1518,15 +1564,27 @@ async function main() {
   }
 
   function drainNext(): void {
-    if (busy || dispatching) return;
+    if (agentStopping || busy || dispatching) return;
     const now = Date.now();
+    // Refill one disk-backed item at a time; accepted overflow never disappears.
+    for (const item of workInbox.pending()) {
+      if (unreconciledAtBoot.has(item.event.id) || item.state !== "queued" || item.notBefore > now || !channels.includes(item.event.tags.find(t => t[0] === "h")?.[1] ?? "")) continue;
+      if ([...pendingByScope.values()].some(items => items.some(entry => entry.chEvent?.id === item.event.id))) continue;
+      const channel = item.event.tags.find(t => t[0] === "h")![1];
+      const inChannel = [...pendingByScope.values()].flat().filter(entry => entry.chEvent?.tags.some(t => t[0] === "h" && t[1] === channel)).length;
+      if (inChannel >= QUEUE_CAP) continue;
+      const root = parseThreadRef(item.event.tags).rootId ?? item.event.id;
+      enqueue({ scope: `ch:${JSON.stringify([channel, root.toLowerCase()])}`, kind: "ch", chEvent: item.event, attempts: item.attempts, notBefore: item.notBefore });
+      break;
+    }
     for (let i = 0; i < scopeOrder.length; i++) {
       const scope = scopeOrder[i];
       const list = pendingByScope.get(scope) ?? [];
       let ready = list.filter((item) => item.notBefore <= now);
       // Each result needs its own review/acceptance context; batching
       // would expose only the last result id to the coordinator.
-      if (ready.some(item => item.chEvent?.tags.some(t => t[0] === "result"))) ready = ready.slice(0, 1);
+      if (ready.some(item => item.chEvent && workInbox.get(item.chEvent.id))) ready = ready.slice(0, 1);
+      else if (ready.some(item => item.chEvent?.tags.some(t => t[0] === "result"))) ready = ready.slice(0, 1);
       if (ready.length === 0) {
         if (list.length === 0) {
           pendingByScope.delete(scope);
@@ -1542,7 +1600,7 @@ async function main() {
       return;
     }
     // Nothing ready — wake when the earliest backoff expires.
-    let earliest = Infinity;
+    let earliest = Math.min(Infinity, ...workInbox.pending().filter(item => item.state === "queued" && item.notBefore > now).map(item => item.notBefore));
     for (const list of pendingByScope.values()) {
       for (const item of list) earliest = Math.min(earliest, item.notBefore);
     }
@@ -1562,6 +1620,7 @@ async function main() {
         });
         items = items.filter((item) => {
           if (item.kind === "dm" || workspace.isMember(item.chEvent!.pubkey)) return true;
+          if (workInbox.get(item.chEvent!.id)) workInbox.finish(item.chEvent!.id);
           recent.remove(scope, item.chEvent!.id);
           console.log(`🚫 Queued message from ${item.chEvent!.pubkey.slice(0, 8)}… dropped — not on the workspace roster`);
           return false;
@@ -1602,10 +1661,22 @@ async function main() {
   // FEZ_AGENT_ON_BUSY=queue restores the queue-only behavior.
   const onBusy = process.env.FEZ_AGENT_ON_BUSY === "queue" ? "queue" : "steer";
   let turnController: AbortController | undefined;
+  let activeDurableWork: string | undefined;
   let turnKind: "ch" | "dm" | undefined; // steer may only abort CHANNEL turns; cancel aborts either
   let activeScope: string | undefined;
   let turnAcceptsSteering = false;
   const steerMessages: { event: ChEvent; doc?: DocTurn }[] = [];
+
+  closeAgent = async () => {
+    cancelRequested = true;
+    turnController?.abort();
+    clearInterval(recoveryTimer);
+    stopRuntimeRefresh?.();
+    clearInterval(heartbeat);
+    relay.disconnect();
+    await closeAllSessions();
+    console.log(`\n🔴 @${personaId} stopped.`);
+  };
 
   // Mention = p-tag (the normal path) OR the agent's own @name in the
   // content. The name fallback exists for the auto-spawn bootstrap: a
@@ -1617,11 +1688,12 @@ async function main() {
   const isMention = (event: { pubkey: string; content: string; tags: string[][] }) =>
     isAddressedTo(event, personaId!, myPubkey, owner, persona.aliases ?? []);
 
-  const completedHandoffs = new Set<string>();
   async function completionRequest(event: ChEvent): Promise<ChEvent | undefined> {
     const id = event.tags.find(t => t[0] === "result")?.[1];
     if (!id) return;
-    const [request] = await relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], ids: [id], authors: [myPubkey] }]);
+    const lookup = await relay.queryWithStatus([{ kinds: [KIND_CHANNEL_MESSAGE], ids: [id], authors: [myPubkey] }]);
+    if (lookup.failures.length) throw new Error("Assignment lookup incomplete; retry result recovery");
+    const [request] = lookup.events;
     if (request && workResultForAgent(event, request)) return request;
   }
 
@@ -1629,6 +1701,7 @@ async function main() {
     event: ChEvent,
     { redispatch = false, attempts = 0, doc, steering = [], scope: queuedScope }: ChannelTurnOptions = {}
   ): Promise<void> => {
+      if (agentStopping || unreconciledAtBoot.has(event.id)) return;
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
       if (!channelId || event.pubkey === myPubkey) return;
       if (!redispatch && seenEventIds.has(event.id)) return;
@@ -1648,9 +1721,34 @@ async function main() {
       if (!redispatch) recent.add(scope, event.id, `${who(event.pubkey)}: ${event.content}`);
 
       const isResult = event.tags.some(t => t[0] === "result");
-      const completedRequest = !doc && isResult ? await completionRequest(event).catch(() => undefined) : undefined;
-      if (isResult ? !completedRequest : !isMention(event)) return;
-      if (!(await authorAllowed(event.pubkey))) return;
+      let completedRequest: ChEvent | undefined;
+      try { completedRequest = !doc && isResult ? await completionRequest(event) : undefined; }
+      catch (error) {
+        if (workInbox.get(event.id)?.state === "queued") workInbox.queued(event.id, attempts, Date.now() + 30_000);
+        scheduleDrain(30_000);
+        console.error("Result lookup pending:", error);
+        return;
+      }
+      if (isResult ? !completedRequest : !isMention(event)) {
+        if (workInbox.get(event.id)?.state === "queued") {
+          workInbox.queued(event.id, attempts, Date.now() + 30_000);
+          console.warn(`Pending work ${event.id} waiting for its original assignment`);
+          scheduleDrain(30_000);
+        }
+        return;
+      }
+      try {
+        const allowed = workInbox.get(event.id) ? await checkedAuthorAllowed(event.pubkey) : await authorAllowed(event.pubkey);
+        if (!allowed) {
+          if (workInbox.get(event.id)) workInbox.finish(event.id);
+          return;
+        }
+      } catch (error) {
+        if (workInbox.get(event.id)?.state === "queued") workInbox.queued(event.id, attempts, Date.now() + 30_000);
+        scheduleDrain(30_000);
+        console.error("Pending work authorization will retry:", error);
+        return;
+      }
 
       // Agent-to-agent chain cap — the shared protocol limit, so the
       // TUI, orchestrator, workflows, and summoner all count with the
@@ -1664,33 +1762,46 @@ async function main() {
         return;
       }
 
+      const durable = !doc && (!!completedRequest || event.tags.some(t => t[0] === "task" && t[1] === myPubkey));
+      if (durable) {
+        const prior = workInbox.get(event.id);
+        if (prior && prior.state !== "queued") return;
+        const resultOwner = completedRequest && workInbox.resultOwner(completedRequest.id, event.pubkey);
+        if (resultOwner && resultOwner !== event.id) {
+          if (prior) workInbox.finish(event.id);
+          return;
+        }
+        workInbox.accept(event);
+      }
+      const deferDurable = () => {
+        if (durable) {
+          enqueue({ scope, kind: "ch", chEvent: event, attempts, notBefore: Date.now() + 60_000 });
+          scheduleDrain(60_000);
+        }
+      };
+
       if (budgetExhausted()) {
+        deferDurable();
         console.log(`⛔ Turn budget exhausted (${maxTurnsPerHour}/hour) — not responding`);
         return;
       }
 
       if (spendCapReached()) {
+        deferDurable();
         console.log(`⛔ Daily spend cap reached ($${daySpend.usd.toFixed(2)} of $${spendCapUsd}) — not responding`);
         return;
       }
 
       if (Date.now() < breakerUntil) {
+        deferDurable();
         console.log(`🛑 Breaker open (${Math.ceil((breakerUntil - Date.now()) / 60_000)}m left) — ignoring mention`);
         return;
-      }
-
-      if (completedRequest && !redispatch) {
-        const key = `${completedRequest.id}:${event.pubkey}`;
-        if (completedHandoffs.has(key)) return;
-        completedHandoffs.add(key);
-        // ponytail: bounded process-local duplicate guard; startup also checks signed replies.
-        if (completedHandoffs.size > 2000) completedHandoffs.delete(completedHandoffs.values().next().value!);
       }
 
       // Mid-turn mentions: STEER (default — cancel the in-flight turn and
       // restart with the new message woven in) or QUEUE (process after).
       if (busy || (dispatching && !redispatch)) {
-        if (!completedRequest && onBusy === "steer" && turnController && turnKind === "ch" && activeScope === scope && turnAcceptsSteering && !cancelRequested) {
+        if (!durable && !activeDurableWork && !completedRequest && onBusy === "steer" && turnController && turnKind === "ch" && activeScope === scope && turnAcceptsSteering && !cancelRequested) {
           steerMessages.push(...steering.map(event => ({ event })), { event, doc });
           console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
           turnController.abort();
@@ -1700,6 +1811,8 @@ async function main() {
         return;
       }
 
+      if (durable) workInbox.running(event.id);
+      activeDurableWork = durable ? event.id : undefined;
       busy = true;
       activeScope = scope;
       turnController = new AbortController();
@@ -1847,15 +1960,20 @@ async function main() {
             ].join("\n")
           : undefined;
 
+        const activatedSkill = manualSkillForInput(attachedSkills, { content: event.content, author: event.pubkey, owner, persona: personaId });
+        const manualSection = activatedSkill ? readSkillInstructions(activatedSkill.path, activatedSkill.setting, activatedSkill.root, true) : undefined;
         const buildPrompt = async (fresh: boolean): Promise<string> => {
           const memory = memoryPromptParts(await coreMemoryState());
+          const sourceNotice = `Current source message ID: ${event.id}; channel: ${untrustedValue(channelId)}; author: ${event.pubkey}${event.pubkey === owner ? " (your owner)" : ""}.`;
           const workNotice = completedRequest
             ? `Delegated result ${event.id} for request ${completedRequest.id}: ${workResult(event, completedRequest)}. Check the deliverable against the original request: ${untrustedValue(completedRequest.content)}. If it meets the request, call fez_accept_work with resultId=${event.id} and a note naming what you actually checked. Then deliver the outcome to the original user. Submission alone is not acceptance. Do not @mention the worker to acknowledge it.`
             : !doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey)
-              ? `Assigned work requestId=${event.id}. When finished, call fez_complete_work with this requestId, status success or error, a summary, capability, and artifact URLs/event ids. This publishes your result and calls back to the requester automatically; do not send a separate callback or acceptance. Report blockers as error, never as success.`
+              ? `Assigned work requestId=${event.id}. When finished, call fez_complete_work with this requestId, status success or error, summary, capability, and artifact URLs/event ids. The summary is the actual reply delivered to the requester: include your full answer or deliverable and useful details, not a report about answering them (say "Hello!" rather than "Greeted the user"). This publishes your result automatically; do not put the answer in a separate message after the tool, or send a separate callback or acceptance. Report blockers as error, never as success.`
               : undefined;
           if (!fresh) {
             return [
+              sourceNotice,
+              ...(manualSection ? [manualSection] : []),
               ...(workNotice ? [workNotice] : []),
               // Core rides EVERY turn, not just the fresh prompt: the
               // harness compacts its own context, and a compaction that
@@ -1867,7 +1985,7 @@ async function main() {
               ...(steering.length > 0
                 ? [
                     `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response:`,
-                    ...steering.map(e => `${who(e.pubkey)}: ${e.content}`),
+                    ...steering.map(e => `${who(e.pubkey)} (message ID: ${e.id}): ${e.content}`),
                   ]
                 : []),
               docFraming
@@ -1876,6 +1994,8 @@ async function main() {
             ].join("\n\n");
           }
           return [
+            sourceNotice,
+            ...(manualSection ? [manualSection] : []),
             ...(workNotice ? [workNotice] : []),
             persona.systemPrompt ?? "",
             ...(memory.section ? [memory.section] : []),
@@ -1946,7 +2066,7 @@ async function main() {
             ...(steering.length > 0
               ? [
                   `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response rather than answering separately:`,
-                  ...steering.map(e => `${who(e.pubkey)}: ${e.content}`),
+                  ...steering.map(e => `${who(e.pubkey)} (message ID: ${e.id}): ${e.content}`),
                 ]
               : []),
             // Next to the trigger, as work for THIS turn — the ambient
@@ -1999,6 +2119,7 @@ async function main() {
           const submitted = await relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], "#result": [event.id] }]);
           const result = submitted.find(r => workResult(r, event));
           if (result) {
+            if (durable) workInbox.finish(event.id);
             recent.add(scope, result.id, `${who(result.pubkey)}: ${result.content}`);
             publishObserver({ type: "turn", status: "done" });
             publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, result.content.length, event.id);
@@ -2030,7 +2151,8 @@ async function main() {
           tags: [...replyTags, ...mentioned, ...assignments],
           content: reply || `📦 ${artifacts[0]?.title ?? artifacts[0]?.type ?? "artifact"}`,
         });
-        await relay.publish(replyEvent);
+        await relay.publish(durable ? workInbox.delivery(event.id, () => replyEvent) : replyEvent);
+        if (durable) workInbox.finish(event.id);
         recent.add(scope, replyEvent.id, `${who(replyEvent.pubkey)}: ${replyEvent.content}`);
         // Tag the artifact with the conversation's thread root, so a
         // client can scope it to the thread that built it (triggerRoot in
@@ -2058,7 +2180,21 @@ async function main() {
         // Opening/replaying a session may fail without observing cancellation.
         // Steering still owns that exit; retrying first would discard its follow-ups.
         const err = turnController?.signal.aborted ? turnController.signal.reason : caughtError;
-        if (err instanceof Error && err.name === "AbortError" && cancelRequested) {
+        if (durable) {
+          if (!cancelRequested) recordFailure();
+          const summary = cancelRequested ? "Work stopped by my owner; actions may be partially completed." :
+            `Work interrupted: ${err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200)}. Review any completed actions before assigning it again.`;
+          try {
+            const delivery = workInbox.delivery(event.id, () => client.signEvent(completedRequest
+              ? { kind: KIND_CHANNEL_MESSAGE, tags: replyTags, content: summary }
+              : completeWork(event, myPubkey, { status: "error", summary, capability: "recovery", artifacts: [] })));
+            await relay.publish(delivery);
+            workInbox.finish(event.id);
+          } catch (deliveryError) {
+            console.error("Durable work delivery pending:", deliveryError);
+          }
+          publishObserver({ type: "turn", status: "failed" });
+        } else if (err instanceof Error && err.name === "AbortError" && cancelRequested) {
           // Owner cancel — the turn just STOPS. No steer re-dispatch, and
           // an honest threaded notice instead of silence.
           steerMessages.length = 0;
@@ -2072,7 +2208,7 @@ async function main() {
           publishObserver({ type: "turn", status: "steered" });
           publishTurnMetric(`ch:${channelId}`, "steered", turnStartedAt, 0, event.id);
           console.log(`🔀 Turn cancelled for steering — re-dispatching merged prompt`);
-        } else if (classifyTurnError(err) === "transient" && attempts < RETRY_DELAYS_MS.length) {
+        } else if (!durable && classifyTurnError(err) === "transient" && attempts < RETRY_DELAYS_MS.length) {
           // Retry ladder (Buzz's requeue-with-backoff): a relay blip or
           // harness hiccup gets 3 spaced retries before dead-lettering.
           // No breaker count, no failure notice — this is recovery, not
@@ -2110,14 +2246,7 @@ async function main() {
               }
             } catch { /* name unknown — plain notice */ }
           }
-          consecutiveFailures++;
-          const tripped = consecutiveFailures >= BREAKER_THRESHOLD;
-          if (tripped) {
-            breakerUntil = Date.now() + BREAKER_COOLDOWN_MS;
-            consecutiveFailures = 0;
-            console.error(`🛑 Breaker tripped — pausing ${BREAKER_COOLDOWN_MS / 60_000}m`);
-            closeAllSessions();
-          }
+          const tripped = recordFailure();
           void relay
             .publish(
               client.signEvent({
@@ -2138,6 +2267,7 @@ async function main() {
         turnController = undefined;
         turnKind = undefined;
         activeScope = undefined;
+        activeDurableWork = undefined;
         turnAcceptsSteering = false;
         inputOrigin = undefined;
         busy = false;
@@ -2178,6 +2308,7 @@ async function main() {
   };
 
   const handleDm = async (dm: DmRumor, fromBacklog = false, attempts = 0, redispatch = false): Promise<void> => {
+    if (agentStopping) return;
     if (seenEventIds.has(dm.id)) return;
     seenEventIds.add(dm.id);
     if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
@@ -2238,10 +2369,15 @@ async function main() {
     turnUsage = undefined;
     const turnStartedAt = Date.now();
     try {
+      const activatedSkill = manualSkillForInput(attachedSkills, { content: dm.text, author: dm.senderPk, owner, persona: personaId });
+      const manualSection = activatedSkill ? readSkillInstructions(activatedSkill.path, activatedSkill.setting, activatedSkill.root, true) : undefined;
       const buildPrompt = async (fresh: boolean): Promise<string> => {
         const memory = memoryPromptParts(await coreMemoryState());
+        const sourceNotice = `Current private source message ID: ${dm.id}; author: ${dm.senderPk}${dm.senderPk === owner ? " (your owner)" : ""}.`;
         if (!fresh) {
           return [
+            sourceNotice,
+            ...(manualSection ? [manualSection] : []),
             // Same rule as the channel path: core rides every turn so a
             // harness-side compaction can't drop the agent's identity.
             ...(memory.turnPreamble ? [memory.turnPreamble] : []),
@@ -2253,6 +2389,8 @@ async function main() {
             ? `This is a GROUP conversation with ${replyTargets.length + 1} participants (${replyTargets.map((pk) => pk.slice(0, 8)).join(", ")} and you) — your reply is delivered to everyone in it.`
             : undefined;
         return [
+          sourceNotice,
+          ...(manualSection ? [manualSection] : []),
           persona.systemPrompt ?? "",
           ...(memory.section ? [memory.section] : []),
           ...(skillsSection ? [skillsSection] : []),
@@ -2310,13 +2448,7 @@ async function main() {
       publishTurnMetric(`dm:${convoKey}`, "failed", turnStartedAt, 0);
       const reason = err instanceof Error ? err.message : String(err);
       console.error(`❌ DM turn failed (${classifyTurnError(err)}):`, reason);
-      consecutiveFailures++;
-      if (consecutiveFailures >= BREAKER_THRESHOLD) {
-        breakerUntil = Date.now() + BREAKER_COOLDOWN_MS;
-        consecutiveFailures = 0;
-        console.error(`🛑 Breaker tripped — pausing ${BREAKER_COOLDOWN_MS / 60_000}m`);
-        closeAllSessions();
-      }
+      recordFailure();
       // Failure notice goes back over the same private pipe.
       void sendDmReply(replyTargets, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}${modelRecoveryHint(err)}`, dm.depth + 1).catch(() => {});
     } finally {
@@ -2399,6 +2531,7 @@ async function main() {
       ...(channels.length > 0
         ? [
             { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
+            { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, "#task": [myPubkey], limit: 0 },
           ]
         : []),
       { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] },
@@ -2430,6 +2563,94 @@ async function main() {
     }
   );
 
+  let recoveringWork = false;
+  async function recoverDurableWork(): Promise<void> {
+    if (recoveringWork || agentStopping || !workspace.isMember(myPubkey)) return;
+    recoveringWork = true;
+    try {
+      const checkedQuery = async (filters: Parameters<typeof relay.queryWithStatus>[0]) => {
+        const result = await relay.queryWithStatus(filters);
+        if (result.failures.length) throw new Error("Work recovery history unavailable; keeping pending work");
+        return result.events;
+      };
+      // Reconciliation precedes replay. A crash after publish but before the
+      // local finish write must not execute the same assignment again.
+      for (const item of workInbox.pending()) {
+        const event = item.event;
+        if (!channels.includes(event.tags.find(t => t[0] === "h")?.[1] ?? "")) continue;
+        if (!workspace.isMember(event.pubkey) || !(await checkedAuthorAllowed(event.pubkey))) {
+          workInbox.finish(event.id);
+          console.warn(`Pending work ${event.id} revoked by current permissions`);
+          continue;
+        }
+        if (item.state === "running" && !interruptedAtBoot.has(event.id) && activeDurableWork === event.id) continue;
+        const own = await checkedQuery([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], "#e": [event.id] }]);
+        const replied = own.some(reply => reply.tags.some(t => t[0] === "e" && t[1] === event.id && t[3] === "reply") &&
+          reply.tags.some(t => t[0] === "h" && t[1] === event.tags.find(t => t[0] === "h")?.[1]));
+        if (replied) { workInbox.finish(event.id); interruptedAtBoot.delete(event.id); continue; }
+        const saved = workInbox.delivery(event.id);
+        if (saved) {
+          if (saved.pubkey !== myPubkey || !saved.tags.some(t => t[0] === "e" && t[1] === event.id && t[3] === "reply") ||
+              !saved.tags.some(t => t[0] === "h" && t[1] === event.tags.find(t => t[0] === "h")?.[1])) throw new Error("Saved delivery does not match pending work");
+          await relay.publish(saved); workInbox.finish(event.id); interruptedAtBoot.delete(event.id); continue;
+        }
+        if (interruptedAtBoot.has(event.id)) {
+          const summary = "Work interrupted by an agent restart. Actions may be partially completed; review them before assigning this work again.";
+          const root = parseThreadRef(event.tags).rootId ?? event.id;
+          const template = event.tags.some(t => t[0] === "task" && t[1] === myPubkey)
+            ? completeWork(event, myPubkey, { status: "error", summary, capability: "recovery", artifacts: [] })
+            : { kind: KIND_CHANNEL_MESSAGE, content: summary, tags: [["h", event.tags.find(t => t[0] === "h")![1]],
+                ["e", root, "", "root"], ["e", event.id, "", "reply"], ["p", event.pubkey],
+                ["depth", String(Number(event.tags.find(t => t[0] === "depth")?.[1] ?? 0) + 1)]] };
+          await relay.publish(workInbox.delivery(event.id, () => client.signEvent(template)));
+          workInbox.finish(event.id); interruptedAtBoot.delete(event.id);
+        }
+        // Only a checked reconciliation may release a disk-loaded queued item.
+        unreconciledAtBoot.delete(event.id);
+        scheduleDrain(0);
+      }
+      // Scan each channel independently so adding a channel cannot advance
+      // another channel's cursor. Checkpoints move only after complete reads.
+      const until = Math.floor(Date.now() / 1000);
+      for (const channel of channels) {
+        for (const result of [false, true]) {
+          const key = result ? `result:${channel}` : channel;
+          await workHistory(relay.queryWithStatus.bind(relay), {
+            kinds: [KIND_CHANNEL_MESSAGE], "#h": [channel],
+            ...(result ? { "#p": [myPubkey], "#status": ["success", "error"] } : { "#task": [myPubkey] }),
+            since: result ? workInbox.cursor(key, 0) : Math.min(workInbox.cursor(key, until - WORK_LOOKBACK_S), until - WORK_LOOKBACK_S), until,
+          }, async event => {
+            if (event.pubkey === myPubkey || !workspace.isMember(event.pubkey) || !(await checkedAuthorAllowed(event.pubkey))) return;
+            if (Number(event.tags.find(t => t[0] === "depth")?.[1] ?? 0) >= MAX_CHAIN_DEPTH) return;
+            if (!result && event.tags.some(t => t[0] === "result")) return;
+            const request = result ? await completionRequest(event) : undefined;
+            if (result && !request) return;
+            if (request && workInbox.resultOwner(request.id, event.pubkey)) return;
+            if (workInbox.get(event.id)) return;
+            // Existing installations may have reviewed a different signed
+            // result for this same assignment/worker before an inbox existed.
+            const targets = request ? (await checkedQuery([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [event.pubkey], "#result": [request.id] }]))
+              .filter(candidate => workResultForAgent(candidate, request)).map(candidate => candidate.id) : [event.id];
+            if (!targets.includes(event.id)) targets.push(event.id);
+            const replies = await checkedQuery([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], "#e": targets }]);
+            // Live delivery can reserve this handoff while history queries await.
+            const reserved = request && workInbox.resultOwner(request.id, event.pubkey);
+            if (reserved && reserved !== event.id) return;
+            workInbox.accept(event);
+            if (replies.some(reply => reply.tags.some(t => t[0] === "e" && targets.includes(t[1]) && t[3] === "reply") &&
+                reply.tags.some(t => t[0] === "h" && t[1] === channel))) workInbox.finish(event.id);
+          });
+          workInbox.checkpoint(key, until);
+        }
+      }
+      scheduleDrain(0);
+    } catch (error) {
+      console.error("Pending work recovery will retry:", error);
+    } finally { recoveringWork = false; }
+  }
+  recoveryTimer = setInterval(() => { void recoverDurableWork(); }, 30_000);
+  recoveryTimer.unref?.();
+
   async function backfillStartup(): Promise<void> {
     // An empty history query before enrollment is not proof of no work.
     if (startupBackfillStarted || (channels.length > 0 && !workspace.isMember(myPubkey))) return;
@@ -2444,30 +2665,9 @@ async function main() {
     const answered = new Set(
       ownReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e" && t[3] === "reply").map((t) => t[1]))
     );
-    // Results remain work after the startup mention window. Recover the
-    // latest bounded batch and use signed replies to avoid reviewing twice.
-    // ponytail: latest 200 results; paginate when offline backlogs exceed this.
-    const results = channels.length === 0 ? [] : await relay.query([{
-      kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, "#p": [myPubkey], "#status": ["success", "error"], limit: 200,
-    }]);
-    const requestIds = [...new Set(results.flatMap(e => e.tags.filter(t => t[0] === "result").map(t => t[1])))];
-    if (requestIds.length) {
-      const [requests, responses] = await Promise.all([
-        relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], ids: requestIds }]),
-        relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], "#e": results.map(e => e.id) }]),
-      ]);
-      const answeredResults = new Set(responses.flatMap(e => e.tags.filter(t => t[0] === "e" && t[3] === "reply").map(t => t[1])));
-      const valid = results.flatMap(result => {
-        const request = requests.find(r => workResultForAgent(result, r));
-        return request ? [{ result, key: `${request.id}:${result.pubkey}` }] : [];
-      });
-      for (const { result, key } of valid) if (answeredResults.has(result.id)) completedHandoffs.add(key);
-      for (const { result, key } of valid.sort((a, b) => a.result.created_at - b.result.created_at)) {
-        if (!completedHandoffs.has(key)) void runtimeRefresh.run(() => handleChannelMessage(result), 3000);
-      }
-    }
+    await recoverDurableWork();
     const pending = recentMessages
-      .filter((e) => e.pubkey !== myPubkey && workspace.isMember(e.pubkey) && !e.tags.some(t => t[0] === "result") && isMention(e) && !answered.has(e.id))
+      .filter((e) => e.pubkey !== myPubkey && workspace.isMember(e.pubkey) && !e.tags.some(t => t[0] === "result" || (t[0] === "task" && t[1] === myPubkey)) && isMention(e) && !answered.has(e.id))
       .sort((a, b) => a.created_at - b.created_at)
       .at(-1);
     // Same race for doc comments: the comment that summoned us predates the
@@ -2504,8 +2704,8 @@ async function main() {
   // The compiler embeds this value; reading the marker at startup races installation.
   const runningVersion = process.env.FEZ_AGENT_BUILD_VERSION;
   if (runningVersion && process.execve) {
-    runtimeRefresh.watch(path.join(os.homedir(), ".fez", "bin", ".pi-agent-version"), runningVersion,
-      () => !busy && !steerMessages.length && dmLive && !dmBacklog.length &&
+    stopRuntimeRefresh = runtimeRefresh.watch(path.join(os.homedir(), ".fez", "bin", ".pi-agent-version"), runningVersion,
+      () => !agentStopping && !busy && !steerMessages.length && dmLive && !dmBacklog.length &&
         [...pendingByScope.values()].every(items => !items.length) && [...sessionPool.values()].every(session => !session.busy),
       () => {
         // Preserve dedupe across execve so startup backfill cannot repeat a completed turn.
@@ -2516,16 +2716,15 @@ async function main() {
       });
   }
 
-  process.on("SIGINT", () => {
-    clearInterval(heartbeat);
-    closeAllSessions();
-    relay.disconnect();
-    console.log(`\n🔴 @${personaId} stopped.`);
-    process.exit(0);
-  });
 }
 
-main().catch(async (err) => {
+// Watch the parent during startup too, before relay I/O or harness creation.
+let agentStopping = false;
+let closeAgent = async (): Promise<void> => {};
+const stopAgent = bindAgentLifetime(() => { agentStopping = true; return closeAgent(); });
+
+// Hosts can await actual startup; installing a signal handler is not readiness.
+export const agentStarted = main().catch(async (err) => {
   if (process.env.FEZ_EVALUATION_CHECK === "1" || process.env.FEZ_EVALUATION_REQUEST !== undefined) {
     const message = err instanceof EvaluationError ? err.message : "Evaluation startup failed; check the selected runtime and enabled tools";
     console.error(`FEZ_EVALUATION_ERROR=${JSON.stringify({ message, ...(err instanceof EvaluationError ? err.observation : {}) })}`);

@@ -7,7 +7,7 @@ import {
   cmdRegister, cmdPersonaStatus, cmdPayout, cmdCost, cmdMetagraph, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona, payFromTreasury, registrationCost, metagraphInfo,
   exportRemoteHotkey,
 } from "./cli-commands.js";
-import { rentAgent, payAddress } from "./rent.js";
+import { rentAgent, payAddress, rentalIdentity } from "./rent.js";
 import { escrowOpen, escrowApprove, escrowStatus } from "./stake.js";
 import { burnRun, burnStatus, FEE_RATE, BURN_VAULT } from "./fees.js";
 
@@ -31,19 +31,37 @@ const marketFlag = argv.indexOf("--market");
 // --hotkey <ss58>: register's remote-hotkey override (Task 5/7) — registers
 // that address instead of deriving one from a local persona pair.
 const hotkeyFlag = argv.indexOf("--hotkey");
+const bindingFlags = ["--expect-pay-to", "--expect-rate", "--expect-offer", "--expect-payer", "--expect-renter", "--max-amount"];
+const bindingPositions = new Set(bindingFlags.flatMap(flag => {
+  const index = argv.indexOf(flag);
+  return index < 0 ? [] : [index, index + 1];
+}));
+const bindingValue = (flag: string): string | undefined => {
+  const index = argv.indexOf(flag);
+  if (index < 0) return undefined;
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--") || argv.lastIndexOf(flag) !== index) throw new Error(`${flag} requires one value`);
+  return value;
+};
 const [cmd, ...rest] = argv.filter((a, i) =>
+  !bindingPositions.has(i) &&
   a !== "--json" && a !== "--existing" && a !== "--require-testnet" && a !== "--netuid" && !(netuidFlag >= 0 && i === netuidFlag + 1)
   && a !== "--as" && !(asFlag >= 0 && i === asFlag + 1)
   && a !== "--market" && !(marketFlag >= 0 && i === marketFlag + 1)
   && a !== "--hotkey" && !(hotkeyFlag >= 0 && i === hotkeyFlag + 1));
 
 try {
+  for (const flag of bindingFlags) {
+    if (argv.includes(flag) && cmd !== "rent" && !(flag === "--expect-payer" && ["pay", "escrow"].includes(cmd))) {
+      throw new Error(`${flag} is not supported by ${cmd ?? "this command"}`);
+    }
+  }
   if (requireTestnet && cmd !== "metagraph") throw new Error("--require-testnet is supported only by metagraph");
   await cryptoWaitReady();
   const adapter = () => substrateAdapter({ endpoint: loadConfig().endpoints.tao });
   switch (cmd) {
     case "capabilities":
-      io.print(JSON.stringify({ existingHotkey: true, metagraphRequireTestnet: true }));
+      io.print(JSON.stringify({ existingHotkey: true, metagraphRequireTestnet: true, guestPaymentBinding: true, guestPayments: 1, ...(asFlag >= 0 ? { identity: rentalIdentity(bindingValue("--as")!) } : {}) }));
       break;
     case "init":
       if (json) console.log(JSON.stringify(await initWallet()));
@@ -117,9 +135,16 @@ try {
       const marketIdx = argv.indexOf("--market");
       const asPersona = asIdx >= 0 ? argv[asIdx + 1] : undefined;
       if (!rest[0] || !rest[1] || !asPersona) throw new Error("usage: fez-wallet rent <miner pubkey hex> <hours> --as <persona> [--market wss://…]");
-      const r = await rentAgent(asPersona, rest[0], Number(rest[1]), marketIdx >= 0 ? argv[marketIdx + 1] : undefined);
+      const payTo = bindingValue("--expect-pay-to");
+      const rate = bindingValue("--expect-rate");
+      const offerId = bindingValue("--expect-offer");
+      if ((payTo !== undefined || rate !== undefined || offerId !== undefined) && (!payTo || !rate)) throw new Error("quote binding requires --expect-pay-to and --expect-rate together");
+      const r = await rentAgent(asPersona, rest[0], Number(rest[1]), marketIdx >= 0 ? bindingValue("--market") : undefined, {
+        ...(payTo && rate ? { expectedQuote: { payTo, rateTaoHr: Number(rate), ...(offerId ? { offerId } : {}) } } : {}),
+        expectedPayer: bindingValue("--expect-payer"), expectedRenter: bindingValue("--expect-renter"), maxAmount: bindingValue("--max-amount"), forEvent: bindingValue("--for"),
+      });
       if (json) console.log(JSON.stringify(r));
-      else io.print(`${r.persona} rented ${r.miner.slice(0, 8)} for ${r.hours}h — paid ${r.amount} tTAO (tx ${r.txHash}); the tick receipt is on the market relay`);
+      else io.print(`${r.persona} rented ${r.miner.slice(0, 8)} for ${r.hours}h — paid ${r.amount} tTAO (tx ${r.txHash}); ${r.receiptPublished ? "the tick receipt is on the market relay" : "payment confirmed; receipt needs recovery — do not pay again"}`);
       break;
     }
     case "pay": {
@@ -130,8 +155,8 @@ try {
       // treasury is the human's main account — signed by the root, so it
       // routes through cli-commands (never the root-free persona pay).
       const r = who === "treasury"
-        ? await payFromTreasury(adapter(), rest[0], rest[1], {})
-        : await payAddress(who, rest[0], rest[1], { forEvent: forIdx>=0?argv[forIdx+1]:undefined, payeePk: toPkIdx>=0?argv[toPkIdx+1]:undefined });
+        ? await payFromTreasury(adapter(), rest[0], rest[1], { expectedPayer: bindingValue("--expect-payer") })
+        : await payAddress(who, rest[0], rest[1], { forEvent: forIdx>=0?argv[forIdx+1]:undefined, payeePk: toPkIdx>=0?argv[toPkIdx+1]:undefined, expectedPayer: bindingValue("--expect-payer"), relayUrl: bindingValue("--market") });
       io.print(json ? JSON.stringify(r) : `${r.persona} paid ${r.amount} tTAO to ${r.to.slice(0,8)}… (tx ${r.txHash})`);
       break;
     }
@@ -149,11 +174,11 @@ try {
       const sub = rest[0];
       if (sub === "open") {
         if (!who || !rest[1] || !rest[2] || !rest[3]) throw new Error("usage: fez-wallet escrow open <worker> <arbiter> <amount> --as <persona>");
-        const r = await escrowOpen(who, rest[1], rest[2], rest[3]);
+        const r = await escrowOpen(who, rest[1], rest[2], rest[3], { expectedPayer: bindingValue("--expect-payer") });
         io.print(json ? JSON.stringify(r) : `escrow opened at ${r.escrow} — funded ${rest[3]} tTAO (tx ${r.txHash}); the worker can verify the money before working`);
       } else if (sub === "release" || sub === "refund") {
         if (!who || !rest[1] || !rest[2] || !rest[3] || !rest[4]) throw new Error(`usage: fez-wallet escrow ${sub} <poster> <worker> <arbiter> <amount> --as <persona>`);
-        const r = await escrowApprove(who, rest[1], rest[2], rest[3], rest[4], sub === "release" ? "worker" : "poster");
+        const r = await escrowApprove(who, rest[1], rest[2], rest[3], rest[4], sub === "release" ? "worker" : "poster", { expectedPayer: bindingValue("--expect-payer") });
         io.print(json ? JSON.stringify(r) : (r.executed ? `escrow ${sub}d — funds moved (tx ${r.txHash})` : `approval recorded — one more of the three must ${sub} to move the funds (tx ${r.txHash})`));
       } else if (sub === "status") {
         if (!rest[1] || !rest[2] || !rest[3]) throw new Error("usage: fez-wallet escrow status <poster> <worker> <arbiter>");
