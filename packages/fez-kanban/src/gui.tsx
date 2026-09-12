@@ -34,12 +34,15 @@ import {
 } from "./board.js";
 
 import type { GuiExtensionApi, PageViewProps } from "@fezchat/extension-api/gui";
+import { DEFAULT_PROMPT, parseReviews, reviewKey, type BoardReview } from "./reviews.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let h: (...args: any[]) => unknown;
 let useState: <T>(initial: T | (() => T)) => [T, (next: T | ((previous: T) => T)) => void];
+let extensionApi: GuiExtensionApi;
 
 export default function activate(api: GuiExtensionApi): void {
+  extensionApi = api;
   h = api.React.createElement;
   useState = api.React.useState;
   knownAgent = (name) => !!api.client?.pkByName(name);
@@ -70,7 +73,7 @@ export default function activate(api: GuiExtensionApi): void {
       description: "kanban — columns are headings, cards are checkboxes",
       keywords: ["kanban", "cards", "columns", "sprint", "tasks"],
       template:
-        "```fez:board\ndone: Done\n```\n\n## Backlog\n\n- [ ] $0\n\n## In Progress\n\n## Done\n",
+        "```fez:board\ndone: Done\n```\n\n## Backlog\n\n- [ ] $0\n\n## In Progress\n\n## Review\n\n## Done\n",
     }
   );
 }
@@ -160,6 +163,7 @@ function BoardView(props: PageViewProps) {
 
   return (
     <div className="board">
+      {props.editable && props.slug && <ReviewControls key={`${props.channelId}:${props.slug}`} {...props} />}
       {error && (
         <div className="board-error">
           {error}
@@ -251,6 +255,79 @@ function BoardView(props: PageViewProps) {
       {!props.editable && <div className="board-readonly">read-only view</div>}
     </div>
   );
+}
+
+function ReviewControls(props: PageViewProps) {
+  const client = extensionApi.client;
+  const [saved, setSaved] = useState<BoardReview | undefined>(undefined);
+  const [draft, setDraft] = useState<BoardReview | undefined>(undefined);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [agents, setAgents] = useState<[string, string][]>([]);
+  const key = reviewKey({ channelId: props.channelId, slug: props.slug! });
+  extensionApi.React.useEffect(() => {
+    let stopped = false;
+    setLoaded(false); setSaved(undefined); setDraft(undefined); setError("");
+    void (async () => {
+      if (!client || typeof client.extensionConfig !== "function" || typeof client.agents !== "function") throw Error("Update Fez to configure daily reviews");
+      const config = parseReviews(await client.extensionConfig("fez-kanban"));
+      const agents = [...client.agents()];
+      if (!stopped) { setSaved(config.reviews.find(r => reviewKey(r) === key)); setAgents(agents); setLoaded(true); }
+    })().catch(error => { if (!stopped) setError(error instanceof Error ? error.message : "Could not load review settings"); });
+    return () => { stopped = true; };
+  }, [key]);
+
+  const edit = () => setDraft(saved ? { ...saved } : {
+    channelId: props.channelId, slug: props.slug!, title: props.title,
+    worker: agents.find(([, name]) => name === "fez")?.[0] ?? agents[0]?.[0] ?? "",
+    time: "09:00", timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    prompt: DEFAULT_PROMPT, enabled: true, enabledAt: Date.now(),
+  });
+  const save = async (review?: BoardReview) => {
+    setBusy(true); setError("");
+    try {
+      if (review?.enabled && !parseBoard(props.content).columns.some(c => c.name.toLowerCase() === "review")) throw Error("Add a Review column to this board before enabling daily reviews");
+      const config = parseReviews(await client!.extensionConfig("fez-kanban"));
+      // Re-read so editing this board preserves schedules added on other boards.
+      config.reviews = config.reviews.filter(r => reviewKey(r) !== key);
+      if (review) config.reviews.push(review);
+      await client!.saveExtensionConfig("fez-kanban", parseReviews(config));
+      setSaved(review); setDraft(undefined);
+    } catch (error) { setError(error instanceof Error ? error.message : "Could not save review settings"); }
+    finally { setBusy(false); }
+  };
+  const field = (name: "timeZone" | "time", label: string) => <label style={{ display: "grid", gap: 4 }}>{label}
+    <input type={name === "time" ? "time" : "text"} value={draft![name]} required disabled={busy}
+      onChange={(event: { target: { value: string } }) => setDraft({ ...draft!, [name]: event.target.value })} />
+  </label>;
+  return <section aria-label="Daily board review" style={{ marginBottom: 16 }}>
+    <div className="board-settings" style={{ flexWrap: "wrap" }}>
+      <span>{!loaded ? "Loading review schedule…" : saved ? `${saved.enabled ? "Daily review" : "Review paused"} · ${saved.time} ${saved.timeZone}` : "Daily board review"}</span>
+      {saved && <button className="mini" disabled={busy || !loaded} onClick={() => { void save({ ...saved, enabled: !saved.enabled, enabledAt: saved.enabled ? saved.enabledAt : Date.now() }); }}>{saved.enabled ? "Pause" : "Resume"}</button>}
+      <button className="mini" disabled={busy || !loaded} onClick={edit}>{saved ? "Edit schedule" : "Schedule review"}</button>
+    </div>
+    {draft && <form style={{ display: "grid", gap: 12, maxWidth: 640, padding: "12px 0" }} onSubmit={(event: { preventDefault(): void }) => { event.preventDefault(); void save({ ...draft, enabledAt: Date.now() }); }}>
+      <label style={{ display: "grid", gap: 4 }}>Review agent
+        <select value={draft.worker} required disabled={busy} onChange={(event: { target: { value: string } }) => setDraft({ ...draft, worker: event.target.value })}>
+          <option value="">Choose an agent</option>
+          {agents.map(([pk, name]) => <option key={pk} value={pk}>{name}</option>)}
+        </select>
+      </label>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>{field("time", "Daily at")}{field("timeZone", "Time zone")}</div>
+      <label style={{ display: "grid", gap: 4 }}>Review instructions
+        <textarea value={draft.prompt} required maxLength={10_000} rows={5} disabled={busy}
+          onChange={(event: { target: { value: string } }) => setDraft({ ...draft, prompt: event.target.value })} />
+      </label>
+      <p style={{ margin: 0 }}>Starts at the next scheduled time while Fez is running. Each review opens a channel thread and waits for the previous assignment to finish. Pausing stops future reviews; current work continues.</p>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button type="submit" disabled={busy}>{busy ? "Saving…" : "Save schedule"}</button>
+        <button type="button" disabled={busy} onClick={() => setDraft(undefined)}>Cancel</button>
+        {saved && <button type="button" disabled={busy} onClick={() => { void save(); }}>Remove schedule</button>}
+      </div>
+    </form>}
+    {error && <p role="alert" className="board-error">{error}</p>}
+  </section>;
 }
 
 /** Set at activate time — a card shows whether its @name is anyone real. */

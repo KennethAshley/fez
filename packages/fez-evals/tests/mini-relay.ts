@@ -17,6 +17,7 @@ export class MiniRelay {
   private connCounter = 0;
   /** kinds the relay rejects with OK=false, to test the no-retry path */
   blockedKinds = new Set<number>();
+  beforeHistory?: (filters: Filter[]) => Promise<void>;
   /**
    * The workspace's identity card. A relay IS a workspace, so a client
    * reads who owns it from here before trusting any channel or roster —
@@ -48,7 +49,7 @@ export class MiniRelay {
       });
       this.wss.on("connection", (ws) => {
         const connId = String(this.connCounter++);
-        ws.on("message", (raw) => {
+        ws.on("message", async (raw) => {
           let msg: unknown[];
           try {
             msg = JSON.parse(raw.toString());
@@ -74,6 +75,9 @@ export class MiniRelay {
             const subId = rest[0] as string;
             const filters = rest.slice(1) as Filter[];
             this.subs.set(`${connId}:${subId}`, { subId, filters, ws });
+            try { await this.beforeHistory?.(filters); }
+            catch { ws.send(JSON.stringify(["CLOSED", subId, "error: history unavailable"])); return; }
+            if (ws.readyState !== WsSocket.OPEN) return;
             const history = new Map(filters.flatMap(filter => this.events.filter(event => matchFilter(filter, event))
               .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
               .slice(0, filter.limit)).map(event => [event.id, event]));

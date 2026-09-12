@@ -18,6 +18,40 @@ defaults to your fez identity, so the encrypted observer stream
 (`/watch <persona>`) and sibling gating work with zero configuration.
 (The raw form still works: `FEZ_AGENT_PERSONA=… fez run dist/agent.js`.)
 
+## Pending work recovery
+
+Explicit channel assignments (`task` tags) and validated specialist results
+are saved before dispatch in `~/.fez/agents/inbox/<scope>/`. The scope hashes
+the agent public key and configured relay set; changing either creates a
+separate inbox. Records are written atomically with private file permissions.
+The desktop still owns agent processes; recovery adds no background daemon.
+
+Queued work survives restart and the 20-item active queue limit. On startup
+and every 30 seconds, the runtime reconciles saved work with signed replies,
+rechecks permissions, and catches up from per-channel checkpoints. History
+timeouts and detected pagination caps retain the checkpoint for retry.
+Assignment history starts 72 hours before first use; later scans overlap that
+window or resume an older saved checkpoint. Task-only live subscriptions also
+accept newly delivered events with older timestamps. This covers delayed daily
+reviews without replaying ordinary old mentions. Recovery still depends on relay
+retention; it cannot recover events the relay no longer supplies.
+
+A second containing at least 200 matching events keeps its checkpoint even
+after available expanded pages are delivered: a complete dense second cannot
+be distinguished from a relay cap. This can cause repeated reads of a complete
+busy history. Opaque relay caps below 200 remain undetectable with this API.
+
+An interrupted running assignment reports an error for human review rather
+than repeating potentially completed actions. Unacknowledged outgoing replies
+are retained and republished with the same signed event ID. Completed IDs stay
+on disk for deduplication. Do not delete the inbox to clear a failure: doing so
+removes recovery state. This provides recoverable delivery, not exactly-once
+execution of deployments, payments, or other external effects.
+
+Ordinary mentions, document comments, and private DMs retain their existing
+recovery behavior. A revoked sender's queued work is retired without execution
+and recorded in the runtime log.
+
 ## Explicit evaluation jobs
 
 `FEZ_AGENT_PERSONA=<name> FEZ_EVALUATION_CHECK=1 fez-agent` checks the selected

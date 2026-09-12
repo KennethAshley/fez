@@ -20,9 +20,14 @@ class Transport {
   events: Event[] = [];
   subscriptions: { filters: Filter[]; receive: (e: Event) => void }[] = [];
   beforePublish?: (e: Event) => Promise<void>;
+  queryFailure?: (filters: Filter[]) => boolean;
   async connect() {}
   disconnect() {}
   async query(filters: Filter[]) { return this.events.filter(e => filters.some(f => matchFilter(f, e))); }
+  async queryWithStatus(filters: Filter[]) {
+    return this.queryFailure?.(filters) ? { events: [], failures: [{ url: "ws://controlled.invalid", reason: "timeout" }] }
+      : { events: await this.query(filters), failures: [] };
+  }
   subscribe(filters: Filter[], receive: (e: Event) => void) {
     const sub = { filters, receive };
     this.subscriptions.push(sub);
@@ -250,6 +255,108 @@ describe("delegated work completion", () => {
     await wire.publish(result);
     await finish(turns[0], "@speaker thank you, done");
     expect(replies()).toEqual([result]);
+  });
+
+  const assignment = (content: string) => finalizeEvent({ kind: 47103, created_at: Math.floor(Date.now() / 1000),
+    content, tags: [["h", channelA], ["task", agentPk], ["p", agentPk]] }, specialistKey);
+
+  it("keeps queued assignments when checked authorization times out", async () => {
+    await send("blocker");
+    const job = assignment("durable authorized work");
+    await wire.publish(job); await vi.advanceTimersByTimeAsync(0);
+    wire.queryFailure = filters => filters.some(filter => filter.kinds?.includes(47006));
+    await finish(turns[0]);
+    expect(turns).toHaveLength(1);
+    wire.queryFailure = undefined;
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(turns).toHaveLength(2);
+    expect(turns[1].text).toContain(job.id);
+  });
+
+  it("retries a saved delivery while a different durable assignment is still running", async () => {
+    const first = assignment("first job");
+    await wire.publish(first); await vi.advanceTimersByTimeAsync(0);
+    wire.beforePublish = async event => { if (event.kind === 47103 && event.pubkey === agentPk) throw new Error("publish timeout"); };
+    await finish(turns[0], "SAVED_DELIVERY");
+    const second = assignment("second job");
+    await wire.publish(second); await vi.advanceTimersByTimeAsync(0);
+    expect(turns).toHaveLength(2);
+    wire.beforePublish = undefined;
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(wire.events.filter(event => event.content === "SAVED_DELIVERY")).toHaveLength(1);
+    expect(turns).toHaveLength(2);
+  });
+
+  it("recognizes a prior review of an older duplicate during history catch-up", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const request = finalizeEvent({ kind: 47103, created_at: now, content: "old assignment",
+      tags: [["h", channelA], ["task", specialistPk]] }, agentKey);
+    const result = finalizeEvent({ kind: 47103, created_at: now, content: "old result", tags: [
+      ["h", channelA], ["e", request.id, "", "root"], ["e", request.id, "", "reply"],
+      ["p", agentPk], ["result", request.id], ["status", "success"],
+    ] }, specialistKey);
+    wire.events.push(request, result,
+      finalizeEvent({ kind: 47103, created_at: now, content: "already reviewed", tags: [["h", channelA], ["e", result.id, "", "reply"]] }, agentKey),
+      finalizeEvent({ ...result, created_at: now + 1, content: "new duplicate" }, specialistKey));
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(turns).toHaveLength(0);
+  });
+
+  it("does not retain a losing history result when live delivery reserves its handoff during reconciliation", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const request = finalizeEvent({ kind: 47103, created_at: now, content: "racing assignment",
+      tags: [["h", channelA], ["task", specialistPk]] }, agentKey);
+    const older = finalizeEvent({ kind: 47103, created_at: now, content: "history result", tags: [
+      ["h", channelA], ["e", request.id, "", "root"], ["e", request.id, "", "reply"],
+      ["p", agentPk], ["result", request.id], ["status", "success"],
+    ] }, specialistKey);
+    const live = finalizeEvent({ ...older, content: "live result" }, specialistKey);
+    wire.events.push(request, older);
+    const query = wire.queryWithStatus.bind(wire);
+    let raced = false;
+    vi.spyOn(wire, "queryWithStatus").mockImplementation(async filters => {
+      if (!raced && filters.some(filter => filter["#e"]?.includes(older.id))) {
+        raced = true;
+        await wire.publish(live);
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+      }
+      return query(filters);
+    });
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(raced).toBe(true);
+    const root = path.join(fixture.dir, ".fez/agents/inbox");
+    const [scope] = fs.readdirSync(root);
+    const inbox = JSON.parse(fs.readFileSync(path.join(root, scope, "inbox.json"), "utf8"));
+    expect(inbox.items[older.id]).toBeUndefined();
+    expect(turns).toHaveLength(1);
+    await finish(turns[0]);
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(turns).toHaveLength(1);
+  });
+
+  it("retains a result after failed lookup and does not spin when its original request is missing", async () => {
+    await send("blocker");
+    const request = finalizeEvent({ kind: 47103, created_at: Math.floor(Date.now() / 1000), content: "assignment",
+      tags: [["h", channelA], ["task", specialistPk]] }, agentKey);
+    const result = finalizeEvent({ kind: 47103, created_at: request.created_at, content: "result", tags: [
+      ["h", channelA], ["e", request.id, "", "root"], ["e", request.id, "", "reply"],
+      ["p", agentPk], ["result", request.id], ["status", "success"],
+    ] }, specialistKey);
+    wire.events.push(request);
+    wire.queryFailure = filters => filters.some(filter => filter.ids?.includes(request.id));
+    await wire.publish(result); await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(30_001);
+    wire.queryFailure = undefined;
+    await vi.advanceTimersByTimeAsync(30_001); // catch-up accepts the result behind the blocker
+    wire.events = wire.events.filter(event => event.id !== request.id);
+    await finish(turns[0]);
+    await send("unrelated work continues");
+    expect(turns).toHaveLength(2);
+    await finish(turns[1]);
+    wire.events.push(request);
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(turns).toHaveLength(3);
+    expect(turns[2].text).toContain(result.id);
   });
 
   it("keeps two queued completions as separately reviewable results", async () => {

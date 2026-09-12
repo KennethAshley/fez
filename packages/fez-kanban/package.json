@@ -1,12 +1,15 @@
 {
   "name": "@fezchat/kanban",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Kanban boards for fez docs \u2014 columns are headings, cards are checkboxes, moving a card moves a line. Agents move cards with fez_board_move; the board is just the markdown.",
   "type": "module",
   "fez": {
     "type": "extension",
+    "minFezVersion": "0.2.2",
     "parts": {
+      "headless": "dist/headless.js",
+      "background": true,
       "gui": "dist/gui.js",
       "skill": {
         "command": "node",
@@ -17,12 +20,15 @@
     },
     "permissions": [
       "read:channels",
+      "read:agents",
       "publish",
+      "sign",
+      "background",
       "ui"
     ]
   },
   "scripts": {
-    "build": "esbuild src/board.ts --bundle --format=esm --platform=neutral --outfile=dist/board.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
+    "build": "esbuild src/board.ts --bundle --format=esm --platform=neutral --outfile=dist/board.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
     "check": "tsc --noEmit"
   },
   "devDependencies": {

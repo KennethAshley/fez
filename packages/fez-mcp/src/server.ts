@@ -10,6 +10,7 @@ import type { WireEvent } from "../../fez-client/src/index.js";
 import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
 import { attachedSkills, loadSkillBody } from "./skills.js";
 import { registerConnectionTools } from "./connections.js";
+import { DurableWork, workDirectory } from "../../../src/shared/durable-work.js";
 import { acceptWork, completeWork, workResult } from "../../fez-client/src/work-completion.js";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import {
@@ -221,7 +222,9 @@ server.registerTool("fez_complete_work", {
     const prior = await relay.query([{ kinds: [47103], authors: [myPubkey], "#result": [requestId] }]);
     const existing = prior.find(e => workResult(e, request));
     if (existing) return text(`Already submitted: ${existing.id}. Acceptance belongs to the requester.`);
-    const event = sign(template);
+    const inbox = new DurableWork(workDirectory(myPubkey, relayUrls));
+    const event = inbox.delivery(requestId, () => sign(template));
+    if (event.pubkey !== myPubkey || !workResult(event, request)) throw new Error("Saved result does not match this assignment");
     await relay.publish(event);
     return text(`Submitted result ${event.id}. The requester has been notified. Do not post another callback; acceptance is still pending.`);
   } catch (e) { return { ...text(e instanceof Error ? e.message : String(e)), isError: true }; }

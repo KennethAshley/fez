@@ -1,4 +1,6 @@
 use nostr::JsonUtil as _;
+#[cfg(target_os = "macos")]
+mod always_on;
 mod bounded_command;
 mod desktop_runtime;
 mod git_install;
@@ -2792,8 +2794,36 @@ pub fn run() {
                 use tauri::menu::{Menu, MenuItem};
                 let show = MenuItem::with_id(app, "fez-show", "Show Fez", true, None::<&str>)?;
                 let quit = MenuItem::with_id(app, "fez-quit", "Quit Fez…", true, None::<&str>)?;
-                let menu = Menu::with_items(app, &[&show, &quit])?;
-                let mut tray = tauri::tray::TrayIconBuilder::new().menu(&menu).tooltip("Fez");
+                let menu = Menu::with_items(app, &[&show])?;
+                let mut tray = tauri::tray::TrayIconBuilder::new().tooltip("Fez");
+                #[cfg(target_os = "macos")]
+                {
+                    use tauri::{menu::CheckMenuItem, Emitter};
+                    let mut awake = always_on::AlwaysOn::new(fez_home().map_err(std::io::Error::other)?.join("desktop-always-on"));
+                    let restored = awake.restore();
+                    if let Err(error) = &restored { eprintln!("{error}"); }
+                    let toggle = CheckMenuItem::with_id(app, "fez-always-on",
+                        if restored.is_ok() { "Always On" } else { "Always On (unavailable)" },
+                        true, awake.enabled(), None::<&str>)?;
+                    menu.append(&toggle)?;
+                    let awake = Mutex::new(awake);
+                    tray = tray.on_menu_event(move |app, event| {
+                        if event.id() != toggle.id() { return; }
+                        let mut awake = awake.lock().unwrap_or_else(|p| p.into_inner());
+                        let enabled = !awake.enabled();
+                        let result = awake.set_enabled(enabled);
+                        // Native check items toggle before dispatch; a failure must undo the check.
+                        let _ = toggle.set_checked(awake.enabled());
+                        let _ = toggle.set_text(if result.is_ok() { "Always On" } else { "Always On (unavailable)" });
+                        if let Err(error) = result {
+                            eprintln!("{error}");
+                            desktop_runtime::show(app);
+                            let _ = app.emit("always-on-error", error);
+                        }
+                    });
+                }
+                menu.append(&quit)?;
+                tray = tray.menu(&menu);
                 if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
                 tray.build(app)?;
             }

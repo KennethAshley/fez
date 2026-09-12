@@ -38,6 +38,7 @@ import { listen } from "@tauri-apps/api/event";
 // voice is stderr — this is how its failure reaches a human (same
 // module-level wiring as updater.ts).
 void listen<string>("agent-install-failed", (e) => toast.error(e.payload));
+void listen<string>("always-on-error", (e) => toast.error(e.payload));
 import { startSummoner } from "./summoner";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setChannelOpener, setPanelOpener, setToolOpener, setGuestDmOpener, extensionNavViews, navChannelId, extensionArtifactActions, type ArtifactAction, type NavView } from "./gui-extensions";
 import type { MountRender } from "./mount-result";

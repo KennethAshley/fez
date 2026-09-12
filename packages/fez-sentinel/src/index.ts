@@ -365,6 +365,12 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
   let dmWatchLive = false;
   setTimeout(() => { dmWatchLive = true; }, 5000).unref?.();
 
+  // Backdated scheduled assignments still summon their worker when published.
+  // limit0 suppresses startup history; only signed owner tasks take this path.
+  relay.subscribe([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], limit: 0 }], event => {
+    if (event.tags.some(tag => tag[0] === "task")) void engine.handleEvent(event);
+  });
+
   relay.subscribe(
     [
       { kinds: [KIND_CHANNEL_MESSAGE], since: sessionStartS },

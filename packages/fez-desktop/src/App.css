@@ -4733,7 +4733,7 @@ a.page-fact:hover { color: var(--fg); }
 .first-task p { margin: 0 0 10px; color: var(--fg-dim); }
 .first-task-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
-.ai-setup-dialog { color: var(--fg); background: var(--bg0); max-height: 90vh; overflow-y: auto; }
+.ai-setup-dialog { margin: auto; color: var(--fg); background: var(--bg0); max-height: 90vh; overflow-y: auto; }
 .ai-setup-dialog::backdrop { background: #0008; }
 
 .onboarding > .ob-card { max-height: calc(100vh - 48px); overflow-y: auto; }
