@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
-import { RelayConnection, getKey, resolveRelays, fetchRelayInfo } from "@fezchat/protocol";
+import { RelayConnection, getKey, resolveRelays, fetchRelayInfo, pinWorkspaceOwner } from "@fezchat/protocol";
 import { readTeamMemory, teamMemoryHeads, buildTeamMemory } from "../../fez-client/src/memory.js";
 
 /**
@@ -48,7 +48,7 @@ const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
 async function readMemory(channel: string, memoryId?: string) {
   const info = await fetchRelayInfo(relayUrls[0]);
-  return readTeamMemory(relay, info?.pubkey, channel, myPubkey, memoryId);
+  return readTeamMemory(relay, pinWorkspaceOwner(relayUrls[0], info?.pubkey), channel, myPubkey, memoryId);
 }
 
 /** pubkey → display name, from kind-47000 agent metadata; short hex otherwise. */

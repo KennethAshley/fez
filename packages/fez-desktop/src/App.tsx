@@ -10,6 +10,8 @@ import { embedUrls, mediaKind } from "./media-kind";
 import { BrowserWire, rustSigner } from "./wire";
 import { relaySet, setRelays } from "./relay";
 import { fetchRelayInfo } from "../../../src/protocol/nip11";
+import { parseWorkspaceInvite } from "../../fez-client/src/workspace-invite";
+import { normalizeWorkspaceRelay } from "../../fez-client/src/workspace-owner";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
@@ -201,21 +203,14 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
     }
     const wire = new BrowserWire(relaySet(), rustSigner(pubkey, ACCOUNT));
     const client = new FezClient(wire);
-    await client.start();
-
-    // An invite accepted during onboarding is claimed HERE, with the
-    // final identity — you cannot be a member before you are anybody,
-    // and claiming it earlier would bind the membership to a key that
-    // is about to be replaced.
-    // An invite is a relay URL now — the workspace IS the relay, so
-    // "joining" is opening it. Nothing to claim against a community id.
-    const pendingRelay = localStorage.getItem("fez-pending-invite");
-    if (pendingRelay) {
-      localStorage.removeItem("fez-pending-invite");
-      try {
-        await client.openWorkspace(pendingRelay);
-      } catch { /* unreachable relay — the rail still remembers it */ }
+    const pendingInvite = localStorage.getItem("fez-pending-invite");
+    if (pendingInvite) {
+      const invitation = parseWorkspaceInvite(pendingInvite);
+      if (normalizeWorkspaceRelay(relaySet()[0]) !== invitation.relay) throw new Error("Pending invite does not match the selected relay");
+      client.state.open(invitation.relay, undefined, invitation.owner);
     }
+    await client.start();
+    if (pendingInvite) localStorage.removeItem("fez-pending-invite");
     // A relay provisioned with --owner arrives CLAIMED but empty — the
     // in-app claim flow (where the owner names the first channel) never
     // runs for it, so the owner lands in a workspace with no rooms and

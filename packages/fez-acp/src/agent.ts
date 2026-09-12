@@ -35,6 +35,7 @@ import {
   BANS_D,
   WorkspaceState,
   fetchRelayInfo,
+  pinWorkspaceOwner,
   KIND_ARTIFACT,
   KIND_OBSERVER,
   KIND_OBSERVER_CONTROL,
@@ -1018,17 +1019,20 @@ async function main() {
     }, 60_000).unref?.();
   }
 
-  // Workspace authority comes from NIP-11, not the persona's owner.
+  // Discovery can establish first trust; the persisted pin owns later sessions.
   // Reuse the client model for signer checks, timestamp ties and bans.
   const workspace = new WorkspaceState();
   async function refreshWorkspaceAuthority(): Promise<boolean> {
     const info = await fetchRelayInfo(relayUrls[0]);
-    if (!info?.pubkey) return false;
+    let workspaceOwner: string | undefined;
+    try { workspaceOwner = pinWorkspaceOwner(relayUrls[0], info?.pubkey); }
+    catch (error) { console.warn(`Workspace authority rejected: ${String(error)}`); return false; }
+    if (!workspaceOwner) return false;
     const membershipEvents = await relay.query([
       { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] },
       { kinds: [KIND_BAN_LIST], "#d": [BANS_D] },
     ]);
-    workspace.describe({ owner: info.pubkey });
+    workspace.describe({ owner: workspaceOwner });
     // Load the roster before bans so current admins can sign moderation.
     for (const kind of [KIND_MEMBERSHIP, KIND_BAN_LIST]) {
       for (const event of membershipEvents.filter(event => event.kind === kind)) workspace.absorb(event);

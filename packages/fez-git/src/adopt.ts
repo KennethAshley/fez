@@ -9,6 +9,7 @@ import {
   getKey,
   resolveRelays,
   makeChannels,
+  pinWorkspaceOwner,
   type NostrAccess,
 } from "@fezchat/protocol";
 import { REPO_NAME, cloneBase, cloneUrl, repoDoc } from "./repo-name.js";
@@ -130,7 +131,7 @@ async function main(): Promise<void> {
         "  Install @fezchat/git on the relay and start it with --extensions --origin <public-url>."
     );
   }
-  const owner = typeof info.pubkey === "string" ? info.pubkey : undefined;
+  const owner = pinWorkspaceOwner(relays[0], typeof info.pubkey === "string" ? info.pubkey : undefined);
   if (!owner) fail(`${relays[0]} is unclaimed (no owner in NIP-11) — nobody can open a channel there`);
   if (owner !== myPubkey) {
     fail(

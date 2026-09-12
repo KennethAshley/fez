@@ -94,3 +94,4 @@ export type { FezExtensionAPI, FezExtension, NostrAccess, PanelHandle, InputHand
 export { loadExtensions, registeredScheduledTasks, setNostrBackend, setWorkspaceBackend } from "./extensions/extensions.js";
 /** NIP-11 — the workspace's identity card: who owns this relay, and what it advertises. */
 export { fetchRelayInfo, httpFromRelay, type RelayInfo } from "./protocol/nip11.js";
+export { pinWorkspaceOwner } from "./shared/workspace-owner.js";

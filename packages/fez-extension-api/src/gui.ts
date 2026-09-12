@@ -336,6 +336,8 @@ export interface GuiClient {
   extensionConfig<T>(extension: string): Promise<T | undefined>;
   saveExtensionConfig(extension: string, config: unknown): Promise<void>;
   pubkey: string;
+  /** Trusted host state; absent on older hosts, which cannot grant owner controls. */
+  readonly state?: { readonly workspace: { readonly owner?: string } };
   relayInfo(): (Record<string, unknown> & { pubkey?: string }) | undefined;
   channelsFrom(source?: string): RepoChannelLike[];
   workspaces(): { relay: string; name: string; active: boolean }[];

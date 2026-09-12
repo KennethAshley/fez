@@ -62,7 +62,7 @@ describe("agent input", () => {
 
   it("delivers a private form to the owner and returns every answer to the waiting agent", async () => {
     vi.useFakeTimers();
-    setStatePersistence({ load: () => undefined, save: () => {} });
+    setStatePersistence({ exists: () => false, read: () => undefined, write: () => {} });
     const net = network(), agent = net.wire(AGENT), owner = net.wire(OWNER);
     await owner.publish({ kind: K.MEMBERSHIP, tags: [["d", "roster"], ["p", OWNER], ["p", AGENT]], content: "" });
     const client = new FezClient(owner);
@@ -99,7 +99,7 @@ describe("agent input", () => {
 
   it("routes group DMs only when both the agent and recipient belong to the conversation", async () => {
     vi.useFakeTimers();
-    setStatePersistence({ load: () => undefined, save: () => {} });
+    setStatePersistence({ exists: () => false, read: () => undefined, write: () => {} });
     const net = network(), agent = net.wire(AGENT), owner = net.wire(OWNER);
     await owner.publish({ kind: K.MEMBERSHIP, tags: [["d", "roster"], ["p", OWNER], ["p", AGENT]], content: "" });
     const client = new FezClient(owner); await client.start();
@@ -120,7 +120,7 @@ describe("agent input", () => {
 
   it("keeps sent answers unconfirmed until a receipt names that exact signed response", async () => {
     vi.useFakeTimers();
-    setStatePersistence({ load: () => undefined, save: () => {} });
+    setStatePersistence({ exists: () => false, read: () => undefined, write: () => {} });
     const net = network(), agent = net.wire(AGENT), owner = net.wire(OWNER);
     await owner.publish({ kind: K.MEMBERSHIP, tags: [["d", "roster"], ["p", OWNER], ["p", AGENT]], content: "" });
     const expiresAt = Date.now() + 60_000;
@@ -140,7 +140,7 @@ describe("agent input", () => {
 
   it("loads a question's original thread outside the recent channel window in time order", async () => {
     vi.useFakeTimers();
-    setStatePersistence({ load: () => undefined, save: () => {} });
+    setStatePersistence({ exists: () => false, read: () => undefined, write: () => {} });
     const net = network(), owner = net.wire(OWNER);
     await owner.publish({ kind: K.MEMBERSHIP, tags: [["d", "roster"], ["p", OWNER]], content: "" });
     const root = await owner.publish({ kind: K.MESSAGE, tags: [["h", "general"]], content: "Original question context" });
@@ -160,7 +160,7 @@ describe("agent input", () => {
 
   it("restores legacy closed questions when the relay sends closure before the form", async () => {
     vi.useFakeTimers();
-    setStatePersistence({ load: () => undefined, save: () => {} });
+    setStatePersistence({ exists: () => false, read: () => undefined, write: () => {} });
     const net = network(), agent = net.wire(AGENT), owner = net.wire(OWNER);
     await owner.publish({ kind: K.MEMBERSHIP, tags: [["d", "roster"], ["p", OWNER], ["p", AGENT]], content: "" });
     const expiresAt = Date.now() + 60_000, tags = [["p", OWNER], ["d", "legacy"]];

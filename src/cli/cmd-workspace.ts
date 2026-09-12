@@ -7,6 +7,7 @@ import os from "os";
 import { getPublicKey } from "nostr-tools";
 import { fezHome } from "../shared/fez-home.js";
 import { unixNow } from "../shared/time.js";
+import { pinWorkspaceOwner } from "../shared/workspace-owner.js";
 
 export function registerWorkspaceCommands(program: Command): void {
 program
@@ -44,8 +45,9 @@ program
     // Only the owner's roster counts, so refuse early rather than
     // publishing an event every other client will ignore.
     const info = await fetchRelayInfo(relays[0]);
-    if (info?.pubkey && info.pubkey !== me) {
-      console.error(`✗ only the workspace owner can invite — this relay's owner is ${info.pubkey.slice(0, 12)}…, you are ${me.slice(0, 12)}…`);
+    const workspaceOwner = pinWorkspaceOwner(relays[0], info?.pubkey);
+    if (workspaceOwner !== me) {
+      console.error(`✗ only the trusted workspace owner can invite — owner ${workspaceOwner?.slice(0, 12) ?? "unknown"}…, you are ${me.slice(0, 12)}…`);
       relay.disconnect();
       process.exit(1);
     }

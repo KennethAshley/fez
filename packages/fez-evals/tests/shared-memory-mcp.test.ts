@@ -27,6 +27,7 @@ vi.mock("@fezchat/protocol", async importOriginal => ({
   ...await importOriginal<typeof import("@fezchat/protocol")>(),
   getKey: () => Buffer.from(harness.secret).toString("hex"), resolveRelays: () => ["ws://memory.invalid"],
   fetchRelayInfo: async () => ({ pubkey: ownerPk }),
+  pinWorkspaceOwner: (_relay: string, advertised?: string) => advertised,
   RelayConnection: class {
     async connect() {}
     async query(filters: Filter[]) {

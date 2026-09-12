@@ -32,6 +32,8 @@ export interface QueryRow {
 }
 import { WorkspaceState, cleanSource, setStatePersistence, type Channel, type Role, type StatePersistence } from "./workspace-state.js";
 export * from "./workspace-state.js";
+import { normalizeWorkspaceRelay, resolveWorkspaceOwner } from "./workspace-owner.js";
+export * from "./workspace-owner.js";
 
 /**
  * @fezchat/client — the headless fez protocol brain: subscriptions, trust
@@ -154,6 +156,8 @@ export interface Wire {
    * unclaimed and nothing governed is trusted.
    */
   relayInfo?(relay: string): Promise<RelayInfoDoc | undefined>;
+  /** Reconcile client trust with a host pin shared by desktop and headless processes. */
+  pinWorkspaceOwner?(relay: string, advertised?: string, expected?: string): Promise<string | undefined>;
   /**
    * Mint a NIP-98 Authorization header for one HTTP request — the key
    * stays behind the seam, same custody pattern as signEvent. This is
@@ -1849,25 +1853,41 @@ export class FezClient {
   /**
    * Point this client at a workspace and pull its state.
    *
-   * The owner comes from the relay's NIP-11 document, and it has to
-   * arrive BEFORE any 47101/47102 is absorbed — the state model rejects
-   * everything while the workspace is unclaimed, so ordering here is
-   * load-bearing, not incidental.
+   * An invite may supply its trusted owner. Otherwise the first valid
+   * NIP-11 establishes a pin. Local and host pins must agree before
+   * any channel or roster is absorbed.
    */
-  async openWorkspace(relay: string): Promise<boolean> {
-    this.state.open(relay);
-    const info = await this.wire.relayInfo?.(relay);
-    this.relayInfoDoc = info;
-    this.state.describe({ name: info?.name, owner: info?.pubkey });
+  async openWorkspace(relay: string, expectedOwner?: string): Promise<boolean> {
+    this.state.open(relay, undefined, expectedOwner);
+    this.unsubscribeLive?.();
+    const workspace = this.state.workspace;
+    await this.describeWorkspace(expectedOwner);
+    if (this.state.workspace !== workspace) throw new Error("Workspace changed while opening");
     await this.syncWorkspace();
+    if (this.state.workspace !== workspace) throw new Error("Workspace changed while opening");
     this.resubscribe();
     this.emit("channelsChanged");
-    return !!this.state.workspace.owner;
+    return !!workspace.owner;
+  }
+
+  private async describeWorkspace(expectedOwner?: string): Promise<void> {
+    const workspace = this.state.workspace;
+    if (!workspace.relay) return;
+    const info = await this.wire.relayInfo?.(workspace.relay).catch(() => undefined);
+    if (this.state.workspace !== workspace) throw new Error("Workspace changed while discovering owner");
+    let owner = resolveWorkspaceOwner(workspace.owner, info?.pubkey, expectedOwner);
+    if (this.wire.pinWorkspaceOwner) {
+      const hostOwner = await this.wire.pinWorkspaceOwner(workspace.relay, info?.pubkey, owner);
+      if (this.state.workspace !== workspace) throw new Error("Workspace changed while pinning owner");
+      owner = resolveWorkspaceOwner(owner, hostOwner);
+    }
+    this.state.describe({ name: info?.name, owner });
+    this.relayInfoDoc = info;
   }
 
   /** Every workspace in the rail. Switching between them never drops one. */
   workspaces(): { relay: string; name: string; active: boolean }[] {
-    return this.state.known.map((w) => ({
+    return this.state.known.filter(w => !w.hidden).map((w) => ({
       relay: w.relay,
       name: w.name ?? w.relay,
       active: w.relay === this.state.workspace.relay,
@@ -2603,25 +2623,15 @@ export class FezClient {
     // "wss://Relay.example/" byte-differing from the wire's
     // "wss://relay.example" force-moved the workspace every boot and
     // forked one relay into two rail entries (review finding F10).
-    const normalizeRelay = (value: string): string => {
-      try {
-        const url = new URL(value.trim());
-        return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`.toLowerCase();
-      } catch {
-        return value.trim().toLowerCase().replace(/\/+$/, "");
-      }
-    };
-    const wired = (this.wire.relays ?? []).map(normalizeRelay);
-    if (wired[0] && !wired.includes(normalizeRelay(this.state.workspace.relay))) {
+    const wired = (this.wire.relays ?? []).map(normalizeWorkspaceRelay);
+    if (wired[0] && (!this.state.workspace.relay || !wired.includes(normalizeWorkspaceRelay(this.state.workspace.relay)))) {
       this.state.open(this.wire.relays![0]);
     }
 
-    // Who owns this workspace has to be known before any governed event
-    // is absorbed — the state model rejects everything while unclaimed.
-    const info = await this.wire.relayInfo?.(this.state.workspace.relay).catch(() => undefined);
-    if (info) this.relayInfoDoc = info;
-    this.state.describe({ name: info?.name, owner: info?.pubkey });
-
+    // Match local and host pins before any governed event is admitted.
+    const workspace = this.state.workspace;
+    await this.describeWorkspace();
+    if (this.state.workspace !== workspace) throw new Error("Workspace changed while starting");
     await this.syncWorkspace();
 
     const inputSince = Math.floor((Date.now() - INPUT_WAIT_MS) / 1000);
@@ -2816,12 +2826,14 @@ export class FezClient {
    * latest 47102, so a removal is honoured the moment it lands.
    */
   private async syncWorkspace(): Promise<void> {
-    if (!this.state.workspace.relay) return;
+    const workspace = this.state.workspace;
+    if (!workspace.relay) return;
     const events = await this.wire.query([
       { kinds: [K.CHANNEL], limit: 500 },
       { kinds: [K.MEMBERSHIP], "#d": [K.ROSTER_D], limit: 100 },
       { kinds: [K.BAN_LIST], "#d": [K.BANS_D], limit: 100 },
     ]);
+    if (this.state.workspace !== workspace) throw new Error("Workspace changed while syncing roster");
     // Channels first: absorb() resolves roster ordering independently,
     // but a channel has to exist before the sidebar can show it.
     for (const kind of [K.CHANNEL, K.MEMBERSHIP, K.BAN_LIST]) {
@@ -2864,7 +2876,10 @@ export class FezClient {
         since: Math.floor(Date.now() / 1000),
       });
     }
-    this.unsubscribeLive = this.wire.subscribe(filters, (event) => this.dispatch(event));
+    const workspace = this.state.workspace;
+    this.unsubscribeLive = this.wire.subscribe(filters, (event) => {
+      if (this.state.workspace === workspace) this.dispatch(event);
+    });
   }
 
   private dispatch(event: WireEvent): void {

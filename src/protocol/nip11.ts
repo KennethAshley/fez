@@ -2,15 +2,10 @@
  * NIP-11 — the relay's information document, which under the flat model
  * is the workspace's identity card.
  *
- * A relay IS a workspace, so this is where it says what it is called and
- * — the load-bearing part — which pubkey **owns** it. Only that key's
- * channel, roster and ban events count, so a client must read this
- * before it trusts anything governed.
- *
- * The relay naming its own owner is not the relay being trusted: lying
- * only makes its own events be ignored by anyone who knows better, and
- * the owner key stays portable across hosts. That is the difference
- * between this and Buzz, where the relay signs the roster itself.
+ * This is discovery metadata, not an ownership certificate. Consumers
+ * reconcile the advertised key with their persistent owner pin before
+ * trusting governed events. Legacy first use trusts discovery; an invite
+ * or explicit expected key can establish trust independently of the relay.
  */
 
 export interface RelayInfo {
@@ -43,10 +38,8 @@ export function httpFromRelay(relay: string): string {
 
 /**
  * Fetch a relay's NIP-11 document. Resolves undefined rather than
- * throwing on any failure: an unreachable or NIP-11-less relay is an
- * unclaimed workspace, which the caller already has to handle, and a
- * network error must not be the difference between "no owner" and a
- * crash on startup.
+ * throwing on any failure. Missing discovery does not erase an existing
+ * owner pin; callers resolve authority separately from this metadata.
  */
 export async function fetchRelayInfo(relay: string, timeoutMs = 5000): Promise<RelayInfo | undefined> {
   const url = httpFromRelay(relay);

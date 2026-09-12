@@ -134,3 +134,18 @@ test("joining an invite code connects to the invited workspace and survives relo
     await expect(page.locator("button.channel").filter({ hasText: "destination" })).toBeVisible();
   } finally { home.close(); destination.close(); }
 });
+
+test("joining refuses an invite whose expected owner differs from the relay", async ({ page }) => {
+  const home = await workspace("original");
+  const destination = await workspace("destination", home.ownerKey);
+  try {
+    await boot(page, home, generateSecretKey());
+    const join = page.getByPlaceholder("fez-join:wss://…#…");
+    const code = `fez-join:${destination.url}#owner=${getPublicKey(generateSecretKey())}`;
+    await join.fill(code);
+    await join.press("Enter");
+    await expect(page.getByText(/Workspace owner mismatch/)).toBeVisible();
+    await expect(join).toHaveValue(code);
+    expect(await page.evaluate(() => localStorage.getItem("fez-relay"))).toBe(home.url);
+  } finally { home.close(); destination.close(); }
+});

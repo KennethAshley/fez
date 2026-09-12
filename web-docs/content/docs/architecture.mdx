@@ -15,11 +15,19 @@ policies** as pluggable hooks: membership enforcement at ingest, NIP-42-gated
 reads, moderation masking, rate limits. Crucially, all of that is *optional* —
 a bare relay stays a dumb store, and clients never depend on a smart one.
 
-The one thing a relay *does* assert is identity: its NIP-11 document names
-the workspace (`--name`) and its **owner** (`--owner <pubkey>`). That owner
-is the only key whose channel, roster, and ban events count. A relay started
-without `--owner` is an unclaimed store — a workspace that refuses to exist
-until someone claims it.
+The relay's NIP-11 document advertises the workspace name and an owner
+(`--owner <pubkey>`). Clients pin that key on first use, or obtain the
+expected key independently from a trusted invite. Later metadata must match
+the pin; a relay cannot silently change whose signatures count. Missing
+metadata preserves an existing pin. Without a pinned or discovered owner,
+the workspace remains unclaimed.
+
+New invites include the key: `fez-join:<relay>#owner=<64-hex-pubkey>`.
+Desktop and headless processes share immutable pins in
+`~/.fez/workspace-owners/`. Legacy invites use trust on first use;
+headless deployments can set `FEZ_WORKSPACE_OWNER` to an independently
+trusted key. Forgetting a workspace keeps its pin. Changing relay URLs
+does not by itself migrate job history or rotate the owner key.
 
 There is no other backend. No API server, no database schema, no accounts
 table. One process and a JSONL (or SQLite) file of signed events is a

@@ -82,7 +82,7 @@ describe("workspace action stability", () => {
 
   it("does not claim success on a relay with no verified owner", async () => {
     const { client, published } = setup();
-    client.state.describe({ owner: undefined });
+    client.state.open("wss://unclaimed.test");
     await expect(client.claimWorkspace()).rejects.toThrow(/owner/i);
     expect(published).toHaveLength(0);
   });

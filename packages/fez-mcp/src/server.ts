@@ -27,6 +27,7 @@ import {
   allowedMediaHosts,
   fetchAttachment,
   fetchRelayInfo,
+  pinWorkspaceOwner,
   loadSettings,
 } from "@fezchat/protocol";
 
@@ -494,7 +495,7 @@ async function trustedDocEvents(filter: Filter): Promise<WireEvent[]> {
   ]);
   if (result.failures.length) throw new Error("Could not read the current document version and membership. Retry before writing.");
   const state = new WorkspaceState();
-  state.describe({ owner: info?.pubkey });
+  state.describe({ owner: pinWorkspaceOwner(relayUrls[0], info?.pubkey) });
   for (const kind of [47102, 30047]) for (const event of result.events.filter(e => e.kind === kind)) state.absorb(event);
   if (!state.isMember(myPubkey)) throw new Error("Document tools require workspace membership.");
   return result.events.filter(event => filter.kinds?.includes(event.kind) && state.isMember(event.pubkey));

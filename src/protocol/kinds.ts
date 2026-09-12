@@ -140,12 +140,12 @@ export const KIND_PAIRING = 24134;
  *
  * Trust — flattening the STRUCTURE does not hand authority to the RELAY:
  *
- * - The workspace's **owner** is a pubkey the relay advertises in NIP-11
- *   (`pubkey`, the standard administrative-contact field). Buzz makes the
- *   relay sign its own roster; fez keeps a person signing, so moving hosts
- *   and keeping the key keeps the workspace.
- * - 47101/47102/30047 count only when signed by that owner. A relay that
- *   lies about its owner can only make its own events be ignored.
+ * - The workspace's **owner** is pinned from a trusted invite/configuration,
+ *   or from the first valid NIP-11 `pubkey` discovery. Later metadata cannot
+ *   rotate that pin; unavailable metadata does not erase it.
+ * - 47101/47102/30047 count only when signed by the trusted owner (with
+ *   roster-admin moderation where supported). A conflicting advertised
+ *   owner blocks bootstrap rather than changing whose signatures count.
  * - Regular (non-replaceable) kinds: relays keep every version; among the
  *   owner's events with the same d-tag the highest created_at wins, ties
  *   broken by lowest id, resolved client-side.

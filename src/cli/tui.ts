@@ -110,6 +110,7 @@ import type { McpServer } from "@agentclientprotocol/sdk";
 import fs from "fs/promises";
 import path from "path";
 import { fetchRelayInfo } from "../protocol/nip11.js";
+import { pinWorkspaceOwner } from "../shared/workspace-owner.js";
 
 const FEZ_DIR = fezHome();
 
@@ -266,6 +267,7 @@ export class FezTUI {
       // the primary; extra URLs are mirrors of the same workspace.
       relays: this.relay.urls,
       relayInfo: (relay?: string) => fetchRelayInfo(relay || this.relay.urls[0]),
+      pinWorkspaceOwner: async (relay: string, advertised?: string, expected?: string) => pinWorkspaceOwner(relay, advertised, expected),
     };
     setNostrBackend(wire);
     this.fezClient = new FezClient(wire);
@@ -285,10 +287,10 @@ export class FezTUI {
     void fetchRelayInfo(this.relay.urls[0]).then((info) =>
       setWorkspaceBackend({
         relayUrl: this.relay.urls[0],
-        owner: info?.pubkey,
+        owner: this.fezClient.state.workspace.owner,
         info: info as Record<string, unknown> | undefined,
       })
-    );
+    ).catch(error => console.warn(`Workspace metadata unavailable: ${String(error)}`));
     setUiBackend({
       createSidePanel: (opts) => {
         const section = this.sidePanel.addSection({ title: opts?.title, icon: opts?.icon, order: opts?.order });

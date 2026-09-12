@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   fetchRelayInfo, loadExtensions, loadSettings, makeChannels, registeredScheduledTasks,
+  pinWorkspaceOwner,
   setNostrBackend, setWorkspaceBackend,
   type CapabilityClient, type NostrAccess, type RelayConnection, type ScheduledTask,
 } from "@fezchat/protocol";
@@ -17,8 +18,11 @@ export async function refreshWorkspace(
   const relayUrl = currentRelay();
   const info = await read(relayUrl);
   if (currentRelay() !== relayUrl) return undefined;
-  write({ relayUrl, owner: info?.pubkey, info });
-  return info?.pubkey;
+  let owner: string | undefined;
+  try { owner = pinWorkspaceOwner(relayUrl, info?.pubkey); }
+  catch (error) { write({ relayUrl, owner: undefined, info: undefined }); throw error; }
+  write({ relayUrl, owner, info });
+  return owner;
 }
 
 export function backgroundExtensions(only?: readonly string[]): string[] {

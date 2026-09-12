@@ -1,3 +1,5 @@
+import { normalizeWorkspaceRelay, resolveWorkspaceOwner } from "./workspace-owner.js";
+
 /**
  * In-memory model of the workspace this fez is looking at, built purely
  * from relay events fed in via absorb().
@@ -8,11 +10,10 @@
  * communities, which produced three identical "Home"s from one creator
  * and made switching relays look like losing your account.
  *
- * Trust: the workspace's owner is a pubkey the relay advertises in its
- * NIP-11 document. Only that key's 47101 (channel), 47102 (roster) and
- * 30047 (bans) count. The relay is still dumb storage — it merely names
- * who is in charge, and lying about that only gets its own events
- * ignored. Signature validity is nostr-tools' job upstream.
+ * Trust: the workspace owner is pinned from an explicit invite or the
+ * first valid NIP-11 document. Later metadata must match the pin. Only
+ * that key's 47101 (channel) and 47102 (roster) count; moderation lists
+ * also accept roster admins. Signature validity is checked upstream.
  *
  * Membership is workspace-wide: one roster, and being on it means every
  * channel. That is what "joined by invite and sees all the channels"
@@ -76,7 +77,7 @@ export interface Channel {
 export interface Workspace {
   /** Relay URL — the workspace's identity, and the only thing that is. */
   relay: string;
-  /** Owner pubkey from NIP-11. Undefined = unclaimed: nothing can be valid. */
+  /** Pinned owner pubkey. Undefined = unclaimed: nothing can be valid. */
   owner?: string;
   /** From NIP-11, falling back to the relay host. */
   name: string;
@@ -115,6 +116,10 @@ export interface Scope {
 export interface KnownWorkspace {
   relay: string;
   name?: string;
+  /** Hidden rail entries retain their pin when forgotten. */
+  hidden?: boolean;
+  /** Durable workspace authority; metadata discovery cannot rotate it. */
+  owner?: string;
 }
 
 interface Persisted {
@@ -211,6 +216,7 @@ export class WorkspaceState {
   known: KnownWorkspace[] = [];
   scope: Scope | null = null;
   private lastScope: Record<string, string> = {};
+  private loaded = false;
 
   /** Whether any state was ever persisted — the first-run bootstrap check. */
   persistedFileExists(): boolean {
@@ -221,58 +227,87 @@ export class WorkspaceState {
    * Point at a workspace. Remembers it in the rail and restores where you
    * were — switching workspaces must never behave like losing one.
    */
-  open(relay: string, name?: string): void {
-    this.workspace = emptyWorkspace(relay, name);
-    if (!this.known.some((w) => w.relay === relay)) this.known.push({ relay, name });
+  open(relay: string, name?: string, expectedOwner?: string): void {
+    if (!this.loaded) this.load();
+    relay = normalizeWorkspaceRelay(relay);
+    const entry = this.known.find((w) => w.relay === relay);
+    const owner = resolveWorkspaceOwner(entry?.owner, undefined, expectedOwner);
+    const known = entry
+      ? this.known.map(w => w === entry ? { ...w, owner, hidden: undefined } : w)
+      : [...this.known, { relay, name, owner }];
+    this.persist(known, relay);
+    this.known = known;
+    this.workspace = emptyWorkspace(relay, name ?? entry?.name);
+    this.workspace.owner = owner;
     const remembered = this.lastScope[relay];
     this.scope = remembered ? { channelId: remembered } : null;
-    this.save();
   }
 
-  /** Drop a workspace from the rail. Purely local; the workspace is untouched. */
+  /** Drop a workspace from the rail. Its authority pin survives rejoining. */
   forget(relay: string): void {
-    this.known = this.known.filter((w) => w.relay !== relay);
+    relay = normalizeWorkspaceRelay(relay);
+    this.known = this.known.flatMap(w => w.relay !== relay ? [w] : w.owner ? [{ ...w, hidden: true }] : []);
     delete this.lastScope[relay];
     this.save();
   }
 
-  /** What the relay says about itself (NIP-11), including who owns it. */
+  /** Apply discovery only after matching the durable owner, and persist before admission. */
   describe(info: { name?: string; owner?: string }): void {
-    if (info.name) {
-      this.workspace.name = info.name;
-      const entry = this.known.find((w) => w.relay === this.workspace.relay);
-      if (entry) entry.name = info.name;
-    }
-    this.workspace.owner = info.owner;
-    this.save();
+    const ws = this.workspace;
+    const entry = this.known.find(w => w.relay === ws.relay);
+    const owner = resolveWorkspaceOwner(entry?.owner ?? ws.owner, info.owner);
+    const known = this.known.map(w => w === entry ? { ...w, name: info.name || w.name, owner } : w);
+    this.persist(known);
+    this.known = known;
+    if (info.name) ws.name = info.name;
+    ws.owner = owner;
   }
 
   load(): void {
+    this.loaded = false;
+    const text = persistence.read();
+    if (text === undefined && !persistence.exists()) { this.loaded = true; return; }
     try {
-      const raw: Persisted = JSON.parse(persistence.read() ?? "");
-      this.known = raw.workspaces ?? [];
-      this.lastScope = raw.lastScope ?? {};
-      if (raw.active) {
-        const entry = this.known.find((w) => w.relay === raw.active);
-        this.workspace = emptyWorkspace(raw.active, entry?.name);
-        const remembered = this.lastScope[raw.active];
-        this.scope = remembered ? { channelId: remembered } : null;
+      const raw: Persisted = JSON.parse(text ?? "");
+      if (!raw || !Array.isArray(raw.workspaces)) throw new Error("Invalid workspace list");
+      const known: KnownWorkspace[] = [];
+      for (const entry of raw.workspaces) {
+        const relay = normalizeWorkspaceRelay(entry.relay);
+        const previous = known.find(w => w.relay === relay);
+        const owner = resolveWorkspaceOwner(previous?.owner, entry.owner);
+        if (previous) previous.owner = owner;
+        else known.push({ relay, name: entry.name, owner, hidden: entry.hidden === true || undefined });
       }
-    } catch {
-      // first run — nothing persisted yet
+      const lastScope: Record<string, string> = {};
+      for (const [relay, channel] of Object.entries(raw.lastScope ?? {})) {
+        if (typeof channel !== "string") throw new Error("Invalid workspace scope");
+        lastScope[normalizeWorkspaceRelay(relay)] = channel;
+      }
+      const active = raw.active ? normalizeWorkspaceRelay(raw.active) : "";
+      const entry = known.find(w => w.relay === active);
+      if (active && !entry) throw new Error("Active workspace missing from persisted list");
+      this.loaded = true;
+      this.known = known;
+      this.lastScope = lastScope;
+      this.workspace = emptyWorkspace(active, entry?.name);
+      this.workspace.owner = entry?.owner;
+      this.scope = lastScope[active] ? { channelId: lastScope[active] } : null;
+    } catch (error) {
+      this.workspace = emptyWorkspace("");
+      this.known = [];
+      this.scope = null;
+      throw new Error("Cannot load workspace owner trust", { cause: error });
     }
+  }
+
+  private persist(known = this.known, active = this.workspace.relay): void {
+    const data: Persisted = { workspaces: known, active: known.some(w => w.relay === active) ? active : undefined, lastScope: this.lastScope };
+    persistence.write(JSON.stringify(data, null, 2));
   }
 
   save(): void {
     if (this.scope && this.workspace.relay) this.lastScope[this.workspace.relay] = this.scope.channelId;
-    const data: Persisted = {
-      workspaces: this.known,
-      active: this.workspace.relay || undefined,
-      lastScope: this.lastScope,
-    };
-    try {
-      persistence.write(JSON.stringify(data, null, 2));
-    } catch { /* persistence is best-effort; in-memory state is authoritative this session */ }
+    this.persist();
   }
 
   /**

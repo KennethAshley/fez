@@ -1,10 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { nip44, nip59, type Event, type EventTemplate, type Filter } from "nostr-tools";
 import type { Wire, WireEvent, WireFilter, DmRumor, RelayInfoDoc } from "@fezchat/client";
 import { fetchRelayInfo } from "../../../src/protocol/nip11.js";
 import { RelayConnection } from "../../../src/protocol/relay.js";
 import { unwrapGiftWrap } from "../../../src/protocol/dm.js";
+import { normalizeWorkspaceRelay, resolveWorkspaceOwner } from "../../fez-client/src/workspace-owner.js";
 
 /**
  * Browser Wire for @fezchat/client — the same eight-function seam the TUI
@@ -28,6 +29,19 @@ import { unwrapGiftWrap } from "../../../src/protocol/dm.js";
  */
 
 const KIND_DM = 14;
+
+/** Shares immutable trust storage with agents before a desktop identity is ready. */
+export async function pinDesktopWorkspaceOwner(relay: string, advertised?: string, expected?: string): Promise<string | undefined> {
+  if (!isTauri()) return resolveWorkspaceOwner(undefined, advertised, expected);
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalizeWorkspaceRelay(relay)));
+  const id = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
+  const pinned = await invoke<string | null>("workspace_owner_pin", { id }) ?? undefined;
+  const owner = resolveWorkspaceOwner(pinned, advertised, expected);
+  if (!owner || pinned !== undefined) return owner;
+  const saved = await invoke<string | null>("workspace_owner_pin", { id, value: owner }) ?? undefined;
+  if (!saved) throw new Error("Workspace owner pin was not saved");
+  return resolveWorkspaceOwner(saved, advertised, expected ?? owner);
+}
 
 /** A rumor as the signer hands it back — pre-signature event shape. */
 interface Rumor {
@@ -227,6 +241,10 @@ export class BrowserWire implements Wire {
 
   async relayInfo(relay?: string): Promise<RelayInfoDoc | undefined> {
     return fetchRelayInfo(relay || this.urls[0]);
+  }
+
+  async pinWorkspaceOwner(relay: string, advertised?: string, expected?: string): Promise<string | undefined> {
+    return pinDesktopWorkspaceOwner(relay, advertised, expected);
   }
 
   async unwrapDm(event: WireEvent): Promise<DmRumor | undefined> {

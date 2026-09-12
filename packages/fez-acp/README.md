@@ -162,7 +162,12 @@ Buzz-shaped and live-verified:
 - **Status lifecycle** — 👀 accepted, 💬 working, both deleted when the
   turn ends; thread-scoped typing; streaming drafts.
 - **Trust** — respondTo (owner ∪ attested siblings ∪ allowlist),
-  channel-membership gate, depth-tag loop cap, turn budget.
+  channel-membership gate against a pinned workspace owner, depth-tag loop
+  cap, turn budget. `FEZ_WORKSPACE_OWNER` can supply an independently
+  trusted workspace key; otherwise the first valid NIP-11 owner is saved
+  in `~/.fez/workspace-owners/`. Restarts and metadata outages retain it;
+  a different advertised key blocks workspace authority. The workspace
+  owner is separate from `FEZ_AGENT_OWNER`, which controls this agent.
 - **Steer/queue** — mid-turn mentions cancel and re-prompt (Buzz's
   default) or queue (`--on-busy queue`).
 - **Observer stream** — owner-encrypted thought/tool/turn frames.
