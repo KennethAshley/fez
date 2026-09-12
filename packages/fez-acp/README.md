@@ -99,6 +99,48 @@ meters them; callers must account for specialist/service fees separately.
 usage, with a nonzero exit status. Startup failures have no usage observation.
 An evaluation result is a submitted artifact, not independent acceptance.
 
+## Periodic reflection
+
+An opt-in reflection gives a running agent time to consider its standing
+responsibilities without an incoming message. Add these single-line fields
+to its persona frontmatter, then restart the agent:
+
+```yaml
+reflectionEvery: 30m
+reflectionPrompt: Review recent code changes for stale documentation; prepare one useful correction within your existing permissions.
+```
+
+`reflectionEvery` accepts whole-number seconds, minutes, hours, or days
+(`60s`, `30m`, `2h`, `1d`), from one minute up to the Node timer limit
+(about 24 days). Omit it or set `off` or `0` to disable reflection.
+`reflectionPrompt` is optional; its default asks the agent to review its
+standing responsibilities and unfinished work, do at most one useful action,
+or do nothing. An explicitly empty prompt or invalid interval fails startup.
+`FEZ_AGENT_REFLECTION_EVERY` and `FEZ_AGENT_REFLECTION_PROMPT` override the
+persona fields. Changes take effect on restart.
+
+The first reflection waits one full interval. Ticks are skipped during
+startup replay, message admission, active turns, pending work, or a circuit
+breaker cooldown. Missed ticks never accumulate. Reflection has its own
+conversation context, includes the persona's private memory and attached
+skills, and shares the agent's hourly turn limit, reported daily spend cap,
+tool permissions, timeouts, and owner cancellation. A failed reflection is
+not automatically replayed, because it may already have performed an action.
+Spend accounting has the same limits as ordinary turns: it depends on usage
+reported by the harness and does not impose a provider-side spending ceiling.
+
+An owner and current workspace membership for both agent and owner are
+required. Reflection runs under the agent's own identity and grants no new
+permissions. Final text appears in the owner's private `/watch` stream;
+it is not automatically posted to channels or DMs. The agent can use its
+tools to deliver useful work or ask for approval. `NO_ACTION` or an empty
+result is a successful quiet turn. Encrypted turn metrics record the run
+under scope `reflection`, including reported usage.
+
+Reflection runs only while the agent process is alive. Stopping the agent
+or quitting its runtime stops the timer. Reflections do not reset `idleExit`; omit that
+setting for an agent intended to keep reflecting without new requests.
+
 ## Questions from tools
 
 ACP form requests (including Claude's `AskUserQuestion`) appear as a private

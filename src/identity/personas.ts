@@ -257,6 +257,8 @@ export const KNOWN_EXTRA_KEYS = new Set([
   "packages", // pi: registry packages
   "routable", // orchestrator: false = never delegated to by @fez (infrastructure, not a teammate)
   "idleExit", // fez-acp: self-exit after quiet period
+  "reflectionEvery", // fez-acp: opt-in idle reflection cadence
+  "reflectionPrompt", // fez-acp: standing responsibility for reflection
   "idleTimeoutS", // fez-acp: turn idle deadline override
   "turnTimeoutS", // fez-acp: turn hard deadline override
   "url", // orchestrator: router endpoint

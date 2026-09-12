@@ -13,8 +13,9 @@ export const TEST_CHANNEL = "00000000-0000-4000-8000-000000000001";
 export const OTHER_CHANNEL = "00000000-0000-4000-8000-000000000002";
 export interface RuntimePrompt { type: "prompt"; id: number; session: number; instruction: string }
 
-export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { relayInfoAvailable = true, skills = [] }: {
+export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { relayInfoAvailable = true, skills = [], frontmatter = "", env = {}, manualIntervalMs }: {
   relayInfoAvailable?: boolean; skills?: { id: string; content: string; setting?: string }[];
+  frontmatter?: string; env?: Record<string, string>; manualIntervalMs?: number | number[];
 } = {}) {
   const repo = fileURLToPath(new URL("../../../../", import.meta.url));
   const cache = path.join(repo, "node_modules/.cache");
@@ -44,7 +45,7 @@ export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { rel
   }
   if (skills.length) await fs.writeFile(path.join(testHome, ".fez/packages/test-skills/package.json"), JSON.stringify({ fez: { skills: {} } }));
   const skillDecls = skills.length ? `skills: [${skills.map(skill => `${skill.id}${skill.setting ? `(${skill.setting})` : ""}`).join(", ")}]\n` : "";
-  await fs.writeFile(path.join(testHome, ".fez/personas/scope-test.md"), `---\nharness: test-harness\n${skillDecls}---\nRuntime routing test.\n`);
+  await fs.writeFile(path.join(testHome, ".fez/personas/scope-test.md"), `---\nharness: test-harness\n${skillDecls}${frontmatter}\n---\nRuntime routing test.\n`);
   await fs.writeFile(path.join(testHome, ".fez/agents/scope-test.key"), Buffer.from(agentKey).toString("hex"), { mode: 0o600 });
   const wire = new RelayConnection({ urls: [relay.url] });
   await wire.connect();
@@ -55,20 +56,24 @@ export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { rel
       FEZ_TEST_HOME: testHome, FEZ_KEYSTORE: "file", FEZ_RELAY: relay.url,
       FEZ_AGENT_PERSONA: "scope-test", FEZ_AGENT_OWNER: ownerPk,
       FEZ_AGENT_CHANNELS: `${TEST_CHANNEL},${OTHER_CHANNEL}`, FEZ_AGENT_ON_BUSY: onBusy,
+      ...env,
+      ...(manualIntervalMs ? { FEZ_TEST_MANUAL_INTERVAL: String(manualIntervalMs) } : {}),
     },
   });
   let child = launch();
   const prompts: RuntimePrompt[] = [];
   const aborted: number[] = [];
   let ready = false;
+  let ticks = 0;
   let output = "";
   const attach = () => {
   child.stdout?.on("data", (data) => { output += data; });
   child.stderr?.on("data", (data) => { output += data; });
-  child.on("message", (message: RuntimePrompt | { type: "ready" } | { type: "aborted"; id: number }) => {
+  child.on("message", (message: RuntimePrompt | { type: "ready" | "ticked" } | { type: "aborted"; id: number }) => {
     if (message.type === "ready") ready = true;
+    else if (message.type === "ticked") ticks++;
     else if (message.type === "prompt") prompts.push(message);
-    else aborted.push(message.id);
+    else if (message.type === "aborted") aborted.push(message.id);
   });
   };
   attach();
@@ -107,7 +112,12 @@ export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { rel
       await wire.publish(event);
       return event;
     },
-    release(prompt: RuntimePrompt, reply = "fixture reply", error?: string) { child.send({ id: prompt.id, reply, error }); },
+    release(prompt: RuntimePrompt, reply = "fixture reply", error?: string, costUsd?: number, partialText?: string) { child.send({ id: prompt.id, reply, error, costUsd, partialText }); },
+    async tick(intervalMs = Array.isArray(manualIntervalMs) ? manualIntervalMs[0] : manualIntervalMs) {
+      const next = ticks + 1;
+      child.send({ tick: true, intervalMs });
+      await wait(() => ticks === next, "manual interval tick");
+    },
     async cancel() {
       await wire.publish(owner.signEvent({
         kind: 20005, tags: [["p", agentPk]],

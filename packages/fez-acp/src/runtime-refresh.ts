@@ -3,6 +3,7 @@ import fs from "node:fs";
 /** Work reservations include async admission and delayed dispatch, not just harness turns. */
 export class RuntimeRefresh {
   private pending = 0;
+  get idle(): boolean { return this.pending === 0; }
   async run<T>(work: () => Promise<T>, delay = 0): Promise<T> {
     this.pending++;
     try {

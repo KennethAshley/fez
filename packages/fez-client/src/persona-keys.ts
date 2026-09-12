@@ -18,6 +18,7 @@ export const ALL_KNOWN_KEYS = [
   "workdir", "repo", "branch", "scope",
   "provider", "model", "effort", "packages",
   "routable", "idleExit", "idleTimeoutS", "turnTimeoutS",
+  "reflectionEvery", "reflectionPrompt",
   "url", "channels", "owner", "respondTo",
   "maxReplyChars", "shareLevel", "approvalQuorum",
   "rate",
