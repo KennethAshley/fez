@@ -6,7 +6,9 @@
  *
  * Emits app-icon.png (1024², Big-Sur squircle on transparent ground);
  * regenerate the full set with:  npx tauri icon app-icon.png
+ * Pass --tray for the transparent macOS hat template (36px / 18pt Retina).
  */
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
@@ -16,12 +18,32 @@ const EMBER = "#FF6A00";
 const BONE = "#e8e2d9";
 const DUST = "#6d645a";
 const BG = "#000000"; // the site's bg-black
+const TRAY = process.argv.includes("--tray");
 
 // The guide — the fez sprite from src/sprites.ts, the one who wears
 // the hat the network is named for. KEEP IN SYNC with that file's
 // `fez` entry (rows + palette) if the cast art ever changes.
-const PALETTE = { r: EMBER, f: BONE, d: DUST };
-const ROWS = [
+const PALETTE = { r: EMBER, f: BONE, d: DUST, h: "#000000" };
+const ROWS = TRAY ? [
+  "..................",
+  "..................",
+  "..................",
+  "........hhhhhh....",
+  "....hhhhhhh..hh...",
+  "....hhhhhhh...h...",
+  "....hhhhhhhh..h...",
+  "....hhhhhhhh..h...",
+  "...hhhhhhhhh..hh..",
+  "...hhhhhhhhh..hh..",
+  "...hhhhhhhhhh.hh..",
+  "...hhhhhhhhhh.....",
+  "..hhhhhhhhhhh.....",
+  "..hhhhhhhhhhh.....",
+  "..................",
+  "..................",
+  "..................",
+  "..................",
+] : [
   "....rrrr....",
   "....rrrr.r..",
   "...ffffff.r.",
@@ -35,7 +57,8 @@ const ROWS = [
   "...dd..dd...",
 ];
 
-const SIZE = 1024;
+assert(ROWS.every(row => row.length === ROWS[0].length && [...row].every(c => c === "." || PALETTE[c])));
+const SIZE = TRAY ? 36 : 1024;
 // Apple's Big Sur template: content squircle ~824px centered on 1024.
 const CARD = 824;
 const RADIUS = 185;
@@ -56,7 +79,7 @@ const inSquircle = (x, y) => {
 
 for (let y = 0; y < SIZE; y++)
   for (let x = 0; x < SIZE; x++) {
-    if (!inSquircle(x, y)) continue;
+    if (TRAY || !inSquircle(x, y)) continue;
     const i = (y * SIZE + x) * 4;
     px[i] = bgR; px[i + 1] = bgG; px[i + 2] = bgB; px[i + 3] = 255;
   }
@@ -65,7 +88,7 @@ for (let y = 0; y < SIZE; y++)
 // with breathing room.
 const cols = ROWS[0].length;
 const rows = ROWS.length;
-const scale = Math.floor((CARD * 0.72) / Math.max(cols, rows));
+const scale = TRAY ? 2 : Math.floor((CARD * 0.72) / Math.max(cols, rows));
 const ox = Math.round((SIZE - cols * scale) / 2);
 const oy = Math.round((SIZE - rows * scale) / 2);
 for (let ry = 0; ry < rows; ry++)
@@ -118,6 +141,7 @@ const png = Buffer.concat([
   chunk("IEND", Buffer.alloc(0)),
 ]);
 
-const out = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "app-icon.png");
+const out = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..",
+  TRAY ? "src-tauri/icons/tray-icon.png" : "app-icon.png");
 fs.writeFileSync(out, png);
 console.log(`✓ ${out} (${(png.length / 1024).toFixed(0)}KB)`);
