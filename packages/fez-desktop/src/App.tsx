@@ -2380,7 +2380,7 @@ function ChannelView({
 
   return (
     <main
-      className="main"
+      className="main chat-main"
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
@@ -2945,7 +2945,7 @@ function DmView({
   };
 
   return (
-    <main className="main">
+    <main className="main chat-main">
       <header className="topbar">
         <div className="topbar-row" data-tauri-drag-region>
           {/* Identity gets a face: the header is the person you're talking

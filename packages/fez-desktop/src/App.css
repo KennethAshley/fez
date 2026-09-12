@@ -326,6 +326,15 @@ body {
 .timeline {
   flex: 1; overflow-y: auto; padding: 20px 26px;
 }
+/* Keep the scroll area at the pane edge and center the conversation inside it. */
+.chat-main { --chat-width: 800px; --chat-gutter: 26px; }
+.chat-main .timeline {
+  padding-inline: max(var(--chat-gutter), calc((100% - var(--chat-width)) / 2));
+}
+.chat-main :is(.composer, .typing, .edit-banner, .attach-row, .mention-warn, .history-status) {
+  width: 100%; max-width: calc(var(--chat-width) + 2 * var(--chat-gutter));
+  margin-inline: auto; padding-inline: var(--chat-gutter);
+}
 
 .bubble {
   position: relative;
@@ -4264,6 +4273,7 @@ a.page-fact:hover { color: var(--fg); }
 
 @media (width <= 900px) {
   .fez-page { padding: 28px 24px 40px; }
+  .chat-main { --chat-gutter: 20px; }
   .timeline, .composer { padding-left: 20px; padding-right: 20px; }
 }
 .skill-chip, .input-recommended {
