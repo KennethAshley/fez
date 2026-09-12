@@ -38,7 +38,7 @@ export function assertHeadlessOwnership(home = path.join(os.homedir(), ".fez")):
   try {
     const row = JSON.parse(fs.readFileSync(path.join(home, "desktop-runtime.json"), "utf8"));
     if (Number.isSafeInteger(row.pid) && row.pid > 1 && typeof row.executable === "string" && path.isAbsolute(row.executable)) {
-      const executable = execFileSync("ps", ["-p", String(row.pid), "-o", "comm="], {
+      const executable = process.platform === "linux" ? fs.readlinkSync(`/proc/${row.pid}/exe`) : execFileSync("ps", ["-p", String(row.pid), "-o", "comm="], {
         encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
       }).trim();
       owned = executable === row.executable;

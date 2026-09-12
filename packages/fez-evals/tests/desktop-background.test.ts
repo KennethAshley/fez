@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { CapabilityClient, type NostrAccess } from "@fezchat/protocol";
 import { acquireBackgroundOwnership, assertHeadlessOwnership, startScheduledTasks } from "../../fez-sentinel/src/background.js";
 
@@ -93,10 +93,10 @@ it("headless startup refuses only a live desktop PID with the exact executable",
   stops.push(async () => { const exited = once(child, "exit"); child.kill(); await exited; });
   const pid = child.pid!;
   const receipt = path.join(root, "desktop-runtime.json");
-  const executable = execFileSync("ps", ["-p", String(pid), "-o", "comm="], { encoding: "utf8" }).trim();
+  const executable = fs.realpathSync(process.execPath);
   fs.writeFileSync(receipt, JSON.stringify({ pid, executable }));
   expect(() => assertHeadlessOwnership(root)).toThrow(/Fez desktop owns local runtime; quit Fez before headless/);
-  for (const row of [{ pid, executable: `${executable}-other` }, { pid: 99999999, executable }, { pid: 1, executable }]) {
+  for (const row of [{ pid, executable: `${executable}-other` }, { pid, executable: path.basename(executable) }, { pid: 99999999, executable }, { pid: 1, executable }]) {
     fs.writeFileSync(receipt, JSON.stringify(row));
     expect(() => assertHeadlessOwnership(root)).not.toThrow();
   }

@@ -53,7 +53,7 @@ jobs:
         run: npm run build
 
       - name: Test gate
-        run: npx vitest --run
+        run: npx vitest --run --maxWorkers=2 --minWorkers=2
         working-directory: packages/fez-evals
 
   e2e:
