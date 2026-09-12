@@ -33,6 +33,8 @@ export { FezTUI } from "./cli/tui.js";
 export { PackageManager, skillEntryFor, type FezPackage, type FezManifest } from "./extensions/package-manager.js";
 export * from "./protocol/kinds.js";
 export { requestInput, type InputForm, type InputResponse, type InputOrigin } from "../packages/fez-client/dist/agent-input.js";
+/** Channel work uses the same result and acceptance rules as the shared client. */
+export { completeWork, workResult, acceptWork } from "../packages/fez-client/dist/work-completion.js";
 /** Standing runtimes use the same roster and moderation rules as GUI clients. */
 export { WorkspaceState } from "../packages/fez-client/dist/workspace-state.js";
 export { MAX_CHAIN_DEPTH } from "./protocol/limits.js";

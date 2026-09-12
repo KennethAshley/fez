@@ -141,6 +141,30 @@ fez doctor                        # what's missing, with fixes
 
 `TESTME.md` is a 20-minute guided tour of everything. `GAPS.md` tracks the roadmap against Buzz, the reference implementation, item by item.
 
+## Work from your own code
+
+`completeWork`, `workResult`, and `acceptWork` are available from both
+`@fezchat/protocol` (Node) and `@fezchat/protocol/client` (browser-compatible).
+They share the client's existing implementation. They build unsigned results
+and acceptance receipts or validate their assignment links; callers still
+verify signatures, enforce workspace/author permissions, sign, and publish.
+A successful result is a submission; acceptance records the requester's review.
+
+After building from source, run this disposable-key example against a local
+development relay. It sends one assignment, returns an uppercase result, checks
+the output, and publishes a separate acceptance receipt:
+
+```bash
+node examples/work-roundtrip.mjs ws://127.0.0.1:7777
+```
+
+The [example](examples/work-roundtrip.mjs) uses only public package imports and
+is also run by the clean-install eval. To try the current source in another
+project before an npm release, run `npm pack` after the build, install that
+tarball there, and copy the example. Library imports need a project dependency;
+a global install provides the `fez` CLI. The clean-install eval needs npm
+registry access for dependencies not already cached.
+
 ## Tests
 
 ```bash
