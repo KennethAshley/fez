@@ -4,6 +4,7 @@ import { nip44, nip59, type Event, type EventTemplate, type Filter } from "nostr
 import type { Wire, WireEvent, WireFilter, DmRumor, RelayInfoDoc } from "@fezchat/client";
 import { fetchRelayInfo } from "../../../src/protocol/nip11.js";
 import { RelayConnection } from "../../../src/protocol/relay.js";
+import { unwrapGiftWrap } from "../../../src/protocol/dm.js";
 
 /**
  * Browser Wire for @fezchat/client — the same eight-function seam the TUI
@@ -94,13 +95,7 @@ export function localSigner(keyHex: string): WireSigner {
       const wraps = recipients.map((pk) => nip59.createWrap(nip59.createSeal(rumor, secret, pk), pk) as unknown as WireEvent);
       return { rumorId: (rumor as { id: string }).id, wraps };
     },
-    unwrap(event) {
-      try {
-        return nip59.unwrapEvent(event as unknown as Event, secret) as unknown as Rumor;
-      } catch {
-        return undefined;
-      }
-    },
+    unwrap: (event) => unwrapGiftWrap(event, secret),
   };
 }
 
