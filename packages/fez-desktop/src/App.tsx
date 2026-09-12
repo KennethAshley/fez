@@ -61,11 +61,13 @@ import { runCommand } from "./commands";
 import { startUpdateCheck } from "./updater";
 import Onboarding from "./Onboarding";
 import AiSetupDialog from "./AiSetupDialog";
+import QuitDialog from "./QuitDialog";
 import FirstRun, { FirstTask } from "./FirstRun";
 import HistoryStatus from "./HistoryStatus";
 import { isNostrKeyInput, pubkeyFromInput, resolvePubkeyInput } from "./public-key";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
 import { messageDecorators, settingsPanelForSource, extensionSettingsPanels } from "./gui-extensions";
+import { norm } from "./extensions-catalog";
 import { EMOJI, searchEmoji } from "./emoji";
 import HireProposalCard from "./HireProposalCard";
 import "./App.css";
@@ -325,6 +327,10 @@ function BootError({ message, onRetry }: { message: string; onRetry: () => void 
 }
 
 export default function App() {
+  return <><QuitDialog /><BootApp /></>;
+}
+
+function BootApp() {
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
   const [connected, setConnected] = useState(true);
   const [relayHealth, setRelayHealth] = useState<{ url: string; connected: boolean }[]>([]);
@@ -682,34 +688,22 @@ function Shell({
       });
     }) as never);
     client.on("reminderDue", ((note: string) => {
-      void (async () => {
-        // The sentinel delivers OS notifications when it's alive — one
-        // notifier per machine (same rule as the summoner). Otherwise
-        // this window is the only deliverer, so it owes a real native
-        // notification (same mechanism as the dmMessage handler above),
-        // not just an in-app toast.
-        const sentinel = await invoke<boolean>("runner_status").catch(() => false);
-        if (!sentinel) {
-          notifyEvent({
-            key: `reminder:${note}`,
-            kind: "needs_action",
-            title: "⏰ Reminder",
-            body: note,
-            label: "Reminders",
-          });
-        }
-      })();
+      notifyEvent({
+        key: `reminder:${note}`,
+        kind: "needs_action",
+        title: "⏰ Reminder",
+        body: note,
+        label: "Reminders",
+      });
     }) as never);
 
-    // The desktop's own summon host — spawns @-mentioned agents from
-    // this live subscription while the app is open, deferring entirely
-    // to a running sentinel (see summoner.ts). Same wire the rest of
-    // Shell already reads/writes; no new props threaded in.
+    // Native startup takes ownership and restores local work before the
+    // live summon subscription starts; it reconciles while this app lives.
     const stopSummoner = startSummoner({
       wire,
       ownerPubkey: client.pubkey,
       relays: relaySet(),
-      toast: (m) => toast.info(m, 0),
+      toast: (m) => toast.error(m),
     });
 
     return () => {
@@ -1838,7 +1832,7 @@ function Shell({
                 space-betweens them, and wrapping both in a row put them
                 in one box together at the left. */}
             <header className="pane-head">
-              <span className="wiki-title">{extSettings}</span>
+              <span className="wiki-title">{norm(extSettings)}</span>
               <button className="pane-close" onClick={() => setExtSettings(undefined)}>✕</button>
             </header>
             <div className="pane-body">

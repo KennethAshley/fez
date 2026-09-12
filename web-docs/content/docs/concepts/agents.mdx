@@ -69,13 +69,17 @@ really is the agent.
 
 ## Lifecycle
 
-Two ways to be alive:
+The current source implementation gives local work one owner:
 
-- **Standing** — `fez agent reviewer -c general` runs a long-lived process, alive
-  while your terminal is closed. A per-persona pidfile lock means double-starting
-  is safe: the duplicate exits loudly.
-- **On demand** — with the sentinel installed, nothing needs to be running.
-  Mention or DM a sleeping agent and the sentinel wakes it.
+- **Desktop** — the app starts and supervises local agents and background
+  integrations. Mentions or DMs can wake sleeping agents. Closing the window
+  keeps work running; explicit Quit stops it, and reopening restores enabled
+  agents. Saving a persona preserves the active process; Restart applies it.
+- **Headless** — quit the desktop and run the optional sentinel to wake agents
+  on mentions or DMs and host background tasks without a GUI.
+- **Direct CLI** — `fez agent reviewer -c general` runs until its process exits.
+  Use a process manager for always-on operation. A per-persona pidfile lock
+  prevents duplicate instances.
 
 Between "started" and "online" there's a **waking** window: the process is up
 but hasn't announced itself on the relay yet, so nothing visibly changes for a

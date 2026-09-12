@@ -18,12 +18,11 @@ import {
   KIND_GIFT_WRAP,
   KIND_OBSERVER,
   KIND_PRESENCE,
-  makeChannels,
   isSafeWork,
   parseSealed,
-  fetchRelayInfo,
   setWorkspaceBackend,
 } from "@fezchat/protocol";
+import { assertHeadlessOwnership, backgroundExtensions, prepareBackgroundTasks } from "./background.js";
 import { decodeReminderV2 } from "./reminders-v2.js";
 
 /**
@@ -55,16 +54,7 @@ import { decodeReminderV2 } from "./reminders-v2.js";
 // Summon policy is now in @fezchat/protocol (shared with desktop)
 export { summonMentions, isSafeWork } from "@fezchat/protocol";
 
-/** A delayed NIP-11 response must never reinstall the workspace the user just left. */
-export async function refreshWorkspace(
-  currentRelay: () => string, read = fetchRelayInfo, write = setWorkspaceBackend,
-): Promise<string | undefined> {
-  const relayUrl = currentRelay();
-  const info = await read(relayUrl);
-  if (currentRelay() !== relayUrl) return undefined;
-  write({ relayUrl, owner: info?.pubkey, info });
-  return info?.pubkey;
-}
+export { refreshWorkspace } from "./background.js";
 
 const HERDR_SOCKET = path.join(os.homedir(), ".config", "herdr", "herdr.sock");
 const REGISTRY = path.join(os.homedir(), ".fez", "herdr-tabs.json");
@@ -189,12 +179,8 @@ function agentProcessAlive(persona: string): boolean {
 
 /** Explicit entry point for the CLI; importing pure helpers must not start a daemon. */
 export async function runSentinel(onlyExtensions?: readonly string[]) {
-  const { loadSettings } = await import("@fezchat/protocol");
-  const enabled = loadSettings().backgroundExtensions ?? [];
-  for (const name of onlyExtensions ?? []) {
-    if (!enabled.includes(name)) throw new Error(`Background extension "${name}" is not enabled`);
-  }
-  const background = onlyExtensions === undefined ? enabled : enabled.filter(name => onlyExtensions.includes(name));
+  assertHeadlessOwnership();
+  const background = backgroundExtensions(onlyExtensions);
   // BEFORE anything shells out. launchd hands this process
   // PATH=/usr/bin:/bin:/usr/sbin:/sbin, so Homebrew, uv, cargo and nvm
   // are all invisible — and an extension that shells out reports the
@@ -217,7 +203,9 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
 
   fs.mkdirSync(path.dirname(PIDFILE), { recursive: true });
   fs.writeFileSync(PIDFILE, String(process.pid));
+  let backgroundHost: Awaited<ReturnType<typeof prepareBackgroundTasks>> | undefined;
   const cleanup = () => {
+    void backgroundHost?.stop();
     try {
       if (fs.readFileSync(PIDFILE, "utf-8").trim() === String(process.pid)) fs.unlinkSync(PIDFILE);
     } catch { /* already gone */ }
@@ -307,29 +295,6 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
       child.unref();
       console.log(`🧬 spawned @${persona} detached (pid ${child.pid}, log ~/.fez/logs/${persona}.log)`);
     }
-  }
-
-  function buildTaskNostr() {
-    return {
-      pubkey: myPubkey,
-      publish: async (template: unknown) => {
-        const event = client.signEvent(template as never);
-        await relay.publish(event);
-        return event;
-      },
-      // Sign WITHOUT publishing — NIP-98 headers for relay HTTP
-      // surfaces (fez-git's push journal). Its absence here was
-      // invisible: the backend is cast into the extension API type, so
-      // the type checker saw the full NostrAccess while the object had
-      // a hole, and the first caller got a TypeError swallowed by its
-      // own network-error handling — a task that no-ops forever.
-      signEvent: (template: unknown) => client.signEvent(template as never),
-      subscribe: (filters: unknown, handler: unknown) => relay.subscribe(filters as never, handler as never),
-      query: (filters: unknown) => relay.query(filters as never),
-      queryWithStatus: (filters: unknown) => relay.queryWithStatus(filters as never),
-      encrypt: (peer: string, plaintext: string) => client.encryptTo(peer, plaintext),
-      decrypt: (peer: string, ciphertext: string) => client.decryptFrom(peer, ciphertext),
-    };
   }
 
   // Courtesy half of single ownership (the agent's boot-time yield is
@@ -600,93 +565,9 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
     else if (!dead.has(intent.id)) armIntent(intent);
   }
 
-  // ── extension background tasks ────────────────────────────────────────
-  // The sentinel is the only always-on, key-holding host, so it's where
-  // an extension's scheduled work belongs (a live block that refreshes
-  // itself, a nightly bench run). Extensions get the relay and the
-  // owner's identity — no UI, no shell. A task that throws is logged and
-  // retried next tick; it can never take the sentinel down.
-  await (async () => {
-   try {
-    const { loadExtensions, registeredScheduledTasks, setNostrBackend } =
-      await import("@fezchat/protocol");
-    setNostrBackend(buildTaskNostr() as never);
-    // Which workspace this is, and who owns it. The sentinel has no
-    // FezClient, so without this the extension API had nowhere to learn
-    // the owner and fell back to "the local key" — meaning a sentinel
-    // pointed at someone else's relay believed it owned the place, and
-    // every channel it tried to open was refused with no explanation.
-    // An unreadable NIP-11 leaves the owner undefined, which is the
-    // honest answer: seams that need one go quiet instead of guessing.
-    //
-    // Resolved lazily and RETRIED, not fetched once at boot. The sentinel
-    // starts at login, so it races the relay coming up — and a one-shot
-    // read that lost that race would leave the owner unknown for the
-    // whole process lifetime, silently disabling channel creation for
-    // every scheduled task until somebody restarted it.
-    const resolveOwner = () => refreshWorkspace(() => relayUrls[0]);
-    const workspaceOwner = await resolveOwner();
-    if (!workspaceOwner) {
-      // No owner means no channel, roster or ban event can be valid here,
-      // so nothing a scheduled task publishes into a channel would count.
-      // Saying so once beats every bridge failing quietly on its own.
-      console.log("   ⏱  relay is unclaimed (no owner in NIP-11) — channel-scoped tasks cannot publish");
-    }
-    // Only extensions that ASKED for background life (fez.parts.background
-    // in their manifest, recorded at install time) run here.
-    if (background.length === 0) {
-      console.log("   ⏱  no background extensions installed");
-      return;
-    }
-    await loadExtensions(undefined, background);
-    const tasks = registeredScheduledTasks();
-    for (const task of tasks) {
-      const everyMs = Math.max(60_000, task.everyMs);
-      let lastTickAt = Date.now();
-      const tick = async () => {
-        // A gap far longer than the interval means the machine slept.
-        const missedWindow = Date.now() - lastTickAt > everyMs * 2;
-        lastTickAt = Date.now();
-        try {
-          // One nostr per tick, and the channels seam built over it —
-          // so a bridge says "open the channel for this repo" instead of
-          // copying kind numbers out of src/kinds.ts.
-          //
-          // The channels seam is keyed on the WORKSPACE owner from
-          // NIP-11, not this machine's key. They are the same on your own
-          // relay and different on anyone else's, and using the local key
-          // there fails silently in both directions: list() queries
-          // `authors: [owner]` and comes back empty, so a bridge decides
-          // every channel is missing and re-opens all of them.
-          //
-          // `ownerPubkey` stays this MACHINE's key — the authority the
-          // task acts on behalf of, which is a different question from
-          // who owns the workspace. On an unclaimed relay there is no
-          // workspace owner, and "" matches no pubkey, so list() comes
-          // back empty and ensure() refuses — which is the truth there.
-          const nostr = buildTaskNostr() as never;
-          // Retried here, so a sentinel that outraced the relay at login
-          // recovers on the next tick instead of staying half-dead.
-          const owner = await resolveOwner();
-          await task.run({
-            nostr,
-            ownerPubkey: myPubkey,
-            channels: makeChannels(nostr, owner ?? ""),
-            missedWindow,
-          });
-        } catch (err) {
-          console.warn(`⚠️  scheduled task "${task.name}" failed: ${err instanceof Error ? err.message : err}`);
-        }
-      };
-      const timer = setInterval(() => void tick(), everyMs);
-      timer.unref?.();
-      void tick(); // once at boot: a due block shouldn't wait a full interval
-      console.log(`   ⏱  scheduled task "${task.name}" every ${Math.round(everyMs / 60_000)}m`);
-    }
-   } catch (err) {
-    console.warn(`⚠️  extension tasks unavailable: ${err instanceof Error ? err.message : err}`);
-   }
-  })();
+  // The optional headless runtime shares exactly the desktop's extension host.
+  backgroundHost = await prepareBackgroundTasks(client, relay, () => relayUrls[0], background);
+  await backgroundHost.start();
 
   console.log(`   watching: DM summons · mention summons · doc-comment summons · notifications · schedules/reminders. Ctrl+C to stop.`);
 }

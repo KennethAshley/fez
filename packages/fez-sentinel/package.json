@@ -11,7 +11,7 @@
     }
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --format=esm --platform=node --external:@fezchat/protocol --outfile=dist/index.js",
+    "build": "esbuild src/index.ts src/desktop.ts --bundle --format=esm --platform=node --external:@fezchat/protocol --outdir=dist",
     "check": "tsc --noEmit"
   },
   "dependencies": {

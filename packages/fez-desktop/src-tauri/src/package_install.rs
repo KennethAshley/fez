@@ -266,6 +266,21 @@ pub(crate) fn install_from_tarball(
     if base.is_empty() || !base.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')) {
         return Err("invalid package directory name".into());
     }
+    // Full manifest identity, never a stripped prefix: two IDs would split
+    // this package's data, grants and agent attachments.
+    if let (Some(manifest_name), Ok(entries)) = (pkg.get("name").and_then(|v| v.as_str()), std::fs::read_dir(home.join("packages"))) {
+        for entry in entries.flatten() {
+            let id = entry.file_name().to_string_lossy().to_string();
+            if id == base { continue; }
+            // CLI install IDs can include dots; the scanned entry already bounds the path.
+            let Some(installed) = std::fs::read(entry.path().join("package.json")).ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok()) else { continue };
+            if installed.pointer("/fez/reconstructed").and_then(|v| v.as_bool()) == Some(true) { continue; }
+            if installed.get("name").and_then(|v| v.as_str()) == Some(manifest_name) {
+                return Err(format!("{manifest_name} is already installed as {id}; consolidate its data and agent attachments under {base} before installing."));
+            }
+        }
+    }
     let skill_payload = if let Some(config) = pkg.pointer("/fez/skills") {
         let dir = config.get("dir").and_then(|v| v.as_str()).unwrap_or("skills");
         let paths = skill_paths(tar_bytes, dir)?;
@@ -891,6 +906,38 @@ mod tests {
         add(&mut b, "package/bin/index.js", "#!/usr/bin/env node\n");
         add(&mut b, "package/dist/mcp.js", "export default 3;\n");
         b.into_inner().unwrap()
+    }
+
+    #[test]
+    fn refuses_an_existing_full_package_identity_under_another_id_before_writing() {
+        for id in ["fez-tidy", "tidy.dev"] {
+            let home = tempfile::tempdir().unwrap();
+            let alias = home.path().join("packages").join(id);
+            std::fs::create_dir_all(&alias).unwrap();
+            let manifest = tar_read(&fixture_tar(), "package.json").unwrap();
+            std::fs::write(alias.join("package.json"), &manifest).unwrap();
+            let error = install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap_err();
+            assert!(error.contains(&format!("@fezchat/tidy is already installed as {id}")), "{error}");
+            assert!(!home.path().join("packages/tidy").exists());
+            assert!(!home.path().join("extensions").exists());
+            assert_eq!(std::fs::read(alias.join("package.json")).unwrap(), manifest);
+        }
+    }
+
+    #[test]
+    fn full_identity_guard_allows_other_scopes_reconstructed_names_and_in_place_updates() {
+        let home = tempfile::tempdir().unwrap();
+        for (id, manifest) in [
+            ("other-tidy", serde_json::json!({"name": "@other/tidy"})),
+            ("fez-tidy", serde_json::json!({"name": "@fezchat/tidy", "fez": {"reconstructed": true}})),
+        ] {
+            let dir = home.path().join("packages").join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("package.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        }
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.2", home.path()).unwrap();
+        assert!(home.path().join("packages/other-tidy/package.json").exists());
     }
 
     // THE LAYOUT CONTRACT — must match packages/fez-evals/tests/package-lifecycle.test.ts exactly.

@@ -29,7 +29,7 @@ body {
   font: 14px/1.5 -apple-system, "SF Pro Text", Helvetica, sans-serif;
   overflow: hidden;
 }
-.boot { height: 100%; display: grid; place-items: center; color: var(--fg-dim); }
+.boot { height: 100%; display: grid; place-items: center; color: var(--fg-dim); background: var(--bg0); }
 .agent-input {
   position: fixed; right: 20px; bottom: 20px; z-index: 150;
   width: min(480px, calc(100vw - 40px)); max-height: calc(100vh - 100px);
@@ -174,6 +174,22 @@ body {
   flex-direction: column;
   overflow: hidden;
 }
+/* The OS blurs behind the window; only the rail reveals that material.
+   NSVisualEffectView follows macOS Reduce Transparency itself. WebKit does
+   not support that media query yet, so it must not gate native vibrancy.
+   Tint comes from the active theme, including extension-provided palettes. */
+:root[data-vibrancy="sidebar"] body { background: transparent; }
+:root[data-vibrancy="sidebar"] .rail { background: color-mix(in srgb, var(--bg-rail, var(--bg1)) 55%, transparent); }
+:root[data-vibrancy="sidebar"] .rail-search,
+:root[data-vibrancy="sidebar"] .self-card { background: color-mix(in srgb, var(--bg0) 45%, transparent); }
+:root[data-vibrancy="sidebar"] .self-card:hover { background: color-mix(in srgb, var(--bg1) 65%, transparent); }
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  :root[data-vibrancy="sidebar"] body { background: var(--bg0); }
+  :root[data-vibrancy="sidebar"] .rail { background: var(--bg-rail, var(--bg1)); }
+  :root[data-vibrancy="sidebar"] .rail-search,
+  :root[data-vibrancy="sidebar"] .self-card { background: var(--bg0); }
+  :root[data-vibrancy="sidebar"] .self-card:hover { background: var(--bg1); }
+}
 /* The channel groups are a different LEVEL, not the next item — the nav
    above them is where you go, these are what you are in. Tightening the
    nav rows to 4px made them one block, which only works if the gap to
@@ -266,7 +282,7 @@ body {
 .dot.partial { background: var(--yellow); }
 
 /* ── main column ───────────────────────────────────────────── */
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg0); }
 .channel-activity { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .channel-activity[hidden] { display: none; }
 .channel-workspace-summary { padding: 12px 20px; border-bottom: 1px solid var(--hairline); }
@@ -2520,7 +2536,7 @@ button.author:hover { text-decoration: underline; }
    against whatever it sits between, not just be adjacent to it. */
 .rz {
   width: 11px; min-width: 11px; margin: 0 -3px; cursor: col-resize;
-  flex-shrink: 0; background: transparent; position: relative; z-index: 5;
+  flex-shrink: 0; background: var(--bg0); position: relative; z-index: 5;
 }
 .rz::after {
   content: ""; position: absolute; inset: 0 4px; border-radius: 2px;

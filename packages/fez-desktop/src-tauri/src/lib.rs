@@ -1,5 +1,6 @@
 use nostr::JsonUtil as _;
 mod bounded_command;
+mod desktop_runtime;
 mod git_install;
 mod isolated_panel;
 mod managed_agents;
@@ -21,8 +22,7 @@ use std::sync::Mutex;
 /// which makes the size cap a one-liner.
 static ARTIFACT_DOCS: Mutex<Option<std::collections::BTreeMap<u64, String>>> = Mutex::new(None);
 static ARTIFACT_NEXT: AtomicU64 = AtomicU64::new(1);
-/// Synchronize agent-registry read-modify-write across Tauri command invocations
-/// to prevent lost updates when spawn_agent and kill_agent race.
+/// Serialize lifecycle decisions before process creation, through replacement and shutdown.
 static AGENTS_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
 /// Why a tracked process last died, keyed "name\u{0}bin" — the row's
 /// feedback when the send button flips back. Cleared on respawn.
@@ -30,9 +30,9 @@ static LAST_EXITS: Mutex<Option<std::collections::HashMap<String, String>>> = Mu
 /// Set once at setup so background threads (the process reaper) can push
 /// events to the webview — feedback the moment something dies, no polling.
 static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
-/// Stops the USER asked for ("name\x00bin") — the reaper consumes an entry
+/// Stops the user asked for, by PID — the reaper consumes an entry
 /// to keep a deliberate recall from toasting as a death.
-static EXPECTED_STOPS: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
+static EXPECTED_STOPS: Mutex<Option<std::collections::HashSet<u32>>> = Mutex::new(None);
 /// More staged docs than this and the oldest fall off — a leaked stage
 /// (webview reloaded mid-flight) must not grow the map forever.
 const ARTIFACT_CAP: usize = 64;
@@ -2116,6 +2116,12 @@ pub(crate) struct SpawnedAgent {
     /// before the field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     spawned_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    process_start: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    relays: Option<String>,
 }
 
 fn agents_registry_path() -> std::path::PathBuf {
@@ -2130,59 +2136,30 @@ fn load_agents_registry() -> Vec<SpawnedAgent> {
         .unwrap_or_default()
 }
 
-fn save_agents_registry(rows: &[SpawnedAgent]) {
-    if let Some(dir) = agents_registry_path().parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(
-        agents_registry_path(),
-        serde_json::to_string_pretty(rows).unwrap_or_else(|_| "[]".into()),
-    );
+fn save_agents_registry(rows: &[SpawnedAgent]) -> Result<(), String> {
+    let path = agents_registry_path();
+    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    let staged = path.with_extension("json.tmp");
+    std::fs::write(&staged, serde_json::to_vec_pretty(rows).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("save agent registry: {e}"))?;
+    std::fs::rename(staged, path).map_err(|e| format!("save agent registry: {e}"))
 }
 
 fn raw_pid_alive(pid: u32) -> bool {
-    std::process::Command::new("/bin/kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    pid > 1 && unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
-/// Is this pid still running the binary we started under it? Rows persist
-/// across reboots and macOS reuses low pids, and a bare `kill -0` believes
-/// any process wearing the pid — a reused pid made agent_alive a false
-/// positive and made kill_agent SIGTERM an innocent, unrelated process.
-/// `command=` (full command line, not just comm) so the ~/.fez/bin/<bin>
-/// path still matches on a substring.
+/// Persisted receipts never authorize signalling a process based on a substring.
 pub(crate) fn pid_runs_bin(pid: u32, bin: &str) -> bool {
-    if !raw_pid_alive(pid) {
-        return false;
-    }
-    Command::new("/bin/ps")
-        .args(["-p", &pid.to_string(), "-o", "command="])
-        .output()
-        .ok()
-        .map(|out| String::from_utf8_lossy(&out.stdout).contains(bin))
-        .unwrap_or(false)
+    let Ok(home) = fez_home() else { return false };
+    desktop_runtime::pid_runs_path(pid, &home.join("bin").join(bin))
 }
 
-/// Mirrors the sentinel's own liveness probe (fez-sentinel/src/index.ts
-/// agentProcessAlive): an agent the SENTINEL spawned (`fez agent
-/// <persona>` in dev, `cli.js agent <persona>` from source) never enters
-/// the desktop's pid registry at all. Without this, a sentinel that dies
-/// leaves its agents running but invisible to the desktop, which then
-/// double-spawns on top of them the next time it thinks a persona is
-/// needed. `persona` is webview-supplied, so it's validated here too
-/// (not just at call sites) before it reaches a pgrep pattern.
-fn sentinel_agent_alive(persona: &str) -> bool {
-    if !valid_persona_name(persona) {
-        return false;
-    }
-    Command::new("/usr/bin/pgrep")
-        .args(["-f", &format!(r"(fez|cli\.js) agent {persona}")])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+fn sentinel_agent_pid(persona: &str) -> Option<u32> {
+    if !valid_persona_name(persona) { return None; }
+    let pid = std::fs::read_to_string(fez_home().ok()?.join("agents").join(format!("{persona}.pid")))
+        .ok()?.trim().parse().ok()?;
+    (pid_runs_bin(pid, "fez-agent") && desktop_runtime::legacy_persona_matches(pid, persona)).then_some(pid)
 }
 
 /// Same safety contract as the shared TS isSafeWork: word char first,
@@ -2201,53 +2178,77 @@ fn safe_work(value: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'))
 }
 
-/// Spawn the bundled agent runtime for a persona, detached, and record
+/// Spawn the bundled agent runtime for a persona and record
 /// its pid. The desktop's half of the summoner — policy lives in the
 /// shared SummonEngine on the JS side; this is only mechanics.
 #[tauri::command]
-fn spawn_agent(
+async fn spawn_agent(
     persona: String,
     channels: Vec<String>,
     owner: String,
     relays: String,
     repo: Option<String>,
     base_branch: Option<String>,
+    manual: Option<bool>,
 ) -> Result<u32, String> {
-    spawn_agent_process(persona, channels, owner, relays, repo, base_branch)
+    tauri::async_runtime::spawn_blocking(move ||
+        spawn_agent_process(persona, channels, owner, relays, repo, base_branch, manual.unwrap_or(false)))
+        .await.map_err(|e| e.to_string())?
 }
 
-/// THE spawn primitive — every agent process the desktop starts is born
-/// here (Buzz's bottleneck: no caller can bypass validation, env, the
-/// reap thread, the registry, or the sentinel gate by reaching a spawn
-/// some other way). Returns the pid, or 0 when a live sentinel owns
-/// spawning on this machine (deferred: success with no process).
+/// All callers share replacement and reuse under the same lifecycle lock.
 pub(crate) fn spawn_agent_process(
-    persona: String,
-    channels: Vec<String>,
-    owner: String,
-    relays: String,
-    repo: Option<String>,
-    base_branch: Option<String>,
+    persona: String, channels: Vec<String>, owner: String, relays: String,
+    repo: Option<String>, base_branch: Option<String>, manual: bool,
 ) -> Result<u32, String> {
-    if !valid_persona_name(&persona) {
-        return Err("invalid persona name".into());
-    }
-    if let Some(r) = &repo {
-        if !safe_work(r) {
-            return Err(format!("unsafe repo name refused: {r}"));
+    validate_agent_launch(&persona, repo.as_deref(), base_branch.as_deref())?;
+    desktop_runtime::start(owner.clone(), relays.clone())?;
+    let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    spawn_agent_locked(persona, channels, owner, relays, repo, base_branch, manual)
+}
+
+fn validate_agent_launch(persona: &str, repo: Option<&str>, branch: Option<&str>) -> Result<(), String> {
+    if !valid_persona_name(persona) { return Err("invalid persona name".into()); }
+    for (label, value) in [("repo", repo), ("branch", branch)] {
+        if let Some(value) = value {
+            if !safe_work(value) { return Err(format!("unsafe {label} name refused: {value}")); }
         }
     }
-    if let Some(b) = &base_branch {
-        if !safe_work(b) {
-            return Err(format!("unsafe branch name refused: {b}"));
+    Ok(())
+}
+
+fn spawn_agent_locked(
+    persona: String, channels: Vec<String>, owner: String, relays: String,
+    repo: Option<String>, base_branch: Option<String>, manual: bool,
+) -> Result<u32, String> {
+    validate_agent_launch(&persona, repo.as_deref(), base_branch.as_deref())?;
+    desktop_runtime::check_running()?;
+    let existing = load_agents_registry().into_iter()
+        .find(|r| r.persona == persona && r.bin == "fez-agent" && desktop_runtime::row_alive(r))
+        .or_else(|| sentinel_agent_pid(&persona).map(|pid| SpawnedAgent {
+            persona: persona.clone(), channels: channels.clone(), repo: repo.clone(), line: base_branch.clone(), pid,
+            bin: default_bin(), spawned_at: None, process_start: desktop_runtime::process_start(pid), owner: Some(owner.clone()), relays: Some(relays.clone()),
+        }));
+    if let Some(existing) = existing {
+        let pid = existing.pid;
+        if manual {
+            desktop_runtime::stop_process(&existing)?;
+        } else {
+            // Adopt a verified bundled body left by the old sentinel.
+            let mut rows = load_agents_registry();
+            if let Some(row) = rows.iter_mut().find(|r| r.persona == persona && r.bin == "fez-agent" && r.pid == pid) {
+                row.owner.get_or_insert(owner);
+                row.relays.get_or_insert(relays);
+                row.process_start = desktop_runtime::process_start(pid);
+                save_agents_registry(&rows)?;
+            } else {
+                rows.retain(|r| r.persona != persona || r.bin != "fez-agent");
+                rows.push(SpawnedAgent { persona, channels, repo, line: base_branch, pid,
+                    bin: default_bin(), spawned_at: None, process_start: desktop_runtime::process_start(pid), owner: Some(owner), relays: Some(relays) });
+                save_agents_registry(&rows)?;
+            }
+            return Ok(pid);
         }
-    }
-    // One summoner per machine: a live sentinel (TUI world, opt-in fleet
-    // daemon) owns spawning AGENTS. Checked here rather than in the shared
-    // primitive because it is a fact about summoning, not about spawning —
-    // a miner has nothing to do with it (see spawn_extension_agent).
-    if runner_status() {
-        return Ok(0);
     }
     let mut env = vec![
         ("FEZ_AGENT_PERSONA".to_string(), persona.clone()),
@@ -2255,7 +2256,7 @@ pub(crate) fn spawn_agent_process(
         ("FEZ_AGENT_OWNER".to_string(), owner),
         ("FEZ_RELAY".to_string(), relays),
     ];
-    // Run the same installed Codex that onboarding checked, including app-bundled CLIs.
+    if manual { env.push(("FEZ_AGENT_TAKEOVER".into(), "1".into())); }
     if std::env::var_os("CODEX_PATH").is_none() {
         if let Some(path) = harness_path("codex") {
             env.push(("CODEX_PATH".into(), path.to_string_lossy().into_owned()));
@@ -2263,9 +2264,7 @@ pub(crate) fn spawn_agent_process(
     }
     if let Some(r) = &repo {
         env.push(("FEZ_AGENT_REPO".to_string(), r.clone()));
-        if let Some(b) = &base_branch {
-            env.push(("FEZ_AGENT_BASE_BRANCH".to_string(), b.clone()));
-        }
+        if let Some(b) = &base_branch { env.push(("FEZ_AGENT_BASE_BRANCH".to_string(), b.clone())); }
     }
     spawn_tracked_process(persona, "fez-agent", env, channels, repo, base_branch)
 }
@@ -2281,9 +2280,6 @@ pub(crate) fn spawn_agent_process(
 /// key from fez's key store exactly as fez-agent does, which is what keeps
 /// agent keys out of the desktop entirely.
 ///
-/// Deliberately does NOT defer to a live sentinel. The sentinel owns agent
-/// summoning; running a package's own daemon is not summoning, and one that
-/// inherited that gate would silently do nothing and report success.
 #[tauri::command]
 async fn spawn_extension_agent(
     extension: String,
@@ -2292,15 +2288,17 @@ async fn spawn_extension_agent(
     env: Vec<(String, String)>,
 ) -> Result<u32, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        // Scoped to THIS bin: "drift" the chat agent must not block sending
-        // "drift" the miner — one name, two domains, two processes.
-        if agent_is_alive_bin(&name, Some(&bin)) {
-            return Err(format!("{name} is already running — recall it first"));
-        }
         let manifest = fez_home().ok().and_then(|home| package_install::installed_manifest(&extension, &home));
         extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
         let env = checked_env(env)?;
+        desktop_runtime::start(get_pubkey(None)?, String::new())?;
         managed_node::ensure_for_program(&fez_home()?.join("bin").join(&bin))?;
+        let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        desktop_runtime::check_running()?;
+        if let Some(row) = load_agents_registry().into_iter()
+            .find(|r| r.persona == name && r.bin == bin && desktop_runtime::row_alive(r)) {
+            return Ok(row.pid);
+        }
         spawn_tracked_process(name, &bin, env, vec![], None, None)
     })
     .await
@@ -2329,10 +2327,18 @@ async fn run_extension_bin(
         extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
         let program = home.join("bin").join(&bin);
         managed_node::ensure_for_program(&program)?;
-        let output = bounded_command::run(
+        let guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        desktop_runtime::check_running()?;
+        let output = bounded_command::run_with_lifecycle(
             Command::new(&program).args(&args).env("PATH", subprocess_path_env()),
             std::time::Duration::from_secs(120),
             8 * 1024 * 1024,
+            move |pid| { desktop_runtime::track_group(pid); drop(guard); },
+            |pid| {
+                let guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+                desktop_runtime::forget_group(pid);
+                guard
+            },
         ).map_err(|e| format!("{bin}: {e}"))?;
         let code = output.status.code().unwrap_or(-1);
         let stdout = String::from_utf8(output.stdout).map_err(|_| format!("{bin}: stdout was not valid UTF-8"))?;
@@ -2419,7 +2425,7 @@ fn checked_env(env: Vec<(String, String)>) -> Result<Vec<(String, String)>, Stri
     Ok(env)
 }
 
-/// THE spawn primitive: validation, env, detached spawn, reap thread, and the
+/// THE spawn primitive: validation, env, process group, reap thread, and the
 /// pid registry, in one place. Every policy caller goes through here — nothing
 /// reaches Command::spawn directly, which is the point.
 ///
@@ -2457,8 +2463,8 @@ fn spawn_tracked_process(
     repo: Option<String>,
     base_branch: Option<String>,
 ) -> Result<u32, String> {
-    // The name becomes a registry key and a log FILENAME, so it is validated
-    // here — in the primitive — where no caller can skip it.
+    // Caller holds AGENTS_REGISTRY_LOCK through registry commit.
+    desktop_runtime::check_running()?;
     if !valid_persona_name(&name) {
         return Err(format!("invalid name: {name}"));
     }
@@ -2480,11 +2486,13 @@ fn spawn_tracked_process(
     for (k, v) in &env {
         cmd.env(k, v);
     }
-    cmd.stdout(log).stderr(log_err);
+    use std::os::unix::process::CommandExt;
+    cmd.env("FEZ_DESKTOP_PARENT_PID", std::process::id().to_string())
+        .stdin(std::process::Stdio::null()).stdout(log).stderr(log_err).process_group(0);
     let mut child = cmd.spawn().map_err(|e| format!("spawn {bin}: {e}"))?;
     let pid = child.id();
+    desktop_runtime::track_group(pid);
     let exit_key = format!("{name}\x00{bin}");
-    let exit_key2 = exit_key.clone();
     let exit_name = name.clone();
     let exit_bin = bin.to_string();
     {
@@ -2499,7 +2507,18 @@ fn spawn_tracked_process(
     // down WHY it ended, so a row can say "died: no Anthropic key" instead
     // of silently flipping its button back.
     std::thread::spawn(move || {
+        // Observe without reaping: keep the leader PID reserved until group cleanup.
+        while matches!(bounded_command::has_exited(pid), Ok(false)) {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        desktop_runtime::finish_group(pid);
         let status = child.wait();
+        let expected = EXPECTED_STOPS.lock().unwrap_or_else(|p| p.into_inner())
+            .get_or_insert_with(Default::default).remove(&pid);
+        // A replaced body's exit must never overwrite the new body's state.
+        if expected || !load_agents_registry().iter().any(|r|
+            r.persona == exit_name && r.bin == exit_bin && r.pid == pid) { return; }
         let code = status.ok().and_then(|st| st.code());
         let tail = std::fs::read_to_string(&log_path)
             .ok()
@@ -2508,28 +2527,22 @@ fn spawn_tracked_process(
         let reason = match code {
             Some(0) => format!("exited cleanly{}", if tail.is_empty() { String::new() } else { format!(" — {tail}") }),
             Some(c) => format!("exit {c}{}", if tail.is_empty() { String::new() } else { format!(" — {tail}") }),
+            None if exit_bin == "fez-agent" && tail == format!("FEZ_AGENT_STOPPED={pid}") => "exited cleanly".into(),
             None => format!("killed{}", if tail.is_empty() { String::new() } else { format!(" — {tail}") }),
         };
         {
             let mut m = LAST_EXITS.lock().unwrap_or_else(|p| p.into_inner());
             m.get_or_insert_with(Default::default).insert(exit_key, reason.clone());
         }
-        let expected = {
-            let mut m = EXPECTED_STOPS.lock().unwrap_or_else(|p| p.into_inner());
-            m.get_or_insert_with(Default::default).remove(&exit_key2)
-        };
-        if !expected {
-            if let Some(handle) = APP_HANDLE.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
-                use tauri::Emitter;
-                let _ = handle.emit("fez-agent-exit", serde_json::json!({
-                    "name": exit_name, "bin": exit_bin, "reason": reason,
-                }));
-            }
+        if let Some(handle) = APP_HANDLE.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+            use tauri::Emitter;
+            let _ = handle.emit("fez-agent-exit", serde_json::json!({
+                "name": exit_name, "bin": exit_bin, "reason": reason,
+            }));
         }
     });
-    let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let mut rows: Vec<SpawnedAgent> =
-        load_agents_registry().into_iter().filter(|r| r.persona != name).collect();
+    let mut rows: Vec<SpawnedAgent> = load_agents_registry().into_iter()
+        .filter(|r| r.persona != name || r.bin != bin).collect();
     rows.push(SpawnedAgent {
         persona: name,
         channels,
@@ -2537,12 +2550,18 @@ fn spawn_tracked_process(
         line: base_branch,
         pid,
         bin: bin.to_string(),
+        process_start: desktop_runtime::process_start(pid),
+        owner: env.iter().find(|(k, _)| k == "FEZ_AGENT_OWNER").map(|(_, v)| v.clone()),
+        relays: env.iter().find(|(k, _)| k == "FEZ_RELAY").map(|(_, v)| v.clone()),
         spawned_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .ok()
             .map(|d| d.as_secs()),
     });
-    save_agents_registry(&rows);
+    if let Err(e) = save_agents_registry(&rows) {
+        if let Some(row) = rows.iter().find(|r| r.pid == pid) { let _ = desktop_runtime::stop_process(row); }
+        return Err(e);
+    }
     Ok(pid)
 }
 
@@ -2582,44 +2601,27 @@ pub(crate) fn kill_decision(
 
 #[tauri::command]
 fn kill_agent(persona: String, bin: Option<String>) -> Result<bool, String> {
-    // Mark intent BEFORE the signal lands: the reaper races us otherwise.
-    // An unscoped kill can only match one row (kill_decision), but we don't
-    // know its bin yet — mark for every bin this persona has a row under.
-    {
-        let rows = load_agents_registry();
-        let mut m = EXPECTED_STOPS.lock().unwrap_or_else(|p| p.into_inner());
-        let set = m.get_or_insert_with(Default::default);
-        for r in rows.iter().filter(|r| r.persona == persona && bin.as_deref().is_none_or(|b| r.bin == b)) {
-            set.insert(format!("{}\x00{}", r.persona, r.bin));
+    let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut rows = load_agents_registry();
+    let matching: Vec<_> = rows.iter().filter(|r| r.persona == persona && bin.as_deref().is_none_or(|b| r.bin == b)).cloned().collect();
+    desktop_runtime::reject_unresolved_legacy(&matching)?;
+    let mut killed = false;
+    for row in rows.iter().filter(|r| r.persona == persona && bin.as_deref().is_none_or(|b| r.bin == b)) {
+        killed |= desktop_runtime::stop_process(row)?;
+    }
+    // A pre-migration bundled agent can have only its sentinel pid receipt.
+    if bin.as_deref().is_none_or(|b| b == "fez-agent") {
+        if let Some(pid) = sentinel_agent_pid(&persona) {
+            let row = SpawnedAgent { persona: persona.clone(), channels: vec![], repo: None, line: None, pid, bin: default_bin(),
+                spawned_at: None, process_start: desktop_runtime::process_start(pid), owner: None, relays: None };
+            killed |= desktop_runtime::stop_process(&row)?;
         }
     }
-    let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let (killed, rest) = kill_decision(
-        load_agents_registry(),
-        &persona,
-        bin.as_deref(),
-        |r| pid_runs_bin(r.pid, &r.bin),
-        |pid| {
-            std::process::Command::new("/bin/kill")
-                .arg(pid.to_string())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-        },
-    );
-    if let Some(rest) = rest {
-        save_agents_registry(&rest);
-    }
+    rows.retain(|r| r.persona != persona || !bin.as_deref().is_none_or(|b| r.bin == b));
+    save_agents_registry(&rows)?;
     Ok(killed)
 }
 
-/// Alive if EITHER our own registry says so (name-checked pid, not a
-/// bare kill -0 — see pid_runs_bin) OR a sentinel-spawned process for
-/// this persona exists (see sentinel_agent_alive). The second check is
-/// the reverse split-brain fix: a dead sentinel's detached agents keep
-/// running with nothing in the desktop's registry, and without this the
-/// desktop can't tell them apart from "nothing is running" and
-/// double-spawns on top of them.
 #[tauri::command]
 fn agent_last_exit(persona: String, bin: String) -> Option<String> {
     let key = format!("{persona}\x00{bin}");
@@ -2635,12 +2637,6 @@ fn agent_alive(persona: String, bin: Option<String>) -> bool {
     agent_is_alive_bin(&persona, bin.as_deref())
 }
 
-/// Crate-internal liveness (the command above is just its Tauri face) —
-/// registry pid (name-checked) OR a sentinel-style process for the persona.
-pub(crate) fn agent_is_alive(persona: &str) -> bool {
-    agent_is_alive_bin(persona, None)
-}
-
 /// Liveness, optionally scoped to one binary. One persona name can live in
 /// two domains ("drift" the chat agent and "drift" the miner), and a caller
 /// asking "is MY drift running" must not get the other one's yes. The
@@ -2652,8 +2648,8 @@ pub(crate) fn agent_is_alive_bin(persona: &str, bin: Option<&str>) -> bool {
     }
     let registry_alive = load_agents_registry()
         .iter()
-        .any(|r| r.persona == persona && bin.is_none_or(|b| r.bin == b) && pid_runs_bin(r.pid, &r.bin));
-    registry_alive || (bin.is_none_or(|b| b == "fez-agent") && sentinel_agent_alive(persona))
+        .any(|r| r.persona == persona && bin.is_none_or(|b| r.bin == b) && desktop_runtime::row_alive(r));
+    registry_alive || (bin.is_none_or(|b| b == "fez-agent") && sentinel_agent_pid(persona).is_some())
 }
 
 #[tauri::command]
@@ -2676,6 +2672,7 @@ fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), 
         ("pi-acp", true),
         ("fez-relay", false),
         ("fez-sentinel", false),
+        ("fez-background", false),
         ("fez-agent", false),
         ("fez-mcp", false),
     ] {
@@ -2754,7 +2751,17 @@ pub fn run() {
                     .unwrap_or_default(),
             }
         })
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .on_menu_event(|app, event| {
+            if event.id().as_ref() == "fez-show" { desktop_runtime::show(app); }
+            if event.id().as_ref() == "fez-quit" { app.exit(0); }
             if event.id().as_ref() == "fez-check-updates" {
                 use tauri::Emitter;
                 // The webview owns the updater flow (plugin JS API + toasts);
@@ -2763,7 +2770,10 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            desktop_runtime::claim().map_err(std::io::Error::other)?;
             *APP_HANDLE.lock().unwrap_or_else(|p| p.into_inner()) = Some(app.handle().clone());
+            #[cfg(target_os = "macos")]
+            desktop_runtime::macos_quit::install().map_err(std::io::Error::other)?;
             // macOS gets the standard "Check for Updates…" in the app menu,
             // right under About — the default menu with one item inserted.
             #[cfg(target_os = "macos")]
@@ -2777,6 +2787,15 @@ pub fn run() {
                     app_menu.insert(&check, 1)?;
                 }
                 app.set_menu(menu)?;
+            }
+            {
+                use tauri::menu::{Menu, MenuItem};
+                let show = MenuItem::with_id(app, "fez-show", "Show Fez", true, None::<&str>)?;
+                let quit = MenuItem::with_id(app, "fez-quit", "Quit Fez…", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&show, &quit])?;
+                let mut tray = tauri::tray::TrayIconBuilder::new().menu(&menu).tooltip("Fez");
+                if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
+                tray.build(app)?;
             }
             // Off the main thread: the copy moves ~140MB on a version bump,
             // and running it synchronously here held the window back —
@@ -2826,13 +2845,15 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(isolated_panel::guard(tauri::generate_handler![notifications::notify_with_click, isolated_panel::open_isolated_panel, isolated_panel::isolated_panel_request, isolated_panel::isolated_panel_reply, isolated_panel::isolated_panel_host_request, stage_artifact, release_artifact, get_pubkey, ensure_agent_identity, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, codex_brain_status, ensure_codex_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, connect_service, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package]))
+        .invoke_handler(isolated_panel::guard(tauri::generate_handler![notifications::notify_with_click, isolated_panel::open_isolated_panel, isolated_panel::isolated_panel_request, isolated_panel::isolated_panel_reply, isolated_panel::isolated_panel_host_request, stage_artifact, release_artifact, get_pubkey, ensure_agent_identity, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, codex_brain_status, ensure_codex_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, connect_service, desktop_runtime::start_desktop_runtime, desktop_runtime::confirm_desktop_quit, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package]))
         .build(app_context())
         .expect("error while building tauri application")
-        .run(|_app, _event| {
-            // Agents are DETACHED and deliberately outlive the window —
-            // the fleet thesis (an agent mid-task must not die because a
-            // window closed). Stopping one is explicit: kill_agent.
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { api, .. } => desktop_runtime::quit_requested(app, &api),
+            tauri::RunEvent::Exit => desktop_runtime::shutdown(),
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => desktop_runtime::show(app),
+            _ => {},
         });
 }
 

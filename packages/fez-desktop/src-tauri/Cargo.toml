@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
@@ -35,11 +35,12 @@ flate2 = "1"
 tar = "0.4"
 sha2 = "0.11.0"
 hex = "0.4.3"
-# kill -0 probe for the sentinel pidfile — managed_agents defers spawning
-# to a live sentinel instead of double-spawning.
+# Unix process groups and an exclusive desktop ownership lock.
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Reuse Tauri's Objective-C runtime for the native Quit callback it does not expose.
+objc2 = "0.6.4"
 # Already used by tauri-plugin-notification; retain its per-banner click result.
 mac-notification-sys = "0.6.15"
 

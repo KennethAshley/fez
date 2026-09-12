@@ -30,7 +30,7 @@ const PI_VERSION = "0.84.2"; // @earendil-works/pi-coding-agent
 const PI_ACP_VERSION = "0.0.33"; // pi-acp (the ACP↔pi-rpc bridge)
 // The bundle's identity: any shipped binary changing must change this
 // string, or installed apps skip the recopy.
-const BUNDLE_VERSION = `${PI_VERSION}+svc21`; // svc21: deliver assigned work's actual answer to external callers
+const BUNDLE_VERSION = `${PI_VERSION}+svc22`; // svc22: desktop-owned agents and background extension worker
 const PI_REPO = "https://github.com/earendil-works/pi.git";
 // Pin a tag or commit SHA for reproducibility. Defaults to the release
 // tag matching PI_VERSION (the version check below still guards a tag
@@ -66,6 +66,7 @@ if (
   fs.existsSync(path.join(OUT, `pi${EXE}`)) &&
   fs.existsSync(path.join(OUT, `fez-relay${EXE}`)) &&
   fs.existsSync(path.join(OUT, `fez-agent${EXE}`)) &&
+  fs.existsSync(path.join(OUT, `fez-background${EXE}`)) &&
   fs.readFileSync(marker, "utf8").trim() === BUNDLE_VERSION
 ) {
   console.log(`pi-agent already at ${BUNDLE_VERSION} — skipping (FORCE=1 to rebuild)`);
@@ -105,7 +106,7 @@ fs.mkdirSync(WORK, { recursive: true });
 // managed Claude adapter refused every claude-code persona on a machine
 // where the desktop had just verified Claude READY). FORCE=1 re-runs
 // the assembly; FORCE_ALL=1 rebuilds even the pinned externals.
-const OWN = new Set(["fez-relay", "fez-agent", "fez-mcp", "pi-acp"]);
+const OWN = new Set(["fez-relay", "fez-agent", "fez-background", "fez-mcp", "pi-acp"]);
 const reuse = (name) =>
   !OWN.has(name) && !process.env.FORCE_ALL && fs.existsSync(path.join(OUT, `${name}${EXE}`));
 
@@ -169,6 +170,14 @@ if (!reuse("fez-agent")) {
   console.log("  (fez-agent: reusing existing binary)");
 }
 
+// The desktop owns scheduled integrations; this worker has no agent summons.
+console.log(`\n▶ compiling fez-background…`);
+const sentinelPkg = path.resolve(HERE, "..", "..", "fez-sentinel");
+run(
+  `bun build --compile ${JSON.stringify(path.join(sentinelPkg, "src", "desktop.ts"))} --outfile ${JSON.stringify(path.join(WORK, `fez-background${EXE}`))}`,
+  sentinelPkg
+);
+
 // 3c. fez-mcp — the fez_* tool server, as its OWN binary. In dev the
 // agent runs packages/fez-mcp/dist/server.js with its own runtime; the
 // compiled fez-agent can do neither (import.meta.url points into bun's
@@ -196,6 +205,7 @@ copyExec(from("pi") ?? path.join(codingAgent, "dist", `pi${EXE}`), path.join(sta
 copyExec(from("pi-acp") ?? path.join(WORK, `pi-acp${EXE}`), path.join(stage, `pi-acp${EXE}`));
 copyExec(from("fez-relay") ?? path.join(WORK, `fez-relay${EXE}`), path.join(stage, `fez-relay${EXE}`));
 copyExec(from("fez-agent") ?? path.join(WORK, `fez-agent${EXE}`), path.join(stage, `fez-agent${EXE}`));
+copyExec(path.join(WORK, `fez-background${EXE}`), path.join(stage, `fez-background${EXE}`));
 copyExec(from("fez-mcp") ?? path.join(WORK, `fez-mcp${EXE}`), path.join(stage, `fez-mcp${EXE}`));
 const themeSrc = codingAgent ? path.join(codingAgent, "dist", "theme") : path.join(OUT, "theme");
 for (const f of fs.readdirSync(themeSrc)) fs.copyFileSync(path.join(themeSrc, f), path.join(stage, "theme", f));

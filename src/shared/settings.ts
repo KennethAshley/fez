@@ -39,7 +39,8 @@ export interface FezSettings {
    */
   mediaServer?: string;
   /**
-   * Extensions allowed to run scheduled tasks inside the sentinel —
+   * Extensions allowed to run scheduled tasks in the desktop background worker
+   * or optional headless sentinel —
    * written by install/link when a package declares fez.parts.background.
    * An allowlist rather than "load everything": a TUI extension loaded
    * into the always-on process would do its foreground job twice.

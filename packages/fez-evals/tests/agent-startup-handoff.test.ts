@@ -115,9 +115,7 @@ it.each([false, true])("recovers a completion without a mention after restart (a
 it.each(["startup", "live"])("leaves externally handled results to their requester (%s)", async delivery => {
   await enroll(true);
   if (delivery === "live") {
-    await import("../../fez-acp/src/agent.js");
-    // Installed last, after the runtime's channel listener and startup backfill.
-    await vi.waitFor(() => expect(process.listeners("SIGINT").length).toBeGreaterThan(priorSigint.length), { timeout: 10000 });
+    await (await import("../../fez-acp/src/agent.js")).agentStarted;
   }
   const agentKey = Buffer.from(fixture.key, "hex");
   // Older results exercise completion recovery independently of mention backfill.
@@ -154,8 +152,7 @@ it.each(["startup", "live"])("leaves externally handled results to their request
 
 it("dispatches an authorized peer's explicit task without treating a bare p-tag as work", async () => {
   await enroll(true);
-  await import("../../fez-acp/src/agent.js");
-  await vi.waitFor(() => expect(process.listeners("SIGINT").length).toBeGreaterThan(priorSigint.length), { timeout: 10000 });
+  await (await import("../../fez-acp/src/agent.js")).agentStarted;
   const now = Math.floor(Date.now() / 1000);
   const reply = finalizeEvent({ kind: 47103, created_at: now, content: "BARE_REPLY_TAG",
     tags: [["h", channel], ["p", agentPk]] }, coordinatorKey);

@@ -322,7 +322,7 @@ export interface ScheduledTask {
 }
 
 const scheduledTasks: ScheduledTask[] = [];
-/** Drained by the sentinel after loadExtensions(); empty everywhere else. */
+/** Read by the desktop worker or sentinel after loadExtensions(); the TUI only registers tasks. */
 export function registeredScheduledTasks(): readonly ScheduledTask[] {
   return scheduledTasks;
 }
@@ -561,18 +561,26 @@ const EXTENSIONS_DIR = fezHome("extensions");
 export async function loadExtensions(
   dir: string = EXTENSIONS_DIR,
   /**
-   * Load ONLY these extension basenames. The sentinel passes its
+   * Load ONLY these extension basenames. Background hosts pass their
    * background allowlist: an extension written for the TUI would
    * otherwise start doing its foreground job a second time inside the
    * always-on process (duplicate notifications, duplicate summons).
    */
-  only?: readonly string[]
+  only?: readonly string[],
+  /** Readiness handoffs must fail before retiring the previous host if a selected extension cannot load. */
+  options: { strict?: boolean } = {},
 ): Promise<void> {
   let entries: string[];
   try {
     entries = await fs.readdir(dir);
-  } catch {
+  } catch (error) {
+    if (options.strict && only?.length) throw new Error(`Missing background extensions: ${only.join(", ")}`, { cause: error });
     return; // no extensions directory yet — nothing to load
+  }
+  if (options.strict && only) {
+    const available = new Set(entries.filter(entry => /\.(ts|js|mjs)$/.test(entry)).map(entry => entry.replace(/\.(ts|js|mjs)$/, "")));
+    const missing = only.filter(name => !available.has(name));
+    if (missing.length) throw new Error(`Missing background extensions: ${missing.join(", ")}`);
   }
 
   // Bundles are ESM in .js files; without a package.json in the dir,
@@ -603,11 +611,13 @@ export async function loadExtensions(
       const mod = await import(pathToFileURL(filePath).href);
       const extension: FezExtension | undefined = mod.default;
       if (typeof extension !== "function") {
+        if (options.strict) throw new Error(`${entry} has no default export function`);
         console.error(`⚠️  ${entry} has no default export function — skipped`);
         continue;
       }
       await extension(api);
     } catch (err) {
+      if (options.strict) throw new Error(`Failed to load extension ${entry}: ${err instanceof Error ? err.message : err}`, { cause: err });
       console.error(
         `⚠️  Failed to load extension ${entry}:`,
         err instanceof Error ? err.message : err

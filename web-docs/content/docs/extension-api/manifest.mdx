@@ -38,9 +38,9 @@ Field notes:
   installs these; it reports them. The failure it prevents is the quiet one:
   an extension that loads, registers, runs, and silently does nothing.
 - **`parts.background: true`** is an *allowlist entry*, not a default —
-  without it the sentinel never loads your headless part at all. It's
+  without it neither background host loads your headless part. It's
   distinct from the `background` *permission*: you need the part flag to be
-  loaded by the sentinel and the permission for `registerScheduledTask` to
+  loaded by the desktop worker or sentinel and the permission for `registerScheduledTask` to
   work.
 - **`parts.skill`** merges into the user's `settings.json` `mcpServers`. Env
   *names* come from you; *values* the user filled in are always preserved,

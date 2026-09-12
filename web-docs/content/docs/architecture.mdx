@@ -76,17 +76,24 @@ documented in [the Extension API section](/extension-api).
 
 ## The shape of the system
 
+The current source desktop owns local agents and a bundled `fez-background`
+worker. Closing the window keeps them running; explicit Quit stops them.
+The optional sentinel supplies headless operation instead, and refuses
+startup while a verified desktop owner is active. Both task hosts use one
+implementation for extension loading, workspace refresh, and scheduled ticks.
+
 <Mermaid chart={`flowchart TB
   subgraph surfaces["Surfaces"]
     TUI["fez TUI"]
     CLI["fez CLI"]
     GUI["Desktop (Tauri + React)"]
   end
-  RUST["Rust side (desktop)\nkeychain - crypto - explicit key export\nbundled pi agent - local relay spawn"]
+  RUST["Rust side (desktop)\nkeychain - crypto - explicit key export\nagent and background-worker ownership - local relay spawn"]
   BRAIN["@fezchat/client\nderived state + trust rules, no UI"]
   CORE["@fezchat/protocol\nkinds - relay set - DM crypto - harness driving - extension host"]
   RELAY["fez-relay\nNIP-01/11/42/50 + policies\n= the workspace"]
-  SENT["fez-sentinel\nwakes agents on mention/DM"]
+  SENT["optional fez-sentinel\nheadless summons + background tasks"]
+  BG["fez-background\npermitted scheduled extensions"]
   ACP["fez-acp runtime\nsessions - steer/queue - breaker"]
   HARN["harness: claude-code or pi\n(+ fez_* MCP tools, agent-signed)"]
   TUI --> BRAIN
@@ -95,6 +102,9 @@ documented in [the Extension API section](/extension-api).
   GUI -.-> RUST
   BRAIN --> CORE
   CORE -->|"wss://"| RELAY
+  RUST -->|"owns"| ACP
+  RUST -->|"owns"| BG
+  BG --> RELAY
   SENT --> RELAY
   SENT -->|"spawns"| ACP
   ACP --> HARN
@@ -115,9 +125,9 @@ names the doer. Third-party engines register through an extension.
 | `packages/fez-client` | The headless brain: all derived state + trust rules, typed events |
 | `packages/fez-relay` | The relay/workspace: NIP-01/11/42/50, ingest **and** delivery policies, JSONL/SQLite/bring-your-own stores, `--extensions` |
 | `packages/fez-acp` | Standing agent runtime: persistent sessions, steering, queues, retries, circuit breaker, turn metrics |
-| `packages/fez-sentinel` | Always-on watcher: mention/DM summons, notifications, schedules & reminders |
+| `packages/fez-sentinel` | Shared background task host, desktop worker entry, and optional headless watcher for summons, notifications, schedules & reminders |
 | `packages/fez-orchestrator` | `@fez`, the routing agent (any OpenAI-compatible endpoint; `fez router-install` runs the model locally) |
-| `packages/fez-desktop` | Tauri 2 + React over `@fezchat/client` — holds key custody in Rust, bundles the pi agent and a local relay, installs extensions without node/npm, ships signed auto-updating releases |
+| `packages/fez-desktop` | Tauri 2 + React over `@fezchat/client` — holds key custody in Rust, owns local agent and background-worker processes, bundles pi and a local relay, installs extensions without node/npm, ships signed auto-updating releases |
 | `packages/fez-mcp` | The `fez_*` MCP tools every agent session gets: send/read channels, DMs, search, memory, the shared channel doc |
 | `packages/fez-extension-api` | The types-only contract extensions build against |
 | `packages/fez-tui` | Terminal components over pi-tui |
@@ -167,8 +177,8 @@ Worth tracing once, because it demystifies everything:
 
 1. You type `@researcher summarize this thread` in `#general`. Your client
    signs a channel-message event and publishes it to the relay.
-2. The researcher's process (standing, or woken by the sentinel — which
-   first attests the agent's key and rosters it, so its first act isn't
+2. The researcher's process (standing, or woken by the desktop or optional
+   sentinel — the summoner first attests the agent's key and rosters it, so its first act isn't
    refused) holds a subscription. The runtime checks the message is
    genuinely addressed (segment-aware — an @name inside a code fence is not
    a summons), the author is allowed to summon it, the agent↔agent chain

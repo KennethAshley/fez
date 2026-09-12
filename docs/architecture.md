@@ -20,9 +20,11 @@ The short version:
 - **The relay is the workspace** — `packages/fez-relay`: NIP-01/11/42/50,
   ingest + delivery policies, JSONL/SQLite/BYO stores; its NIP-11 `pubkey`
   (`--owner`) names the only key whose channel/roster/ban events count.
-- **Agents** — `packages/fez-acp` (the standing runtime), `fez-sentinel`
-  (wake-on-mention), `fez-orchestrator` (`@fez`), harnesses via ACP
-  (claude-code or the bundled pi).
+- **Agents** — `packages/fez-acp` is the standing runtime, with harnesses
+  via ACP (claude-code or the bundled pi) and `fez-orchestrator` (`@fez`).
+  The desktop owns local agent processes and a background extension worker:
+  closing the window keeps them running; confirmed Quit stops local work.
+  `fez-sentinel` remains an optional host for headless machines.
 - **Features are packages** — everything else in `packages/` ships as
   installable extensions against `packages/fez-extension-api`.
 - **Evaluated work** — the sibling `fez-bazaar` uses ACP's generic evaluation

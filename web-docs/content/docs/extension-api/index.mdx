@@ -18,20 +18,21 @@ default export with an injected API.
 
 | Part | Installs to | Loaded by |
 | --- | --- | --- |
-| `headless` | `~/.fez/extensions/` | the TUI and the sentinel |
+| `headless` | `~/.fez/extensions/` | the TUI; permitted background parts also load in the desktop worker or optional sentinel |
 | `gui` | `~/.fez/gui-extensions/` | the desktop app's webview |
 | `relay` | `~/.fez/relay-extensions/` | a relay started with `--extensions` |
 | `workspace` | `~/.fez/workspace-providers/` | the agent runtime, for `repo:` personas |
 | `skill` | `settings.json` → `mcpServers` | agents at spawn (an MCP server definition) |
-| `background: true` | `settings.json` allowlist | opts your headless part into the always-on sentinel |
+| `background: true` | `settings.json` allowlist | opts scheduled tasks into the desktop worker or optional sentinel |
 
 Plus npm's own `bin` map (→ `~/.fez/bin/`) and `fez.personas` for shipping
 persona packs — [`@fezchat/score-studio`](/reference/packages) is a
 complete extension that ships *only* a persona.
 
-One `fez install` places every part; each host picks up its own. Note that
-headless parts load in the **TUI and sentinel only** — the desktop app loads
-`gui` parts, not headless ones.
+One `fez install` places every part; each host picks up its own. In the current
+source implementation, the desktop webview loads `gui` parts and its separate
+`fez-background` process loads permitted background headless parts. Headless
+commands still belong to the TUI; desktop commands need a `gui` part.
 
 ## The contract package
 

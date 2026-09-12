@@ -15,6 +15,7 @@ import { SPRITES } from "@fezchat/ui";
 import { loadNotifyPrefs, saveNotifyPrefs } from "./notify";
 import { NOTIFY_KINDS, NOTIFY_LABELS, NOTIFY_UNBUILT, type NotifyPrefs } from "./notify-prefs";
 import { SOUND_NAMES, playSound } from "./sounds";
+import { norm } from "./extensions-catalog";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -327,7 +328,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
                 className={section === `ext:${panel.name}` ? "settings-nav-item active" : "settings-nav-item"}
                 onClick={() => setSection(`ext:${panel.name}`)}
               >
-                {panel.name}
+                {norm(panel.name)}
               </button>
             ))}
           </div>
@@ -581,7 +582,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             of the app rather than as a different application. */}
         {openExt ? (
           <div className="ext-settings">
-            <Head title={openExt.name} sub="Installed extension. Everything below is drawn by the extension itself." />
+            <Head title={norm(openExt.name)} sub="Installed extension. Everything below is drawn by the extension itself." />
             <ExtensionPanel panel={openExt} />
           </div>
         ) : section.startsWith("ext:") ? (

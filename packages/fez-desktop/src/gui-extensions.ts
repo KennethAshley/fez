@@ -2,6 +2,7 @@
 import React from "react";
 import { IsolatedPanelLauncher } from "./IsolatedPanelLauncher";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Artifact, FezClient } from "@fezchat/client";
 import { parseQuery } from "@fezchat/client";
@@ -742,6 +743,16 @@ function paint(): void {
   // menus the right way. Without it a light theme keeps dark native
   // widgets and looks broken in exactly the places CSS can't reach.
   document.documentElement.style.colorScheme = scheme;
+  // Match native sidebar material to the app's appearance override. Browser
+  // previews and other platforms retain the opaque CSS fallback.
+  if ("__TAURI_INTERNALS__" in window && window.__TAURI_INTERNALS__ && /Mac/i.test(navigator.platform || navigator.userAgent)) {
+    void getCurrentWindow().setTheme(currentMode() === "system" ? null : scheme)
+      .then(() => { document.documentElement.dataset.vibrancy = "sidebar"; })
+      .catch((error) => {
+        delete document.documentElement.dataset.vibrancy;
+        console.warn("Native sidebar appearance unavailable", error);
+      });
+  }
   if (!pack) {
     // Not registered yet (its extension loads after boot) — wear the
     // cached copy of what this theme resolved to last launch, so the

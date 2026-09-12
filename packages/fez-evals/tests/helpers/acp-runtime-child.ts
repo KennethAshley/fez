@@ -41,10 +41,5 @@ registerHarness({
     };
   },
 });
-await import("../../../fez-acp/src/agent.js");
-const ready = setInterval(() => {
-  if (process.listenerCount("SIGINT")) {
-    clearInterval(ready);
-    process.send?.({ type: "ready" });
-  }
-}, 10);
+await (await import("../../../fez-acp/src/agent.js")).agentStarted;
+process.send?.({ type: "ready" });

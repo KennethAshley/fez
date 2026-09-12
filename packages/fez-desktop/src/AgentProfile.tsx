@@ -380,8 +380,8 @@ export default function AgentProfile({
  * The manual bounce, as state + verb. Tools and brain keys bake in at
  * spawn, so restart is how a running body picks up anything it was born
  * before — and start is the same act from asleep. Both go through the
- * summoner's own sequence (kill_agent, then spawn_agent with the
- * registry's channels), so the button does the thing NOW instead of
+ * native spawn_agent replacement with the registry's channels/work,
+ * so the button does the thing NOW instead of
  * describing what a future mention would do. Without an owner pubkey
  * there is nothing to spawn under, so the row degrades to the old
  * wakes-on-mention prose rather than a button that can't deliver.
@@ -390,9 +390,6 @@ function RestartRow({ name, owner, online }: { name: string; owner?: string; onl
   const [alive, setAlive] = useState<boolean>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  // pid 0 = a live sentinel owns spawning on this machine — nothing
-  // started HERE, and saying "running" would be the lie Ken watched.
-  const [deferred, setDeferred] = useState(false);
   // The one moment the restart button matters: the persona was edited
   // AFTER this body spawned, so the running process is behind the file.
   const [spawnedAt, setSpawnedAt] = useState<number>();
@@ -402,13 +399,13 @@ function RestartRow({ name, owner, online }: { name: string; owner?: string; onl
   const [everStarted, setEverStarted] = useState(true);
   useEffect(() => {
     let live = true;
-    void invoke<boolean>("agent_alive", { persona: name, bin: null })
+    void invoke<boolean>("agent_alive", { persona: name, bin: "fez-agent" })
       .then((a) => { if (live) setAlive(a); })
       .catch(() => { if (live) setAlive(false); });
-    void invoke<{ persona: string; spawned_at?: number }[]>("spawned_agents")
+    void invoke<{ persona: string; bin?: string; spawned_at?: number }[]>("spawned_agents")
       .then((rows) => {
         if (!live) return;
-        const row = rows.find((r) => r.persona === name);
+        const row = rows.find((r) => r.persona === name && (r.bin ?? "fez-agent") === "fez-agent");
         setEverStarted(!!row);
         setSpawnedAt(row?.spawned_at);
       })
@@ -430,14 +427,12 @@ function RestartRow({ name, owner, online }: { name: string; owner?: string; onl
     return () => { unsub(); if (timer) clearInterval(timer); };
   }, [name, online, busy]);
 
-  const bounce = async (wasAlive: boolean) => {
+  const bounce = async () => {
     setBusy(true);
     setError(undefined);
-    setDeferred(false);
     try {
-      if (wasAlive) await invoke("kill_agent", { persona: name, bin: null }).catch(() => {});
-      const rows = await invoke<{ persona: string; channels: string[]; repo?: string; line?: string }[]>("spawned_agents").catch(() => []);
-      const row = rows.find((r) => r.persona === name);
+      const rows = await invoke<{ persona: string; bin?: string; channels: string[]; repo?: string; line?: string }[]>("spawned_agents").catch(() => []);
+      const row = rows.find((r) => r.persona === name && (r.bin ?? "fez-agent") === "fez-agent");
       const pid = await invoke<number>("spawn_agent", {
         persona: name,
         channels: row?.channels ?? [],
@@ -445,9 +440,10 @@ function RestartRow({ name, owner, online }: { name: string; owner?: string; onl
         relays: relaySet().join(","),
         repo: row?.repo ?? null,
         baseBranch: row?.line ?? null,
+        manual: true,
       });
-      if (pid === 0) setDeferred(true);
-      else markWaking(name);
+      if (pid === 0) throw new Error("The agent did not start. Update Fez and try again.");
+      markWaking(name);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -472,7 +468,6 @@ function RestartRow({ name, owner, online }: { name: string; owner?: string; onl
             : `running${since}`
           : everStarted ? "asleep" : "not started yet"}
       </span>
-      {deferred ? <span> — a sentinel owns spawning on this machine; it will pick this up</span> : null}
       {owner ? (
         <>
           {" "}
@@ -483,7 +478,7 @@ function RestartRow({ name, owner, online }: { name: string; owner?: string; onl
                 ? `stop @${name} and start it fresh against the persona as it stands now (tools included)`
                 : `start @${name} now — same as mentioning it, without the message`
             }
-            onClick={() => void bounce(alive)}
+            onClick={() => void bounce()}
           >
             {verb}
           </button>

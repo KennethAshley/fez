@@ -53,6 +53,8 @@ export interface FezManifest {
   bin?: Record<string, string>;
   fez: {
     type: "integration" | "agent" | "extension" | "persona-pack";
+    /** Legacy migration guessed this manifest; its name is not package identity. */
+    reconstructed?: boolean;
     /** What this package says it needs — see extension-permissions.ts. Recorded at install. */
     permissions?: string[];
     /**
@@ -287,6 +289,22 @@ export class PackageManager {
     }
   }
 
+  /** Prevent aliases from splitting a package's data, grants and agent attachments. */
+  assertPackageIdentity(base: string, manifestName?: string): void {
+    const packagesDir = this.home("packages");
+    if (!manifestName || !existsSync(packagesDir)) return;
+    for (const id of fsSync.readdirSync(packagesDir)) {
+      const installed = this.installedManifest(id);
+      if (!installed?.name || installed.fez?.reconstructed) continue;
+      if (id === base && installed.name !== manifestName) {
+        throw new Error(`${base} belongs to ${installed.name}, not ${manifestName} — refusing`);
+      }
+      if (id !== base && installed.name === manifestName) {
+        throw new Error(`${manifestName} is already installed as ${id}; consolidate its data and agent attachments under ${base} before installing.`);
+      }
+    }
+  }
+
   /** The load index: a flat entry pointing into the package dir. Symlink
    *  first; copy when the filesystem refuses — the package dir stays the
    *  record either way. */
@@ -393,10 +411,10 @@ export class PackageManager {
     }
 
     const manifest = await this.readManifest(name);
+    await this.runInstallHook(name, manifest);
     pkg.version = options.version || "latest";
     pkg.type = manifest?.fez?.type || "extension";
     pkg.config = manifest?.fez;
-    await this.runInstallHook(name, manifest);
     await this.recordPermissions(name, manifest);
     await this.saveRegistry();
 
@@ -563,6 +581,7 @@ export class PackageManager {
 
   private async runInstallHook(name: string, manifest: FezManifest | null): Promise<void> {
     if (!manifest || !manifest.fez) return;
+    this.assertPackageIdentity(name, manifest.name);
 
     // Bin-collision check FIRST, before the package dir even exists —
     // installParts can persist a settings write on its own (parts.background:

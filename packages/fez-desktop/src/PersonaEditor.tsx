@@ -79,15 +79,8 @@ export default function PersonaEditor({
     );
   }
 
-  /** Frontmatter keys a RUNNING body bakes in at spawn — tools wire into
-   * the harness session at creation (no live-inject seam through ACP),
-   * and the brain keys pick the process itself. A save that changes one
-   * while the agent is alive must bounce the body, or the editor shows
-   * one truth and the agent lives another: the first wallet attach
-   * shipped exactly that — the persona said `mcpServers: [wallet]` while
-   * the running quill answered "I don't have a wallet". Identity and
-   * memory live on the relay; only the process restarts, and the next
-   * mention respawns it against the persona as saved. */
+  // Launch configuration changes apply on an explicit restart; saving
+  // must not interrupt the work already running with the old configuration.
   const SPAWN_KEYS = ["mcpServers", "skills", "harness", "provider", "model", "effort", "repo", "scope"];
 
   const save = async () => {
@@ -100,10 +93,9 @@ export default function PersonaEditor({
     try {
       await invoke("update_persona", { name, content });
       if (spawnChanged) {
-        const alive = await invoke<boolean>("agent_alive", { persona: name, bin: null }).catch(() => false);
+        const alive = await invoke<boolean>("agent_alive", { persona: name, bin: "fez-agent" }).catch(() => false);
         if (alive) {
-          await invoke("kill_agent", { persona: name, bin: null }).catch(() => {});
-          flash(`@${name} restarted — it picks up these changes on its next reply`);
+          flash(`@${name} saved — restart from its profile to apply these changes. Current work keeps running.`);
         }
       }
       onDone(true);
@@ -357,7 +349,7 @@ export default function PersonaEditor({
         </div>
         {dirty && (
           <div className="field-note">
-            Applies on the next spawn — a running agent finishes its turn on the persona it started with.
+            Applies on the next start. Restart a running agent from its profile when you're ready.
           </div>
         )}
       </div>

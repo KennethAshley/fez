@@ -85,6 +85,7 @@ import { hexToBytes } from "nostr-tools/utils";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 import { piThinkingLevel } from "./thinking.js";
 import { RuntimeRefresh } from "./runtime-refresh.js";
+import { bindAgentLifetime } from "./lifetime.js";
 import { RecentContexts } from "./recent-context.js";
 import { decide, claimOwnership, takeOverActive, shutdownGraced, type OwnershipIO, type PresenceBeat } from "./ownership.js";
 
@@ -731,6 +732,7 @@ async function main() {
   await relay.connect();
   const myPubkey = client.getPubkey();
   const runtimeRefresh = new RuntimeRefresh();
+  let stopRuntimeRefresh: (() => void) | undefined;
   // The existing busy gate serializes turns, including pooled-session reuse.
   let inputOrigin: InputOrigin | undefined;
   const onInput: HarnessInputHandler | undefined = owner ? (form, signal) => requestInput({
@@ -994,10 +996,7 @@ async function main() {
     setInterval(() => {
       if (busy || Date.now() - lastAcceptedAt < idleExitMs) return;
       console.log(`🌙 quiet for ${idleExitRaw} — signing off. Mention @${personaId} to re-summon.`);
-      clearInterval(heartbeat);
-      closeAllSessions();
-      relay.disconnect();
-      process.exit(0);
+      stopAgent();
     }, 60_000).unref?.();
   }
 
@@ -1130,7 +1129,7 @@ async function main() {
       // Supersede-triggered shutdowns are never graced.
       if (shutdownGraced(seen, Date.now() - steadyAt)) return;
       console.error(`@${personaId} superseded by another instance — shutting down`);
-      process.exit(0);
+      stopAgent();
     }
   });
 
@@ -1280,8 +1279,10 @@ async function main() {
     void pooled.session.close();
     sessionPool.delete(scope);
   }
-  function closeAllSessions(): void {
-    for (const key of [...sessionPool.keys()]) dropSession(key);
+  async function closeAllSessions(): Promise<void> {
+    const sessions = [...sessionPool.values()];
+    sessionPool.clear();
+    await Promise.allSettled(sessions.map(({ session }) => session.close()));
   }
   setInterval(() => {
     const now = Date.now();
@@ -1519,7 +1520,7 @@ async function main() {
   }
 
   function drainNext(): void {
-    if (busy || dispatching) return;
+    if (agentStopping || busy || dispatching) return;
     const now = Date.now();
     for (let i = 0; i < scopeOrder.length; i++) {
       const scope = scopeOrder[i];
@@ -1608,6 +1609,16 @@ async function main() {
   let turnAcceptsSteering = false;
   const steerMessages: { event: ChEvent; doc?: DocTurn }[] = [];
 
+  closeAgent = async () => {
+    cancelRequested = true;
+    turnController?.abort();
+    stopRuntimeRefresh?.();
+    clearInterval(heartbeat);
+    relay.disconnect();
+    await closeAllSessions();
+    console.log(`\n🔴 @${personaId} stopped.`);
+  };
+
   // Mention = p-tag (the normal path) OR the agent's own @name in the
   // content. The name fallback exists for the auto-spawn bootstrap: a
   // mention of a not-yet-running agent can't carry its p-tag (the sender
@@ -1630,6 +1641,7 @@ async function main() {
     event: ChEvent,
     { redispatch = false, attempts = 0, doc, steering = [], scope: queuedScope }: ChannelTurnOptions = {}
   ): Promise<void> => {
+      if (agentStopping) return;
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
       if (!channelId || event.pubkey === myPubkey) return;
       if (!redispatch && seenEventIds.has(event.id)) return;
@@ -2183,6 +2195,7 @@ async function main() {
   };
 
   const handleDm = async (dm: DmRumor, fromBacklog = false, attempts = 0, redispatch = false): Promise<void> => {
+    if (agentStopping) return;
     if (seenEventIds.has(dm.id)) return;
     seenEventIds.add(dm.id);
     if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
@@ -2513,8 +2526,8 @@ async function main() {
   // The compiler embeds this value; reading the marker at startup races installation.
   const runningVersion = process.env.FEZ_AGENT_BUILD_VERSION;
   if (runningVersion && process.execve) {
-    runtimeRefresh.watch(path.join(os.homedir(), ".fez", "bin", ".pi-agent-version"), runningVersion,
-      () => !busy && !steerMessages.length && dmLive && !dmBacklog.length &&
+    stopRuntimeRefresh = runtimeRefresh.watch(path.join(os.homedir(), ".fez", "bin", ".pi-agent-version"), runningVersion,
+      () => !agentStopping && !busy && !steerMessages.length && dmLive && !dmBacklog.length &&
         [...pendingByScope.values()].every(items => !items.length) && [...sessionPool.values()].every(session => !session.busy),
       () => {
         // Preserve dedupe across execve so startup backfill cannot repeat a completed turn.
@@ -2525,16 +2538,15 @@ async function main() {
       });
   }
 
-  process.on("SIGINT", () => {
-    clearInterval(heartbeat);
-    closeAllSessions();
-    relay.disconnect();
-    console.log(`\n🔴 @${personaId} stopped.`);
-    process.exit(0);
-  });
 }
 
-main().catch(async (err) => {
+// Watch the parent during startup too, before relay I/O or harness creation.
+let agentStopping = false;
+let closeAgent = async (): Promise<void> => {};
+const stopAgent = bindAgentLifetime(() => { agentStopping = true; return closeAgent(); });
+
+// Hosts can await actual startup; installing a signal handler is not readiness.
+export const agentStarted = main().catch(async (err) => {
   if (process.env.FEZ_EVALUATION_CHECK === "1" || process.env.FEZ_EVALUATION_REQUEST !== undefined) {
     const message = err instanceof EvaluationError ? err.message : "Evaluation startup failed; check the selected runtime and enabled tools";
     console.error(`FEZ_EVALUATION_ERROR=${JSON.stringify({ message, ...(err instanceof EvaluationError ? err.observation : {}) })}`);

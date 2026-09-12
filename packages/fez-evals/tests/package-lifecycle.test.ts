@@ -334,3 +334,49 @@ describe("remove/update are driven by the package dir, not guesses", () => {
     expect(s.extensionBins).toBeUndefined();
   });
 });
+
+describe("package identity survives install aliases", () => {
+  test("install and update refuse a second ID before changing installed parts or settings", async () => {
+    const aliasDir = path.join(tmp, "fez-tidy");
+    git(tmp, `clone -q ${pkgDir} ${aliasDir}`);
+    const aliasManifest = JSON.parse(fs.readFileSync(path.join(aliasDir, "package.json"), "utf-8"));
+    delete aliasManifest.bin; // Duplicate GUI/MCP installs need no colliding binary.
+    fs.writeFileSync(path.join(aliasDir, "package.json"), JSON.stringify(aliasManifest));
+    git(aliasDir, "add package.json"); git(aliasDir, "commit -q -m no-bins");
+    const originalSettings = JSON.stringify(settings.load());
+    const originalManifest = fs.readFileSync(at("packages", "tidy", "package.json"), "utf-8");
+    await expect(pm.install(`git:${aliasDir}`)).rejects.toThrow(/@fezchat\/tidy.*already installed as tidy/);
+    expect(pm.get("fez-tidy")).toBeUndefined();
+    expect(fs.existsSync(at("packages", "fez-tidy"))).toBe(false);
+    expect(fs.existsSync(at("extensions", "fez-tidy.js"))).toBe(false);
+    expect(JSON.stringify(settings.load())).toBe(originalSettings);
+
+    // A duplicate left by an older installer also blocks an update.
+    fs.mkdirSync(at("packages", "fez-tidy"));
+    fs.writeFileSync(at("packages", "fez-tidy", "package.json"), originalManifest);
+    const originalRegistry = fs.readFileSync(at("registry.json"), "utf-8");
+    const originalVersion = pm.get("tidy")?.version;
+    await expect(pm.update("tidy", { version: "blocked" })).rejects.toThrow(/already installed as fez-tidy/);
+    expect(pm.get("tidy")?.version).toBe(originalVersion);
+    expect(fs.readFileSync(at("packages", "tidy", "package.json"), "utf-8")).toBe(originalManifest);
+    expect(fs.readFileSync(at("registry.json"), "utf-8")).toBe(originalRegistry);
+    expect(JSON.stringify(settings.load())).toBe(originalSettings);
+  });
+
+  test("compares full manifest names and ignores reconstructed identities", () => {
+    const guard = new PackageManager({ base: path.join(tmp, "identities"), settings: memSettings() });
+    const put = (id: string, name: string, reconstructed = false) => {
+      fs.mkdirSync(guard.packageDir(id), { recursive: true });
+      fs.writeFileSync(path.join(guard.packageDir(id), "package.json"), JSON.stringify({ name, fez: { reconstructed } }));
+    };
+    put("fez-wallet", "@fezchat/wallet");
+    expect(() => guard.assertPackageIdentity("wallet", "@fezchat/wallet")).toThrow(/already installed as fez-wallet/);
+    expect(() => guard.assertPackageIdentity("wallet", "@other/wallet")).not.toThrow();
+    expect(() => guard.assertPackageIdentity("fez-wallet", "@fezchat/wallet")).not.toThrow();
+    expect(() => guard.assertPackageIdentity("fez-wallet", "@other/wallet")).toThrow(/belongs to @fezchat\/wallet/);
+    put("legacy", "@fezchat/wallet", true);
+    expect(() => guard.assertPackageIdentity("fez-wallet", "@fezchat/wallet")).not.toThrow();
+    put("wallet", "wallet", true);
+    expect(() => guard.assertPackageIdentity("wallet", "@other/wallet")).not.toThrow();
+  });
+});
