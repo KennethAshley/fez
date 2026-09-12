@@ -65,6 +65,7 @@ const EXTENSIONS = [
   "packages/fez-loom",
   "packages/fez-workflows",
   "packages/fez-memory",
+  "packages/fez-ditto",
   "packages/fez-elevenlabs",
   // Late arrivals the list missed — found by a local-vs-npm version audit
   // after a machine wipe: themes was already in the desktop CATALOG (its
