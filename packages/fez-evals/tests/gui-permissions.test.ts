@@ -14,6 +14,26 @@ vi.mock("../../fez-desktop/src/invite-persona", () => ({ invitePersona: vi.fn() 
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
+it("registers isolated page contributions without evaluating extension code or styles in main", async () => {
+  const probe = vi.fn();
+  vi.stubGlobal("__pageProbe", probe);
+  const contributions = { page: { name: "Test view", match: { fence: "test:view", checklistSections: 2 } },
+    messages: [{ linePrefixes: ["Review: ", "Page: "], label: "Scheduled review", summary: "Results appear here.", detailsLabel: "Instructions" }],
+    blocks: [{ language: "test:view", label: "view", template: "```test:view\n```" }] };
+  vi.stubGlobal("__TAURI_INTERNALS__", { invoke: async (command: string) => {
+    if (command === "list_gui_extensions") return [["pages", "globalThis.__pageProbe();", "body { color: magenta; }", null, "isolated-page", contributions]];
+    if (command === "read_extension_grants") return JSON.stringify({ pages: ["ui", "read:channels"] });
+    throw Error(command);
+  } });
+  expect(await reloadGuiExtensions(new FezClient({ pubkey: "owner" } as Wire))).toEqual(["pages"]);
+  expect(probe).not.toHaveBeenCalled();
+  expect(pageViewsFor("```test:view\n```\n").preferred).toBe("Test view");
+  expect(pageViewsFor("## A\n- [ ] task\n## B\n").views.map(v => v.name)).toContain("Test view");
+  expect(messageDecorators().some(d => d.match("Review: Sprint\nPage: sprint\n\nDetails"))).toBe(true);
+  expect(extensionSettingsPanels()).toHaveLength(0);
+  expect([...document.querySelectorAll("style")].some(s => s.textContent?.includes("magenta"))).toBe(false);
+});
+
 it.each([true, false])("never evaluates the isolated bundle in main; launcher requires ui (granted: %s)", async (hasUi) => {
   const probe = vi.fn();
   vi.stubGlobal("__isolatedProbe", probe);

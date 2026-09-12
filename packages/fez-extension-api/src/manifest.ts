@@ -30,7 +30,9 @@ export interface FezManifest {
     /** Channel-source settings shortcut, declared without evaluating an isolated GUI bundle. */
     settingsSource?: string;
     /** Requires the separate settings runner; unsupported hosts must not execute this GUI part in main. */
-    guiRuntime?: "isolated-settings";
+    guiRuntime?: "isolated-settings" | "isolated-page" | "isolated" | "declarative";
+    /** Declarative main-window surfaces; the GUI bundle only executes in the isolated page. */
+    guiContributions?: IsolatedPageContributions | IsolatedCustomContributions;
     /** What this package asks for — the install dialog shows these. See the permissions reference. */
     permissions?: string[];
     /**
@@ -40,6 +42,36 @@ export interface FezManifest {
      */
     minFezVersion?: string;
   };
+}
+
+/** Host shells select a custom view using data; its callbacks execute in the child. */
+export interface IsolatedCustomContributions {
+  settings?: true;
+  nav?: { name: string; glyph: string; label: string; channel?: { source?: string; meta?: Record<string, string> }; tabs?: { id: string; label: string }[]; summary?: true }[];
+  threads?: { name: string; label: string; match: CustomContentMatch }[];
+  messages?: { label: string; match: CustomContentMatch }[];
+  profiles?: { label: string }[];
+}
+
+export interface CustomContentMatch {
+  contains?: string;
+  linePrefix?: string;
+  excludeContains?: string[];
+  hasReceipts?: true;
+  token?: { alphabet: "base58"; prefix?: string; min: number; max: number; excludeFences?: true };
+}
+
+export interface IsolatedPageContributions {
+  page: { name: string; match: PageDocumentMatch };
+  messages?: { linePrefixes: string[]; label: string; summary: string; detailsLabel: string }[];
+  blocks?: { language: string; label: string; description?: string; keywords?: string[]; template: string }[];
+}
+
+export interface PageDocumentMatch {
+  /** An explicit fenced block selects this view by default. */
+  fence: string;
+  /** Otherwise offer a toggle for at least this many level-two sections containing a task list. */
+  checklistSections?: number;
 }
 
 /**

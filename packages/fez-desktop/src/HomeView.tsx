@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { FezClient, WireEvent } from "@fezchat/client";
+import type { FezClient, PendingInput, WireEvent } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
 import { OpenLoops } from "./LoopsView";
 import Avatar from "./Avatar";
@@ -32,6 +32,7 @@ export default function HomeView({
   scan,
   onOpenChannel,
   onOpenDm,
+  onOpenQuestion,
 }: {
   client: FezClient;
   wire: BrowserWire;
@@ -39,6 +40,7 @@ export default function HomeView({
   scan?: { msgs: WireEvent[]; answered: Set<string> };
   onOpenChannel: (channelId: string, msgId?: string) => void;
   onOpenDm: (convoKey: string) => void;
+  onOpenQuestion: (request: PendingInput) => void;
 }) {
   const [mentions, setMentions] = useState<MentionRow[] | undefined>();
 
@@ -94,12 +96,14 @@ export default function HomeView({
   return (
     <main className="main">
       <header className="topbar">
-        <div className="topbar-row">▤ inbox</div>
+        <div className="topbar-row">▤ inbox
+          {client.inputHistory().length > 0 && <button className="thread-exit" onClick={() => window.dispatchEvent(new CustomEvent("fez-show-questions", { detail: { view: "history" } }))}>Question history</button>}
+        </div>
       </header>
       <div className="timeline home">
         {/* Decisions first: everything else here can wait, these are
             blocking an agent right now. */}
-        <OpenLoops client={client} scan={scan} onOpenMessage={onOpenChannel} />
+        <OpenLoops client={client} scan={scan} onOpenMessage={onOpenChannel} onOpenQuestion={onOpenQuestion} />
 
         <div className="home-section">mentions</div>
         {!mentions && <div className="pane-empty">loading your inbox…</div>}

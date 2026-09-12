@@ -1,6 +1,6 @@
 //! Manual macOS/WKWebView check. Run with `--features tauri/custom-protocol`
 //! for bundled assets, or against `vite preview --port 4318` without it.
-//! Installs the shipped voice panel under a different name to prove generic routing.
+//! Installs a generic settings fixture to prove scoped routing.
 //! Uses temporary extension state and private browser stores; no keychain or agents.
 #[allow(dead_code)]
 #[path = "../src/package_install.rs"]
@@ -25,7 +25,11 @@ fn main() {
     let package = home.path().join("packages/voice-settings-probe");
     std::fs::create_dir_all(&package).unwrap();
     std::fs::write(package.join("package.json"), r#"{"fez":{"parts":{"gui":"gui.js"}}}"#).unwrap();
-    let bundle = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fez-elevenlabs/dist/gui.js")).unwrap();
+    let bundle = r#"var __fezExt={default:api=>{
+      api.registerSettingsPanel('Fixture',()=>api.React.createElement('select',{
+        'aria-label':'Fixture preference',defaultValue:'default',onChange:event=>void api.prefs.set('voices',{fez:event.target.value})
+      },api.React.createElement('option',{value:'default'},'Default'),api.React.createElement('option',{value:'CwhRBWXzGAHq8TQ4Fs17'},'Choice')));
+    }};"#.to_owned();
     std::fs::write(package.join("gui.js"), bundle + &r#"
 const original = __fezExt.default;
 __fezExt = {default: api => {
@@ -86,10 +90,10 @@ __fezExt = {default: api => {
     let app = tauri::Builder::default()
         .channel_interceptor(isolated_panel::channel_message)
         .manage(isolated_panel::PanelHost::new(home.path().to_owned()))
-        .invoke_handler(isolated_panel::guard(tauri::generate_handler![probe_channel, isolated_panel::open_isolated_panel, isolated_panel::isolated_panel_request, isolated_panel::isolated_panel_host_request, isolated_panel::isolated_panel_reply]))
+        .invoke_handler(isolated_panel::guard(tauri::generate_handler![probe_channel, isolated_panel::open_isolated_panel, isolated_panel::update_isolated_panel, isolated_panel::close_isolated_panel, isolated_panel::isolated_panel_request, isolated_panel::isolated_panel_host_request, isolated_panel::isolated_panel_reply]))
         .setup(move |app| {
             tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("isolated-panel.html".into()))
-                .visible(false).incognito(true)
+                .visible(false).inner_size(800.0,600.0).incognito(true)
                 .initialization_script(r#"
                     window.__fezIsolationProbe = 'main';
                     localStorage.setItem('__fezIsolationProbe','main');
@@ -125,7 +129,7 @@ __fezExt = {default: api => {
                             } catch (error) { result = {Err:String(error)}; }
                             await ipc.invoke('isolated_panel_reply', {id,result});
                         });
-                        void ipc.invoke('open_isolated_panel', {name:'voice-settings-probe',agents:[['a'.repeat(64),'fez']],hostRequests:'__CHANNEL__:'+callback});
+                        void ipc.invoke('open_isolated_panel', {name:'voice-settings-probe',agents:[['a'.repeat(64),'fez']],hostRequests:'__CHANNEL__:'+callback,bounds:{x:20,y:20,width:600,height:400},appearance:'--bg0: #123456; color-scheme: dark;'});
                     }, {once:true});
                 "#)
                 .build()?;
@@ -134,7 +138,7 @@ __fezExt = {default: api => {
                 for attempt in 0..150 {
                     std::thread::sleep(std::time::Duration::from_millis(200));
                     if attempt == 75 {
-                        if let Some(panel) = handle.get_webview_window("extension-panel-1") {
+                        if let Some(panel) = handle.get_webview("extension-panel-1") {
                             let _ = panel.eval("window.__TAURI_INTERNALS__.invoke('isolated_panel_request',{request:{op:'set_preference',key:'diagnostic',value:document.body.innerText}})");
                         }
                     }
@@ -143,10 +147,11 @@ __fezExt = {default: api => {
                     if let Some(probe) = probe {
                         // Let the attempted navigation reach the native decision handler.
                         std::thread::sleep(std::time::Duration::from_millis(300));
-                        let panel = handle.get_webview_window("extension-panel-1").unwrap();
+                        let panel = handle.get_webview("extension-panel-1").unwrap();
                         let url = panel.url().unwrap();
                         let rtc_traffic = stun.recv(&mut [0; 2048]).is_ok();
-                        let passed = probe["heading"] == "voice-settings-probe settings"
+                        let passed = handle.windows().len() == 1 && panel.window().label() == "main"
+                            && probe["heading"] == "voice-settings-probe settings"
                             && probe["voices"] == json!({"fez":"CwhRBWXzGAHq8TQ4Fs17"})
                             && probe["hostConfig"] == true && probe["hostSecret"] == true
                             && probe["otherConfig"].as_str().is_some_and(|s| s.contains("another extension"))

@@ -27,10 +27,6 @@
 
 type ThemeVars = Record<string, string>;
 
-interface ThemeApi {
-  registerTheme(name: string, vars: { light: ThemeVars; dark: ThemeVars }): void;
-}
-
 const MONO = 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace';
 
 /** The five tokens every pack repeats mechanically. */
@@ -41,9 +37,9 @@ const common = (vars: { accent: string; green: string; red: string }) => ({
   "--font-mono": MONO,
 });
 
-export default function activate(api: ThemeApi): void {
+const themes: Record<string, { light: ThemeVars; dark: ThemeVars }> = {
   // ── Dracula / Alucard ──────────────────────────────────────────────
-  api.registerTheme("dracula", {
+  "dracula": {
     dark: {
       "--bg0": "#282a36",
       "--field": "#282a36",
@@ -83,10 +79,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#644ac9", green: "#14710a", red: "#cb3a2a" }),
     },
-  });
+  },
 
   // ── Nord ───────────────────────────────────────────────────────────
-  api.registerTheme("nord", {
+  "nord": {
     dark: {
       "--bg0": "#2e3440",
       "--field": "#2e3440",
@@ -128,10 +124,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#5e81ac", green: "#5e7a4a", red: "#a54049" }),
     },
-  });
+  },
 
   // ── Catppuccin (Mocha / Latte) ─────────────────────────────────────
-  api.registerTheme("catppuccin", {
+  "catppuccin": {
     dark: {
       "--bg0": "#1e1e2e", // base
       "--field": "#1e1e2e",
@@ -170,10 +166,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#8839ef", green: "#40a02b", red: "#d20f39" }),
     },
-  });
+  },
 
   // ── Solarized ──────────────────────────────────────────────────────
-  api.registerTheme("solarized", {
+  "solarized": {
     dark: {
       "--bg0": "#002b36", // base03
       "--field": "#002b36",
@@ -212,10 +208,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#268bd2", green: "#859900", red: "#dc322f" }),
     },
-  });
+  },
 
   // ── One Dark / One Light (Atom) ────────────────────────────────────
-  api.registerTheme("one", {
+  "one": {
     dark: {
       "--bg0": "#282c34",
       "--field": "#282c34",
@@ -254,10 +250,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#4078f2", green: "#50a14f", red: "#e45649" }),
     },
-  });
+  },
 
   // ── Tokyo Night (Night / Day) ──────────────────────────────────────
-  api.registerTheme("tokyo-night", {
+  "tokyo-night": {
     dark: {
       "--bg0": "#1a1b26",
       "--field": "#1a1b26",
@@ -296,10 +292,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#2e7de9", green: "#587539", red: "#f52a65" }),
     },
-  });
+  },
 
   // ── GitHub ─────────────────────────────────────────────────────────
-  api.registerTheme("github", {
+  "github": {
     dark: {
       "--bg0": "#0d1117", // canvas.default
       "--field": "#0d1117",
@@ -338,12 +334,12 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#0969da", green: "#1a7f37", red: "#cf222e" }),
     },
-  });
+  },
 
   // ── Rosé Pine (Main / Dawn) ────────────────────────────────────────
   // No literal green in this palette: pine plays status-green, foam
   // plays the live phosphor. That's the theme's own vocabulary.
-  api.registerTheme("rose-pine", {
+  "rose-pine": {
     dark: {
       "--bg0": "#191724", // base
       "--field": "#191724",
@@ -382,10 +378,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px", // foam
       ...common({ accent: "#d7827e", green: "#286983", red: "#b4637a" }),
     },
-  });
+  },
 
   // ── Everforest (Medium / Light) ────────────────────────────────────
-  api.registerTheme("everforest", {
+  "everforest": {
     dark: {
       "--bg0": "#2d353b",
       "--field": "#2d353b",
@@ -424,13 +420,13 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px", // aqua
       ...common({ accent: "#8da101", green: "#8da101", red: "#f85552" }),
     },
-  });
+  },
 
   // ── Monokai ────────────────────────────────────────────────────────
   // The classic TextMate/Sublime palette as VS Code ships it (MIT). No
   // official light exists; the day side is the palette re-inked on warm
   // paper — every value derived and marked.
-  api.registerTheme("monokai", {
+  "monokai": {
     dark: {
       "--bg0": "#272822",
       "--field": "#272822",
@@ -469,10 +465,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#d81b60", green: "#6b9500", red: "#c7434b" }),
     },
-  });
+  },
 
   // ── Night Owl / Light Owl (sdras) ──────────────────────────────────
-  api.registerTheme("night-owl", {
+  "night-owl": {
     dark: {
       "--bg0": "#011627",
       "--field": "#011627",
@@ -512,10 +508,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#994cc3", green: "#2aa298", red: "#e64d49" }),
     },
-  });
+  },
 
   // ── Ayu (Dark / Light) ─────────────────────────────────────────────
-  api.registerTheme("ayu", {
+  "ayu": {
     dark: {
       "--bg0": "#0b0e14",
       "--field": "#0b0e14",
@@ -554,10 +550,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#e6820c", green: "#86b300", red: "#e65050" }),
     },
-  });
+  },
 
   // ── Palenight / Material Lighter ───────────────────────────────────
-  api.registerTheme("palenight", {
+  "palenight": {
     dark: {
       "--bg0": "#292d3e",
       "--field": "#292d3e",
@@ -597,10 +593,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#7c4dff", green: "#91b859", red: "#e53935" }),
     },
-  });
+  },
 
   // ── Horizon (Dark / Bright) ────────────────────────────────────────
-  api.registerTheme("horizon", {
+  "horizon": {
     dark: {
       "--bg0": "#1c1e26",
       "--field": "#2e303e", // its own input ground
@@ -640,10 +636,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px", // derived: cyan darkened
       ...common({ accent: "#e84a72", green: "#0e9e6e", red: "#d6335f" }),
     },
-  });
+  },
 
   // ── SynthWave '84 (Robb Owen) ──────────────────────────────────────
-  api.registerTheme("synthwave-84", {
+  "synthwave-84": {
     dark: {
       "--bg0": "#262335",
       "--field": "#262335",
@@ -684,10 +680,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#c9256e", green: "#0b8a5f", red: "#d1244a" }),
     },
-  });
+  },
 
   // ── Cobalt2 (Wes Bos) ──────────────────────────────────────────────
-  api.registerTheme("cobalt2", {
+  "cobalt2": {
     dark: {
       "--bg0": "#193549",
       "--field": "#193549",
@@ -728,10 +724,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#b78a00", green: "#2b8a00", red: "#d6336c" }),
     },
-  });
+  },
 
   // ── Zenburn ────────────────────────────────────────────────────────
-  api.registerTheme("zenburn", {
+  "zenburn": {
     dark: {
       "--bg0": "#3f3f3f",
       "--field": "#3f3f3f",
@@ -772,10 +768,10 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px",
       ...common({ accent: "#8f7f3f", green: "#5f7f5f", red: "#a05656" }),
     },
-  });
+  },
 
   // ── Kanagawa (Wave / Lotus) ────────────────────────────────────────
-  api.registerTheme("kanagawa", {
+  "kanagawa": {
     dark: {
       "--bg0": "#1f1f28", // sumiInk1
       "--field": "#1f1f28",
@@ -815,12 +811,12 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px", // lotusAqua
       ...common({ accent: "#4d699b", green: "#6f894e", red: "#c84053" }),
     },
-  });
+  },
 
   // ── Flexoki (Steph Ango) ───────────────────────────────────────────
   // Dark uses the 400-weight accents, light the 600s — the spec's own
   // pairing for its inky paper idea.
-  api.registerTheme("flexoki", {
+  "flexoki": {
     dark: {
       "--bg0": "#100f0f", // black
       "--field": "#100f0f",
@@ -859,5 +855,7 @@ export default function activate(api: ThemeApi): void {
       "--measure-scan": "1100px", // cyan-600
       ...common({ accent: "#205ea6", green: "#66800b", red: "#af3029" }),
     },
-  });
-}
+  },
+};
+
+export default { themes };

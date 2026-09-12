@@ -1,4 +1,4 @@
-import React, { useEffect, useReducer, useRef, useState } from "react";
+import React, { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { dmConvoKey, INPUT_WAIT_MS, validateInputResponse, type FezClient, type InputAnswers, type InputResponse, type PendingInput, type InputHistoryEntry } from "@fezchat/client";
 import { notifyEvent } from "./notify";
 
@@ -158,18 +158,20 @@ export function InputCard({ request, ownerPk, name, onAnswer, response, awaiting
 
 export default function AgentInput({ client, onOpen }: { client: FezClient; onOpen?: (request: PendingInput) => void }) {
   const [, render] = useReducer(n => n + 1, 0);
-  const [open, setOpen] = useState(() => client.pendingInputs().some(request => !request.origin));
+  const [open, setOpen] = useState(false);
   const [fallbackId, setFallbackId] = useState<string>();
   const [tab, setTab] = useState<"waiting" | "history">("waiting");
   const [loading, setLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const panel = useRef<HTMLElement>(null);
-  const loadHistory = async () => {
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const close = () => { setOpen(false); returnFocus.current?.focus(); };
+  const loadHistory = useCallback(async () => {
     setTab("history"); setLoading(true); setHistoryError("");
     try { await client.loadInputHistory(); }
     catch { setHistoryError("History could not load. Try again."); }
     finally { setLoading(false); }
-  };
+  }, [client]);
   useEffect(() => {
     pruneDrafts(client);
     void client.loadInputHistory().catch(() => setHistoryError("History could not load. Try again."));
@@ -180,9 +182,8 @@ export default function AgentInput({ client, onOpen }: { client: FezClient; onOp
       for (const id of known) if (!requests.some(request => request.id === id)) removeDraft(draftPrefix(client.pubkey) + id);
       for (const request of requests) {
         if (known.has(request.id)) continue;
-        if (!request.origin) setOpen(true);
         notifyEvent({ key: `question:${request.id}`, kind: "needs_action", title: `${client.displayName(request.agentPk)} needs your input`,
-          body: "Open Fez to answer privately.", label: "Questions", target: { kind: "questions", ...(request.origin ? { id: request.id } : {}) } });
+          body: "Open Fez to answer privately.", label: "Inbox", target: { kind: "questions", id: request.id } });
       }
       known = new Set(requests.map(request => request.id));
       render();
@@ -190,22 +191,21 @@ export default function AgentInput({ client, onOpen }: { client: FezClient; onOp
     const offChannels = client.on("channelsChanged", render);
     const show = (event: Event) => {
       const id: unknown = "detail" in event ? event.detail : undefined;
+      const history = typeof id === "object" && id !== null && "view" in id && id.view === "history";
+      if (!panel.current?.contains(document.activeElement)) returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setFallbackId(typeof id === "string" ? id : undefined);
-      setOpen(true); setTab(typeof id === "string" && !client.pendingInputs().some(r => r.id === id) ? "history" : "waiting");
+      setOpen(true);
+      if (history) void loadHistory();
+      else setTab(typeof id === "string" && !client.pendingInputs().some(r => r.id === id) ? "history" : "waiting");
       setTimeout(() => panel.current?.focus(), 0);
     };
     window.addEventListener("fez-show-questions", show);
     return () => { offInputs(); offChannels(); window.removeEventListener("fez-show-questions", show); };
-  }, [client]);
+  }, [client, loadHistory]);
   const requests = client.pendingInputs();
   const history = tab === "history" ? client.inputHistory() : [];
-  return <>
-    <button className="channel home-link" aria-label="Questions" aria-expanded={open} aria-controls="agent-questions-panel" onClick={() => setOpen(value => !value)}>
-      <span className="nav-glyph">?</span> questions
-      {requests.length > 0 && <span className="badge" aria-label={`${requests.length} pending question request${requests.length === 1 ? "" : "s"}`}>{requests.length}</span>}
-    </button>
-    <aside ref={panel} id="agent-questions-panel" className="agent-input" aria-label="Agent questions" tabIndex={-1} hidden={!open} onKeyDown={event => { if (event.key === "Escape") setOpen(false); }}>
-      <header className="input-panel-header"><strong>Questions</strong><button aria-label="Close questions" onClick={() => setOpen(false)}>×</button></header>
+  return <aside ref={panel} id="agent-questions-panel" className="agent-input" aria-label="Agent questions" tabIndex={-1} hidden={!open} onKeyDown={event => { if (event.key === "Escape") close(); }}>
+      <header className="input-panel-header"><strong>Questions</strong><button aria-label="Close questions" onClick={close}>×</button></header>
       <nav className="input-tabs" aria-label="Question views">
         <button aria-pressed={tab === "waiting"} onClick={() => setTab("waiting")}>Waiting{requests.length ? ` (${requests.length})` : ""}</button>
         <button aria-pressed={tab === "history"} onClick={() => void loadHistory()}>History</button>
@@ -228,8 +228,7 @@ export default function AgentInput({ client, onOpen }: { client: FezClient; onOp
         </React.Fragment>)}
         {!loading && !historyError && history.length === 0 && <p>No question history yet.</p>}
       </div>}
-    </aside>
-  </>;
+    </aside>;
 }
 
 type Conversation = { kind: "channel"; channelId: string; rootId?: string } | { kind: "dm"; convoKey: string };

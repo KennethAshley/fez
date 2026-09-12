@@ -36,6 +36,18 @@ async function load(code = "") {
   return { host, api };
 }
 
+it("replaces a structured message body while preserving additive decorations and the plain-text fallback", async () => {
+  const { host, api } = await load();
+  api.registerMessageDecorator(() => true, () => "receipt");
+  api.registerMessageDecorator(content => content === "structured", () => "summary", { replaceBody: true });
+  api.registerMessageDecorator(content => content === "unavailable", () => null, { replaceBody: true });
+  const props = { content: "structured", msgId: "m", channelId: "c", authorName: "You" };
+  expect(host.messagePresentation(props)).toEqual({ body: "summary", decorations: ["receipt"] });
+  for (const content of ["ordinary", "unavailable"]) {
+    expect(host.messagePresentation({ ...props, content })).toEqual({ body: undefined, decorations: ["receipt"] });
+  }
+});
+
 it("keeps the binding live and removes workspace tabs/summary with their extension", async () => {
   const { host, api } = await load();
   let channelId: string | undefined = "room-a";

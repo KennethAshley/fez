@@ -4,7 +4,6 @@ import React, { act } from "../../fez-desktop/node_modules/react/index.js";
 import { createRoot } from "../../fez-desktop/node_modules/react-dom/client.js";
 import { FezClient, type Wire } from "../../fez-client/src/index.js";
 import SettingsPane from "../../fez-desktop/src/SettingsPane.js";
-import { IsolatedPanelLauncher } from "../../fez-desktop/src/IsolatedPanelLauncher.js";
 import { extensionSettingsPanels, registerSettingsPanel } from "../../fez-desktop/src/gui-extensions.js";
 import type { BrowserWire } from "../../fez-desktop/src/wire.js";
 
@@ -40,16 +39,4 @@ it("shows friendly settings labels while selecting the original registered panel
   expect(renders[1]).toHaveBeenCalled();
   expect(renders[0]).not.toHaveBeenCalled();
   expect(renders[2]).not.toHaveBeenCalled();
-});
-
-it("shows a friendly launcher label and sends the original name to the native panel", async () => {
-  const invoke = vi.fn(async () => undefined);
-  vi.stubGlobal("__TAURI_INTERNALS__", { invoke, transformCallback: () => 1 });
-  await act(async () => root.render(React.createElement(IsolatedPanelLauncher, { name: "fez-browser", client })));
-  const button = document.querySelector("button")!;
-  expect(button.textContent).toBe("Open browser settings");
-
-  await act(async () => button.click());
-  expect(invoke).toHaveBeenCalledWith("open_isolated_panel", expect.objectContaining({ name: "fez-browser", agents: [] }), undefined);
-  expect(document.querySelector('[role="alert"]')).toBeNull();
 });

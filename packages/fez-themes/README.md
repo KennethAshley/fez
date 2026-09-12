@@ -3,6 +3,11 @@
 The classics, worn by fez. Install once, pick in **Settings → theme** —
 every pack is a light/dark pair, so "auto" follows your OS.
 
+The GUI part is declarative data: `npm run build` writes `dist/gui.json`
+with `{ "themes": { "name": { "light": {}, "dark": {} } } }`. Fez validates
+and registers these token maps without running extension JavaScript or CSS.
+The annotated palette source stays in `src/gui.ts`; no per-theme UI is needed.
+
 | Theme | Dark side | Light side | Upstream | License |
 |---|---|---|---|---|
 | `dracula` | Dracula | Alucard (official) | [draculatheme.com](https://draculatheme.com) | MIT |

@@ -1,7 +1,7 @@
 {
   "name": "@fezchat/mining",
-  "version": "0.1.4",
-  "description": "Mine any Bittensor subnet from fez \u2014 harness, CLI, and GUI.",
+  "version": "0.1.5",
+  "description": "Mine any Bittensor subnet from fez — harness, CLI, and GUI.",
   "type": "module",
   "bin": {
     "fez-mine": "dist/cli.js",
@@ -34,7 +34,42 @@
       "publish",
       "network:.opentensor.ai"
     ],
-    "minFezVersion": "0.2.1"
+    "minFezVersion": "0.2.1",
+    "guiRuntime": "isolated",
+    "guiContributions": {
+      "nav": [
+        {
+          "name": "mining",
+          "glyph": "⛏",
+          "label": "Mining",
+          "channel": {
+            "meta": {
+              "miningWorkspace": "true"
+            }
+          },
+          "tabs": [
+            {
+              "id": "miners",
+              "label": "Miners"
+            },
+            {
+              "id": "subnets",
+              "label": "Subnets"
+            }
+          ],
+          "summary": true
+        }
+      ],
+      "threads": [
+        {
+          "name": "mining-miner",
+          "label": "Manage miner",
+          "match": {
+            "linePrefix": "⛏ mining · netuid "
+          }
+        }
+      ]
+    }
   },
   "dependencies": {
     "@fezchat/bittensor": "file:../fez-bittensor",

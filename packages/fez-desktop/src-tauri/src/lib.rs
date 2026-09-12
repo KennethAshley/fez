@@ -537,13 +537,15 @@ fn keychain_presence(code: Option<i32>) -> Result<bool, String> {
 /// webview imports each as an ES module and calls its activate(api) — the
 /// GUI's version of the TUI's extension loader.
 #[tauri::command]
-fn list_gui_extensions() -> Result<Vec<(String, String, String, Option<String>, Option<String>)>, String> {
+fn list_gui_extensions() -> Result<Vec<(String, String, String, Option<String>, Option<String>, Option<serde_json::Value>)>, String> {
     let home_path = fez_home()?;
     Ok(package_install::gui_parts(&home_path).into_iter().map(|(name, code, styles, runtime)| {
         let source = package_install::installed_manifest(&name, &home_path)
             .and_then(|manifest| manifest.pointer("/fez/settingsSource").and_then(serde_json::Value::as_str)
                 .filter(|source| valid_secret_name(source)).map(str::to_owned));
-        (name, code, styles, source, runtime)
+        let contributions = package_install::installed_manifest(&name, &home_path)
+            .and_then(|manifest| manifest.pointer("/fez/guiContributions").cloned());
+        (name, code, styles, source, runtime, contributions)
     }).collect())
 }
 
@@ -2367,50 +2369,7 @@ fn settings_value() -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
-/// Whether `extension` may start `bin`: the `processes` grant from
-/// settings.json, the `bin` claim from the package's own manifest.
-///
-/// `extension` arrives from the webview and is NOT trustworthy — a gui part
-/// runs in the page and can invoke this command directly, naming whichever
-/// extension it likes. Both checks therefore live here rather than in the
-/// loader that hands out the capability. The named extension must itself hold
-/// `processes` — that's the user's grant, and settings.json is where it
-/// belongs. But whether it SHIPPED `bin` is not a grant anyone makes; it's a
-/// fact about the package on disk, so it's read from `manifest` (the
-/// package's own `package.json`, loaded by the caller via
-/// `installed_manifest`) rather than from a settings cache anyone could
-/// hand-edit. Claiming to be someone else buys nothing that extension could
-/// not already do. What no caller can reach, whatever it claims to be, is a
-/// binary no installed package's manifest lists.
-fn extension_may_spawn(
-    settings: &serde_json::Value,
-    manifest: Option<&serde_json::Value>,
-    extension: &str,
-    bin: &str,
-) -> Result<(), String> {
-    let holds_processes = settings
-        .pointer("/extensionPermissions")
-        .and_then(|v| v.get(extension))
-        .and_then(|v| v.as_array())
-        .is_some_and(|a| a.iter().any(|p| p.as_str() == Some("processes")));
-    if !holds_processes {
-        return Err(format!("{extension} was not granted `processes`"));
-    }
-    let manifest = manifest.ok_or_else(|| format!("{extension} has no installed package"))?;
-    // A bin map KEY is attacker-controlled JSON, stored verbatim from the
-    // package's own package.json — presence in the map is not enough. It
-    // must also be a bare filename (package_install::safe_bin_name), the
-    // same rule install applies before materializing bins: PathBuf::join
-    // silently discards the base on an absolute key and walks out of
-    // ~/.fez/bin on a traversal one, so an unchecked "declared" is a spawn
-    // primitive for any path on disk.
-    let shipped_it = package_install::safe_bin_name(bin)
-        && manifest.get("bin").and_then(|v| v.as_object()).is_some_and(|m| m.contains_key(bin));
-    if !shipped_it {
-        return Err(format!("{extension}'s package does not ship a bin called {bin}"));
-    }
-    Ok(())
-}
+use package_install::extension_may_spawn;
 
 /// Environment names that change how a process loads code rather than what it
 /// does. The extension supplies env for its own binary, so this is not about
@@ -2759,6 +2718,12 @@ pub fn run() {
                     .unwrap_or_default(),
             }
         })
+        .on_page_load(|webview, payload| {
+            use tauri::Manager;
+            if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                webview.state::<isolated_panel::PanelHost>().close_all(webview.app_handle());
+            }
+        })
         .on_window_event(|window, event| {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -2887,7 +2852,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(isolated_panel::guard(tauri::generate_handler![notifications::notify_with_click, isolated_panel::open_isolated_panel, isolated_panel::isolated_panel_request, isolated_panel::isolated_panel_reply, isolated_panel::isolated_panel_host_request, stage_artifact, release_artifact, get_pubkey, ensure_agent_identity, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, codex_brain_status, ensure_codex_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, workspace_owner_pin, write_media_server, read_media_server, runner_status, connect_service, desktop_runtime::start_desktop_runtime, desktop_runtime::confirm_desktop_quit, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package]))
+        .invoke_handler(isolated_panel::guard(tauri::generate_handler![notifications::notify_with_click, isolated_panel::open_isolated_panel, isolated_panel::update_isolated_panel, isolated_panel::close_isolated_panel, isolated_panel::isolated_panel_request, isolated_panel::isolated_panel_reply, isolated_panel::isolated_panel_host_request, isolated_panel::isolated_panel_validate_request, stage_artifact, release_artifact, get_pubkey, ensure_agent_identity, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, codex_brain_status, ensure_codex_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, workspace_owner_pin, write_media_server, read_media_server, runner_status, connect_service, desktop_runtime::start_desktop_runtime, desktop_runtime::confirm_desktop_quit, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package]))
         .build(app_context())
         .expect("error while building tauri application")
         .run(|app, event| match event {

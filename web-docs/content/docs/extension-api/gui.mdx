@@ -3,9 +3,24 @@ title: GUI surface
 description: Panels, cards, views, and themes in the desktop app.
 ---
 
-The gui part is a single IIFE bundle in `~/.fez/gui-extensions/`, loaded by
-the desktop webview. The host injects React — the page keeps exactly one —
-so you write `h()` calls (or JSX with a bound factory), never `import react`:
+Fez renders standard settings, themes and dialogs from data. Custom extension
+UI runs in a native child webview inside the app. Select the runtime in the
+installed package's `fez.guiRuntime`; `fez.parts.gui` points to its JSON or
+JavaScript file.
+
+| Runtime | GUI part | Host behavior |
+| --- | --- | --- |
+| `declarative` | JSON | Fez renders validated settings and theme palettes |
+| `isolated-settings` | IIFE bundle | One custom settings panel in a child webview |
+| `isolated-page` | IIFE bundle + manifest contributions | A document view with scoped saves and comments |
+| `isolated` | IIFE bundle + manifest contributions | Custom navigation, settings, thread, message and profile views in child webviews |
+
+An absent runtime retains the legacy shared-webview loader. Unknown declarations
+fail visibly; isolated parts never fall back to that loader. Use a desktop
+version supporting the declaration: older releases may ignore it.
+
+For a custom bundle, the child supplies its own React instance. Use `h()` calls
+or JSX with a bound factory:
 
 ```ts
 import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
@@ -26,6 +41,10 @@ Build with `esbuild --format=iife --global-name=__fezExt --platform=browser
 `useState`, `useEffect`, `useCallback`, `useRef`, `useMemo`.
 
 ## Registration seams
+
+These are the broader GUI API's registration seams. Each isolated runtime
+supports only its documented subset; declaring a runtime does not grant all
+methods in `GuiExtensionApi`.
 
 | Method | What it adds | Permission |
 | --- | --- | --- |
@@ -73,7 +92,7 @@ required permission, reinstall it to review and grant that request.
 ## Page and block props
 
 `registerPageView`'s render receives `{ content, save, comment, title,
-channelId, slug?, editable }`. `save(next)` is the whole write path — it
+channelId, slug?, versionId?, editable }`. `save(next)` is the whole write path — it
 publishes a new version; your view never learns whether it's a wiki page or
 a channel doc. `comment(text, anchor, mentions)` anchors a thread to a line —
 mention an agent in it and the agent answers inside the document. `editable`
@@ -86,24 +105,59 @@ refresh=daily`), and `raw` is the verbatim block, the anchor for comments.
 
 ## Network access
 
-The IIFE loader shadows `fetch` and `WebSocket` for extension code. Requests are
-refused unless a `network:` permission matches: `network:relay` expands to
-your workspace's relay hosts at call time, `network:example.com` is an exact
-host, `network:.example.com` covers subdomains, and `network:*` (sensitive)
-allows anything. `XMLHttpRequest` always throws — use `fetch`.
+Settings and page children block direct fetch, WebSocket and media requests
+through CSP. Use `api.fetch` for their bounded native HTTPS transport and
+`api.openUrl` for browser links. These require recorded hostname grants;
+exact hosts, `.example.com` subdomains and `*` are recognized.
+`network:relay` is not expanded by this transport.
 
-These checks protect the supplied API from accidental misuse; they are **not
-a sandbox**. GUI extensions share the host webview and can reach its globals
-and native bridge. The ES-module loading path does not shadow network globals.
-Install only trusted GUI code; isolating third-party code requires a separate
-execution boundary and native authorization.
+Custom `isolated` children additionally allow direct HTTPS/WSS connections,
+images and media to their recorded `network:` hosts. A leading dot covers the
+domain and its subdomains; `network:relay` permits the configured relay origins
+and their corresponding HTTP(S) origins. The native host constructs this CSP
+for each child. A changed grant closes the custom view on its next broker
+check, including the periodic snapshot check; reopen it to use the new grants.
 
-Native process checks validate the named installed package's grants and
-binary manifest, but the extension name comes from the caller. They cannot
-identify which GUI extension invoked the command. Moving key export to a
-different window alone would leave installer and process access available.
-Boot and agent setup use public keys and native signing; onboarding and
-backup still handle private keys in the shared webview.
+This isolates native authority and browser storage, but does not contain all
+network traffic: the macOS probe found that WebRTC can still send STUN traffic.
+Separate webviews also do not guarantee separate OS processes. Legacy GUI
+parts still share the main webview; their shadowed network APIs are only
+checks on supplied APIs, not a security boundary.
+
+The `processes` grant remains broad authority to run the package's own
+executables. The native broker binds an isolated caller to its installed
+package and rejects other packages' binaries; it does not sandbox that
+executable's filesystem, keychain, network or spending authority. Wallet's
+existing setup intentionally returns a newly created wallet mnemonic to its
+view for backup. Its own CLI can also export remote hotkeys. These capabilities
+are distinct from Fez's native custody of the Nostr identity key.
+
+## Declarative settings and themes
+
+Declare `"guiRuntime": "declarative"` and
+`"parts": { "gui": "dist/gui.json" }`. Fez validates the entire bounded JSON
+payload before registering anything; extension JavaScript and CSS are not
+evaluated in the main window.
+
+The JSON can contain `settings` and `themes`:
+
+- A `process` section declares an owned binary, bounded status arguments,
+  labeled phases, and fixed run/spawn actions. It requires `ui` and
+  `processes`. Browser uses it for setup, progress and testing.
+- An `agent-select` section declares an own preference key, options, stable
+  identity-based defaults and optional HTTPS preview URLs. It requires `ui`
+  and `read:agents`; previews also require their recorded network grant.
+  ElevenLabs uses it for voice selection and previews, preserving overrides.
+- `themes` maps names to `light` and `dark` palettes. Only known Fez tokens
+  and validated color values are accepted; fonts and layout remain fixed.
+  The Themes package supplies these palettes for Appearance settings.
+
+The source schemas are `declarative-gui.ts` and the shipped Browser,
+ElevenLabs and Themes JSON files. Current ElevenLabs permissions include
+`read:agents`, `network:api.elevenlabs.io`, `network:storage.googleapis.com`,
+`network:relay`, `publish`, `read:channels` and `ui`. Its older installed
+manifest and recorded grants may lack `read:agents`; updating a manifest alone
+does not grant it.
 
 ## Isolated settings runner (macOS)
 
@@ -121,18 +175,18 @@ package manifest:
 }
 ```
 
-No development flag is needed. GitHub and ElevenLabs declare this runtime.
-Install or relink the updated package so its installed manifest includes the
-declaration, then open its settings normally. For ElevenLabs, grant `ui`,
-`read:channels` and `read:agents`, and open
-**Settings → Extensions → elevenlabs → Open elevenlabs settings**. The main
-loader registers this launcher without evaluating the extension bundle or
+GitHub and Slack use this runtime. Install or relink the updated package so
+its installed manifest includes the declaration, then open its settings
+normally. The panel opens inline. The main
+loader registers its embedded host without evaluating the extension bundle or
 injecting its CSS. The separate entry supports both legacy React elements
 and the mount/dispose callback; mounting React alone in the main page does
 not provide this boundary.
 
-Each declared extension gets its own window, native session and preference
-namespace. All require a recorded `ui` grant. An absent `guiRuntime` keeps
+Each declared extension gets its own child webview, native session and
+preference namespace inside the main window. It resizes with Settings and
+closes when its page is left; host dialogs temporarily hide it. Main-page
+reloads revoke and close all child panels. All require a recorded `ui` grant. An absent `guiRuntime` keeps
 the legacy GUI host. Unknown or malformed runtime declarations fail visibly
 without evaluating the bundle or injecting its CSS. A declared isolated part
 never falls back to execution in the main page if loading fails, including
@@ -157,7 +211,8 @@ export default function activate(api: IsolatedPanelApi) {
 ```
 
 `IsolatedPanelApi` contains local React, one settings registration, preferences,
-write-only secrets, browser links, HTTPS fetch, and a limited optional client.
+write-only secrets, browser links, HTTPS fetch, host details/confirmation
+dialogs, and a limited optional client.
 Rust binds each request to the actual webview, checks current recorded grants,
 and refuses general native commands. Preferences stay in the installed
 extension's own file and preserve other state; corrupt files fail closed.
@@ -200,11 +255,11 @@ manifest; isolated registration options do not override that metadata.
 
 Use `api.fetch` explicitly, including when configuring HTTP libraries.
 The native transport permits UTF-8 GET/HEAD/POST requests only, over HTTPS
-port 443 with an exact recorded `network:<hostname>` grant. It rejects URL
+port 443 with a matching recorded `network:` hostname grant. It rejects URL
 credentials, non-public resolved addresses, cookies and privileged headers,
 redirects, bodies above 64 KiB, and responses above 2 MiB. Browser links use
-the same HTTPS/hostname grant check. Wildcards and `network:relay` are not
-resolved by this transport. There are at most 16 in-flight requests per
+the same HTTPS/hostname grant check. `network:relay` is not expanded by this
+transport. There are at most 16 in-flight requests per
 panel; host replies time out after 30 seconds. HTTP uses a 20-second transport
 timeout; system DNS resolution can outlast that timeout.
 
@@ -215,26 +270,151 @@ unscoped fetch queue. Replies are withheld after revocation or close. Operations
 already dispatched may finish; closing a panel does not roll back a write.
 
 This is **native privilege isolation, not a complete extension sandbox**.
-CSP blocks direct fetch, WebSocket and media requests; the broker's HTTPS
-transport is separate. Voice previews remain unavailable. The macOS probe
-confirmed that WebRTC can still send STUN traffic. Separate webviews do not
-guarantee a dedicated OS process. This runner currently refuses non-macOS
+CSP blocks direct fetch, WebSocket and media requests in this settings runner;
+the broker's HTTPS transport is separate. Declarative ElevenLabs previews use
+Fez's own media control. This runner currently refuses non-macOS
 hosts: Tauri's large invoke-response path needs separate hardening there.
 Installed executable parts and other GUI extensions retain their existing
 execution model. Agent snapshots refresh when reopened; concurrent CLI and
-GUI preference writes still need a shared cross-process lock. Panels needing
-process execution, live subscriptions, or other GUI registrations need further
-migration. Isolation remains opt-in.
+GUI preference writes still need a shared cross-process lock. Use the custom
+runtime below for its supported process and live-view capabilities. Isolation
+remains selected per installed manifest.
 
 The manual native probe uses temporary state and simulated credentials; it
-never starts agents or accesses the user's keychain. Build ElevenLabs and
-the desktop, then run
+never starts agents or accesses the user's keychain. Build the desktop, then run
 `cargo run --example isolated-panel-probe --features tauri/custom-protocol`
 from the desktop's `src-tauri` directory. It checks the real bundled webview,
 config and secret routing, large JSON/binary channel delivery and privilege
 denials. Its success marker is `WKWebView probe: PASS`. GitHub's browser test
 loads the real bundle with simulated GitHub/keychain responses; it does not
 connect the user's account. The regular eval gate checks native authorization.
+
+## Isolated document views (macOS)
+
+Kanban uses the same child-webview boundary for its whole document view.
+Declare `"guiRuntime": "isolated-page"` and a `guiContributions.page` in the
+installed manifest:
+
+```json
+{
+  "guiRuntime": "isolated-page",
+  "guiContributions": {
+    "page": {
+      "name": "▦ board",
+      "match": { "fence": "fez:board", "checklistSections": 2 }
+    }
+  }
+}
+```
+
+The matching fence selects the view by default; `checklistSections` optionally
+adds a toggle for documents with that many headings and a task list outside
+code fences. The host validates these bounded declarations before registering
+anything. Optional `messages` provide text-only summaries selected by line
+prefixes, with the original message in a disclosure. Optional `blocks` declare
+fence disclosures and insert-menu templates. These features never execute
+extension JavaScript or CSS in the main webview.
+
+Build the GUI against `IsolatedPageApi` from `@fezchat/extension-api/gui`, then
+call `registerPageView` once with the declared name. Render a React element;
+the child loads the bundle and its companion `gui.css`. The host owns matching.
+Use the supplied page's `save(next)` and `comment(text, anchor, mentions)`;
+the broker accepts no channel or document target. Both callbacks require a
+current editable version and a live `publish` grant, checked again after
+asynchronous version reads and immediately before publication. Closed panels,
+stale versions and revoked grants reject. An already published write is not
+rolled back by closing its panel.
+
+Page reads require `ui` and `read:channels`. Updates refresh the snapshot
+without remounting the page, so open forms retain their drafts. Agent discovery
+also refreshes with `read:agents`; unavailable agents must not prevent reading
+cards. `pkByName` returns `undefined` when unavailable, while `agents()` rejects
+access without its grant. Review schedules use the existing scoped config API.
+The runtime's macOS and network limitations above still apply, and executable
+extension parts keep their existing execution model.
+
+Build Kanban and the desktop, then run
+`cargo run --example isolated-page-probe --features tauri/custom-protocol`
+from `src-tauri`. This uses temporary fixture documents to verify the real
+macOS view, card details, scoped saves/comments, stale-write rejection and
+native privilege denials without touching a user's board or agents.
+
+## Custom isolated views (packaged macOS builds)
+
+Use `"guiRuntime": "isolated"` for custom UI that needs more than the settings
+or document contract. The manifest supplies bounded, data-only contributions;
+only the child evaluates the IIFE and its styles. For example:
+
+```json
+{
+  "fez": {
+    "type": "extension",
+    "parts": { "gui": "dist/gui.js" },
+    "guiRuntime": "isolated",
+    "permissions": ["ui", "read:channels"],
+    "guiContributions": {
+      "settings": true,
+      "messages": [{ "label": "Open poll", "match": { "linePrefix": "📊 poll: " } }]
+    }
+  }
+}
+```
+
+Contributions can declare `nav` entries, channel-bound tabs and summaries,
+`threads`, `messages`, `profiles`, and one settings panel. Match rules use
+bounded text or base58-token criteria, never executable callbacks or arbitrary
+regular expressions. Names identify navigation and thread callbacks; message
+and profile array positions identify the corresponding registration order in
+the child. See `IsolatedCustomContributions` in the published manifest types.
+
+Fez renders the surrounding navigation and labeled message/thread/profile
+launchers. A selected custom view opens inside the app with its own native
+session. Its original registration callbacks run only there. A copied public
+channel snapshot supplies the bound message's actual content, author and time,
+names, permitted agent information, signed receipts and the current viewer's
+reaction timestamps. No raw client, wire, DMs or arbitrary signing is exposed.
+Reaction writes require `publish` and can target only that opened message.
+Snapshots refresh without resetting mounted React component state.
+
+The adapter also supports own storage and preferences, owned processes and
+agents, permitted persona operations, bounded navigation, feedback, and
+`channelsChanged`/`paymentReceipt` subscriptions. Unsupported capabilities
+fail; this is not the entire legacy GUI API. Bazaar, Mining and Wallet source
+manifests declare this runtime. Wallet keeps its existing author checks,
+expiry rules, receipt labels and backup ceremony. Its explorer links require
+`network:taostats.io`, `network:basescan.org` and
+`network:sepolia.basescan.org`, in addition to its existing grants.
+
+The native custom runner currently requires a packaged macOS build. It
+deliberately refuses `tauri dev`: the development server bypasses the
+per-webview asset response hook that installs its network policy. Browser
+fixtures can exercise the adapter with mocked IPC, but do not establish the
+native boundary.
+
+## Host details and confirmation dialogs
+
+Isolated settings, page and custom APIs expose `showDetails` and `confirm`:
+
+```ts
+await api.showDetails({ title: "Card details", body: card.details, context: "Backlog" });
+const accepted = await api.confirm({ title: "Apply this change?", body: explanation });
+if (accepted) await saveChange();
+```
+
+Fez opens a transparent child covering the app and renders its standard dialog
+with the installed extension's fixed source label. Title, body and context are
+plain text; the overlay never loads extension code or styles. Content scrolls
+within the viewport. `showDetails` resolves when opened. `confirm` waits for
+Confirm or Cancel; dismissal cancels. Callers should handle rejected requests
+without applying the proposed change. The legacy `GuiExtensionApi.confirm`
+member is optional; check it when supporting older hosts.
+
+Closing, Escape and backdrop clicks close only the dialog and restore its
+parent's focus. Parent closure or reload also removes its dialogs. Native
+validation limits title to 4 KiB, body to 64 KiB and context to 256 bytes and
+checks the caller's recorded `ui` grant. Kanban uses `showDetails` for card
+text. Wallet awaits `confirm` before switching x402 payments to Base mainnet,
+including the effective per-call and daily limits in the prompt.
 
 ## Reload behavior
 

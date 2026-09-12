@@ -3,12 +3,68 @@ import { JSDOM } from "jsdom";
 import React, { act } from "../../fez-desktop/node_modules/react/index.js";
 import { createRoot } from "../../fez-desktop/node_modules/react-dom/client.js";
 import AgentInput, { InputCard, QuestionRow, conversationQuestions } from "../../fez-desktop/src/AgentInput.js";
+import HomeView from "../../fez-desktop/src/HomeView.js";
+import type { BrowserWire } from "../../fez-desktop/src/wire.js";
 import { notifyEvent } from "../../fez-desktop/src/notify.js";
-import type { FezClient, PendingInput } from "../../fez-client/src/index.js";
+import type { FezClient, PendingInput, InputHistoryEntry } from "../../fez-client/src/index.js";
 import { inputForm } from "../../fez-client/src/agent-input.js";
 
 vi.mock("../../fez-desktop/src/notify.js", () => ({ notifyEvent: vi.fn() }));
+vi.mock("../../fez-desktop/node_modules/@tauri-apps/api/core.js", () => ({ invoke: async () => "" }));
 afterEach(() => vi.unstubAllGlobals());
+
+it.each(["channel", "dm", "legacy"] as const)("opens an unanswered %s question from Inbox and clears attention after sending", async kind => {
+  const dom = new JSDOM("<div id='root'></div>", { url: "https://fez.test" });
+  for (const key of ["window", "document", "FormData", "HTMLElement", "localStorage", "CustomEvent"] as const) vi.stubGlobal(key, dom.window[key]);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const root = createRoot(document.getElementById("root")!);
+  const request: PendingInput = {
+    id: "agent:inbox", requestId: "inbox", agentPk: "agent", expiresAt: Date.now() + 60_000,
+    origin: kind === "channel" ? { kind, channelId: "general", rootId: "root" }
+      : kind === "dm" ? { kind, participants: ["agent", "owner"] } : undefined,
+    form: inputForm({ mode: "form", message: "Pick a layout", requestedSchema: {
+      properties: { layout: { type: "string", title: "Layout", enum: ["List", "Grid"] } }, required: ["layout"],
+    } }),
+  };
+  let entry: InputHistoryEntry = { ...request, requestedAt: Date.now(), status: "pending" };
+  const client = {
+    pubkey: "owner", pendingInputs: () => [request], waitingInputs: () => entry.status === "pending" ? [request] : [],
+    inputHistory: () => [entry], loadInputHistory: async () => {}, displayName: () => "quill",
+    state: { workspace: { name: "test", channels: new Map([["general", { id: "general", name: "general" }]]) } },
+    channelRef: () => ({ name: "general" }), dmConversations: () => new Map(), workflowRuns: () => new Map(), workingAgents: () => new Map(),
+    on: () => () => {},
+    answerInput: vi.fn<FezClient["answerInput"]>(async (_id, response) => { entry = { ...entry, status: "sent", response, answeredAt: Date.now() }; }),
+  } as unknown as FezClient;
+  const wire = { query: async () => [] } as unknown as BrowserWire;
+  const onOpenQuestion = vi.fn((question: PendingInput) => {
+    if (!question.origin) window.dispatchEvent(new CustomEvent("fez-show-questions", { detail: question.id }));
+  });
+  const inbox = () => React.createElement(React.Fragment, {},
+    React.createElement(AgentInput, { client, onOpen: onOpenQuestion }),
+    React.createElement(HomeView, { client, wire, onOpenChannel: vi.fn(), onOpenDm: vi.fn(), onOpenQuestion }));
+  try {
+    await act(async () => root.render(inbox()));
+    expect(document.querySelector("main .loops-count")?.textContent).toBe("1");
+    const answer = [...document.querySelectorAll("main button")].find(button => button.textContent === "Answer question →");
+    expect(answer).toBeDefined();
+    await act(async () => (answer as HTMLButtonElement).click());
+    expect(onOpenQuestion).toHaveBeenCalledWith(request);
+    if (kind === "legacy") expect(document.querySelector(".agent-input")?.hasAttribute("hidden")).toBe(false);
+    else await act(async () => root.render(React.createElement(QuestionRow, { client, entry })));
+    await act(async () => (document.querySelector('input[value="Grid"]') as HTMLInputElement).click());
+    await act(async () => { document.querySelector("form")!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); });
+    expect(client.answerInput).toHaveBeenCalledWith(request.id, { action: "accept", content: { layout: "Grid" } });
+    await act(async () => root.render(inbox()));
+    expect(client.pendingInputs()).toHaveLength(1); // delivery receipt is still outstanding
+    expect(document.querySelector("main .loop.blocked")).toBeNull();
+    const history = [...document.querySelectorAll("main button")].find(button => button.textContent === "Question history");
+    expect(history).toBeDefined();
+    await act(async () => (history as HTMLButtonElement).click());
+    expect(document.querySelector(".agent-input")?.hasAttribute("hidden")).toBe(false);
+    expect(document.querySelector(".input-history")?.textContent).toContain("Grid");
+    expect(document.querySelector(".input-history")?.textContent).toContain("Sent · awaiting receipt");
+  } finally { await act(async () => root.unmount()); dom.window.close(); }
+});
 
 it("renders every question, submits choices and custom text together, and keeps failed submissions editable", async () => {
   const dom = new JSDOM("<div id='root'></div>");
@@ -45,7 +101,7 @@ it("renders every question, submits choices and custom text together, and keeps 
   }
 });
 
-it("badges waiting questions, notifies once without private text, and opens the request from a notification", async () => {
+it("removes the Questions navigation, notifies once without private text, and opens legacy requests on demand", async () => {
   const dom = new JSDOM("<div id='root'></div>");
   for (const key of ["window", "document", "FormData", "HTMLElement", "Event"] as const) vi.stubGlobal(key, dom.window[key]);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -59,20 +115,20 @@ it("badges waiting questions, notifies once without private text, and opens the 
   vi.mocked(notifyEvent).mockClear();
   try {
     await act(async () => root.render(React.createElement(AgentInput, { client })));
-    expect(document.querySelector('[aria-label="Questions"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Questions"]')).toBeNull();
     requests.push({ id: "agent:request", requestId: "request", agentPk: "agent", expiresAt: Date.now() + 60000,
       form: inputForm({ mode: "form", message: "Private deployment details", requestedSchema: { properties: { pick: { type: "string", enum: ["secret A", "secret B"] } } } }) });
     await act(async () => { for (const listener of listeners) listener(); });
-    expect(document.querySelector('[aria-label="1 pending question request"]')?.textContent).toBe("1");
+    expect(document.querySelector(".agent-input")?.hasAttribute("hidden")).toBe(true);
     expect(notifyEvent).toHaveBeenCalledTimes(1);
-    expect(notifyEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "needs_action", target: { kind: "questions" } }));
+    expect(notifyEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "needs_action", target: { kind: "questions", id: "agent:request" } }));
     expect(JSON.stringify(vi.mocked(notifyEvent).mock.calls)).not.toContain("Private deployment details");
     await act(async () => { for (const listener of listeners) listener(); });
     expect(notifyEvent).toHaveBeenCalledTimes(1);
-    await act(async () => (document.querySelector('[aria-label="Close questions"]') as HTMLButtonElement).click());
-    expect(document.querySelector(".agent-input")?.getAttribute("hidden")).not.toBeNull();
-    await act(async () => window.dispatchEvent(new Event("fez-show-questions")));
+    await act(async () => window.dispatchEvent(new dom.window.CustomEvent("fez-show-questions", { detail: "agent:request" })));
     expect(document.querySelector(".agent-input")?.hasAttribute("hidden")).toBe(false);
+    await act(async () => (document.querySelector('[aria-label="Close questions"]') as HTMLButtonElement).click());
+    expect(document.querySelector(".agent-input")?.hasAttribute("hidden")).toBe(true);
   } finally { await act(async () => root.unmount()); dom.window.close(); }
 });
 
@@ -92,10 +148,7 @@ it("shows readable private answers and distinguishes a receipt from an unconfirm
   } as unknown as FezClient;
   try {
     await act(async () => root.render(React.createElement(AgentInput, { client })));
-    await act(async () => (document.querySelector('[aria-label="Questions"]') as HTMLButtonElement).click());
-    const history = [...document.querySelectorAll("button")].find(button => button.textContent === "History");
-    expect(history).toBeDefined();
-    await act(async () => history!.click());
+    await act(async () => window.dispatchEvent(new dom.window.CustomEvent("fez-show-questions", { detail: { view: "history" } })));
     expect(document.body.textContent).toContain("Sent · awaiting receipt");
     expect(document.body.textContent).toContain("Card grid");
     record.status = "received";
@@ -105,7 +158,7 @@ it("shows readable private answers and distinguishes a receipt from an unconfirm
   } finally { await act(async () => root.unmount()); dom.window.close(); }
 });
 
-it("keeps scoped forms in their conversation and makes the sidebar a link to the exact question", async () => {
+it("keeps scoped forms and sent answers in their exact conversation", async () => {
   const dom = new JSDOM("<div id='root'></div>");
   for (const key of ["window", "document", "FormData", "HTMLElement"] as const) vi.stubGlobal(key, dom.window[key]);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -126,7 +179,7 @@ it("keeps scoped forms in their conversation and makes the sidebar a link to the
     expect(document.querySelector(".agent-input")?.hasAttribute("hidden")).toBe(true);
     expect(document.querySelector("form")).toBeNull();
     expect(notifyEvent).toHaveBeenCalledWith(expect.objectContaining({ target: { kind: "questions", id: "agent:scoped" } }));
-    await act(async () => (document.querySelector('[aria-label="Questions"]') as HTMLButtonElement).click());
+    await act(async () => window.dispatchEvent(new dom.window.Event("fez-show-questions")));
     await act(async () => (document.querySelector('.input-thread-link') as HTMLButtonElement).click());
     expect(onOpen).toHaveBeenCalledWith(requests[0]);
     const scope = { kind: "channel" as const, channelId: "general", rootId: "root" };

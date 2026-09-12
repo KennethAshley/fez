@@ -214,12 +214,12 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
     : undefined;
   const openWiki = (slug: string, title?: string) => setSel({ kind: "wiki", slug, title });
 
-  const publish = async (next: string, baseId: string | undefined) => {
+  const publish = async (next: string, baseId: string | undefined, beforePublish?: () => Promise<void>) => {
     if (!sel || !commentChannelId) throw new Error("Create a channel before writing a document.");
     if (sel.kind === "wiki") {
-      await client.publishWikiDoc(commentChannelId, selPage?.title ?? sel.title ?? sel.slug, next, baseId, sel.slug);
+      await client.publishWikiDoc(commentChannelId, selPage?.title ?? sel.title ?? sel.slug, next, baseId, sel.slug, beforePublish);
     } else {
-      await client.publishDoc(sel.channelId, next, baseId);
+      await client.publishDoc(sel.channelId, next, baseId, beforePublish);
     }
     if (currentSelection.current === selectionKey) { setViewing(undefined); await load(); }
   };
@@ -491,11 +491,22 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
   const pageViewRender = useCallback(
     (host?: HTMLElement) => {
       if (!sel || !shown || !activeViewImpl) return undefined;
+      const requireCurrent = async () => {
+        if (currentSelection.current !== selectionKey || shown.id !== latest?.id) throw Error("This document version is read-only");
+        const current = sel.kind === "wiki" ? await client.wikiVersions(sel.slug) : await client.docVersions(sel.channelId);
+        if (currentSelection.current !== selectionKey || current.at(-1)?.id !== shown.id) {
+          await load();
+          throw Error("The document changed. Review the latest version and try again.");
+        }
+      };
       return activeViewImpl.render(
         {
           content: shown.content,
-          save: (next) => publish(next, shown.id),
-          comment: async (text, anchor, mentions) => {
+          versionId: shown.id,
+          // publishDoc/publishWikiDoc own the version query and stale-base check.
+          save: async (next, beforePublish) => { await publish(next, shown.id, beforePublish); },
+          comment: async (text, anchor, mentions, beforePublish) => {
+            await requireCurrent();
             if (!sel) return;
             const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
             if (!channelId) return;
@@ -503,7 +514,7 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
               anchor,
               slug: sel.kind === "wiki" ? sel.slug : undefined,
               mentionPks: mentions.map((name) => client.pkByName(name)).filter((pk): pk is string => !!pk),
-            });
+            }, beforePublish);
             await load();
           },
           title: sel.kind === "wiki" ? selPage?.title ?? sel.title ?? sel.slug : client.channelRef(sel.channelId)?.name ?? "",
@@ -515,8 +526,11 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
       );
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately doc-identity, not every closed-over value: see comment above
-    [activeViewImpl?.name, sel?.kind, sel?.kind === "wiki" ? sel.slug : sel?.channelId, selPage?.channelId, shown?.id]
+    [activeViewImpl, sel?.kind, sel?.kind === "wiki" ? sel.slug : sel?.channelId, selPage?.channelId, shown?.id, latest?.id]
   );
+  // Host-owned React launchers receive fresh props without destroying their
+  // native child on each document update. Legacy mount callbacks keep their lifecycle.
+  const isolatedPage = activeViewImpl?.isolated ? pageViewRender() : undefined;
 
   const currentBase = versions?.find(v => v.id === shown?.tags.find(t => t[0] === "base")?.[1]);
   const change = shown && currentBase ? documentChange(currentBase.content, shown.content) : undefined;
@@ -739,8 +753,8 @@ export default function WikiView({ client, initialSelection }: { client: FezClie
                     {threads.length > 0 && ` · ${threads.filter((t) => !t.resolved).length} open comment${threads.filter((t) => !t.resolved).length === 1 ? "" : "s"}`}
                   </div>
                   {activeViewImpl ? (
-                    <div className="page-view-body">
-                      <MountPoint render={pageViewRender} />
+                    <div className="page-view-body" data-isolated={activeViewImpl.isolated || undefined}>
+                      {activeViewImpl.isolated ? (React.isValidElement(isolatedPage) ? isolatedPage : null) : <MountPoint render={pageViewRender} />}
                     </div>
                   ) : (
                   <div className="md doc-body wiki-body" onMouseUp={selectPassage}>

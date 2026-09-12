@@ -5,9 +5,13 @@ import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { RelayConnection, CapabilityClient } from "../../../../dist/index.js";
 import { installMockBridge } from "./helpers/bridge";
 import { spawnRelay } from "./helpers/relay";
+import { installCustomPanelBridge } from "./helpers/custom-panels";
 
-test("Mining links native chat, retains fleet history, and manages through one pane",async({page})=>{
+test("isolated Mining links native chat, retains fleet history, and manages inside its child view",async({page})=>{
   test.setTimeout(90_000);
+  await page.setViewportSize({width:800,height:600});
+  page.setDefaultTimeout(10_000);
+  const browserErrors:string[]=[];page.on("pageerror",error=>browserErrors.push(error.message));
   const ownerSecret=generateSecretKey(),agentSecret=generateSecretKey();
   const owner=getPublicKey(ownerSecret),agent=getPublicKey(agentSecret);
   const socket=createServer();await new Promise<void>(r=>socket.listen(0,"127.0.0.1",r));
@@ -16,8 +20,9 @@ test("Mining links native chat, retains fleet history, and manages through one p
   const connection=new RelayConnection({urls:[relay.url]});
   const human=new CapabilityClient({relay:relay.url,privateKey:Buffer.from(ownerSecret).toString("hex")});
   const quill=new CapabilityClient({relay:relay.url,privateKey:Buffer.from(agentSecret).toString("hex")});
-  const calls:string[][]=[];let installed=true;let markdown="---\nharness: pi\n---\nQuill";
+  const calls:string[][]=[];let installed=true;let guiLoads=0;let markdown="---\nharness: pi\n---\nQuill";
   const gui=await readFile(new URL("../../../fez-mining/dist/gui.js",import.meta.url),"utf8");
+  const manifest=JSON.parse(await readFile(new URL("../../../fez-mining/package.json",import.meta.url),"utf8"));
   const grants=["ui","processes","personas","read:channels","publish"];
   try {
     await connection.connect();
@@ -33,7 +38,7 @@ test("Mining links native chat, retains fleet history, and manages through one p
     await installMockBridge(page,{"plugin:event|listen":()=>1,"plugin:event|unlisten":()=>null,get_pubkey:()=>owner,provider_key_present:()=>true,ensure_local_relay:()=>relay.url,list_personas:()=>["fez","quill"],list_installed_skills:()=>"[]",read_keymap:()=>"{}",read_media_server:()=>"",spawned_agents:()=>[],read_skills:()=>"{}",latest_version:()=>"0.1.1",package_info:()=>"{}"},{identities:{default:Buffer.from(ownerSecret).toString("hex"),"agent:quill":Buffer.from(agentSecret).toString("hex")}});
     const commands=["list_gui_extensions","read_extension_grants","extension_storage_read","run_extension_bin","read_persona","update_persona","list_local_extensions","read_extension_versions","remove_extension"];
     await page.exposeFunction("miningNative",async(cmd:string,args:Record<string,unknown>)=>{
-      if(cmd==="list_gui_extensions") return installed ? [["mining",gui,""]] : [];
+      if(cmd==="list_gui_extensions") {guiLoads++;return installed ? [["mining",gui,"",null,manifest.fez.guiRuntime,manifest.fez.guiContributions]] : [];}
       if(cmd==="read_extension_grants") return JSON.stringify({mining:grants});
       if(cmd==="list_local_extensions") return installed ? [["mining",["gui","headless","skill"]]] : [];
       if(cmd==="read_extension_versions") return JSON.stringify({mining:"0.1.1"});
@@ -51,7 +56,7 @@ test("Mining links native chat, retains fleet history, and manages through one p
         else if(a[0]==="config") result={};
         else if(a[0]==="logs") return {code:0,stdout:"Stopped cleanly",stderr:""};
         else if(a[0]==="thread") result={rootId:root.id};
-        else if(a[0]==="submission" && a[1]==="status") result={phase:"unregistered",checkedAt:"2026-09-10T10:00:00Z",hotkey:"public",versions:[]};
+        else if(a[0]==="submission" && a[1]==="status") result={phase:"not-submitted",detail:"No fixture submission",checkedAt:"2026-09-10T10:00:00Z",hotkey:"public",versions:[]};
         else throw Error("Unexpected mining action: "+a.join(" "));
         return {code:0,stdout:JSON.stringify(result),stderr:""};
       }
@@ -63,44 +68,59 @@ test("Mining links native chat, retains fleet history, and manages through one p
       const original=w.__TAURI_INTERNALS__.invoke;
       w.__TAURI_INTERNALS__.invoke=(cmd,args)=>commands.includes(cmd)?w.miningNative(cmd,args):original(cmd,args);
     },{commands,url:relay.url});
+    const startPanels=await installCustomPanelBridge(page,{mining:{code:gui,grants}});
     await page.goto("/");
     await expect(page.locator(".shell")).toBeVisible();
+    await startPanels();
     const miningNav=page.locator(".rail").getByRole("button",{name:"⛏ Mining",exact:true});
+    const setup=page.frameLocator('iframe[data-custom-kind="nav"]');
+    const summary=page.frameLocator('iframe[data-custom-kind="navSummary"]');
+    const minersView=page.frameLocator('iframe[data-custom-tab="miners"]');
+    const subnetsView=page.frameLocator('iframe[data-custom-tab="subnets"]');
     await miningNav.click();
-    await expect(page.getByRole("button",{name:"Use this channel",exact:true})).toBeVisible();
+    await expect(setup.getByRole("button",{name:"Use this channel",exact:true})).toBeVisible();
+    await expect(page.getByRole("button",{name:"Use this channel",exact:true})).toHaveCount(0);
     await page.screenshot({animations:"disabled",path:test.info().outputPath("mining-workspace-setup.png")});
-    await page.getByRole("button",{name:"Use this channel",exact:true}).click();
+    await setup.getByRole("button",{name:"Use this channel",exact:true}).click();
     await expect(page.getByRole("tab",{name:"Activity",exact:true})).toBeVisible();
     await expect(page.locator("main .timeline")).toContainText(root.content);
     const composer=page.locator("main textarea").last();
     await composer.fill("@quill show my mining status");
     await page.getByRole("tab",{name:"Miners",exact:true}).click();
-    await expect(page.getByText("Stopped. History and settings are retained.")).toBeVisible();
-    await page.getByRole("button",{name:"Manage",exact:true}).click();
-    await expect(page.locator(".extension-pane")).toContainText("Stopped cleanly");
+    await expect(minersView.getByText("Stopped. History and settings are retained.")).toBeVisible();
+    await minersView.getByRole("button",{name:"Manage",exact:true}).click();
+    await expect(minersView.getByText("Stopped cleanly")).toBeVisible();
+    await expect(page.locator(".extension-pane")).toHaveCount(0);
     await page.screenshot({animations:"disabled",path:test.info().outputPath("mining-workspace-fleet.png")});
-    await page.getByRole("button",{name:"History",exact:true}).click();
+    await minersView.getByRole("button",{name:"← Back",exact:true}).click();
+    await minersView.getByRole("button",{name:"History",exact:true}).click();
     await expect(page.getByRole("tab",{name:"Activity",exact:true})).toHaveAttribute("aria-selected","true");
+    await expect(page.locator(".channel-workspace-content[hidden]")).toBeHidden();
     await expect(page.locator("main .timeline")).toContainText("Miner stopped. Your history is retained.");
-    await expect(page.getByRole("button",{name:"Manage miner",exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"Manage miner",exact:true}).click();
+    await expect(page.locator(".extension-pane")).toBeVisible();
+    const threadView=page.frameLocator('iframe[data-custom-kind="thread"]');
+    await threadView.getByRole("button",{name:"Manage miner",exact:true}).click();
+    await expect(threadView.getByText("Stopped cleanly")).toBeVisible();
+    await page.locator(".extension-pane .pane-close").click();
     await page.getByRole("button",{name:"← back to channel"}).click();
     await expect(composer).toHaveValue("@quill show my mining status");
-    await page.getByRole("button",{name:"New miner",exact:true}).click();
+    await summary.getByRole("button",{name:"New miner",exact:true}).click();
     await expect(page.getByRole("tab",{name:"Subnets",exact:true})).toHaveAttribute("aria-selected","true");
-    await expect(page.getByRole("button",{name:"Launch",exact:true}).last()).toBeVisible();
+    await expect(subnetsView.getByRole("button",{name:"Launch",exact:true}).last()).toBeVisible();
     await page.screenshot({animations:"disabled",path:test.info().outputPath("mining-workspace-subnets.png")});
-    await page.getByRole("button",{name:"Launch",exact:true}).last().click();
-    await expect(page.getByText("Choose an agent · SN777")).toBeVisible();
-    await page.getByLabel("Use an existing agent").check();
-    await page.getByLabel("Mining agent",{exact:true}).selectOption("quill");
-    await page.getByRole("button",{name:"Enable mining & continue"}).click();
-    const miningStatus=page.getByRole("status").filter({hasText:"Mining tools saved for @quill"});
+    await subnetsView.getByRole("button",{name:"Launch",exact:true}).last().click();
+    await expect(subnetsView.getByText("Choose an agent · SN777")).toBeVisible();
+    await subnetsView.getByLabel("Use an existing agent").check();
+    await subnetsView.getByLabel("Mining agent",{exact:true}).selectOption("quill");
+    await subnetsView.getByRole("button",{name:"Enable mining & continue"}).click();
+    const miningStatus=subnetsView.getByRole("status").filter({hasText:"Mining tools saved for @quill"});
     await expect(miningStatus).toBeVisible();
     await expect(miningStatus).toContainText("restart");
-    await expect(page.getByRole("button",{name:/Register/})).toHaveCount(0);
-    await page.getByRole("button",{name:"Continue to miner setup"}).click();
-    await expect(page.getByText("Awaiting validator activation")).toHaveCount(0);
-    await expect(page.getByRole("button",{name:/Register/}).first()).toBeVisible();
+    await expect(subnetsView.getByRole("button",{name:/Register/})).toHaveCount(0);
+    await subnetsView.getByRole("button",{name:"Continue to miner setup"}).click();
+    await expect(subnetsView.getByText("Awaiting validator activation")).toHaveCount(0);
+    await expect(subnetsView.getByRole("button",{name:/Register/}).first()).toBeVisible();
     expect(markdown).toContain("mining=npm:@fezchat/mining");
     expect(calls.filter(a=>["start","stop"].includes(a[0]) || (a[0]==="submission" && a[1]!=="status"))).toEqual([]);
     // Rename the owner-signed channel while retaining its metadata binding.
@@ -114,8 +134,8 @@ test("Mining links native chat, retains fleet history, and manages through one p
     await connection.publish(human.signEvent({kind:47101,created_at:Math.floor(Date.now()/1000)+10,tags:[["d","existing-mining"]],content:JSON.stringify({name:"operations",archived:true,source:"mining",meta:{miningWorkspace:"true"}})}));
     await expect(page.getByRole("tab",{name:"Activity",exact:true})).toHaveCount(0);
     await miningNav.click();
-    await page.getByLabel("Channel name",{exact:true}).fill("mining-lab");
-    await page.getByRole("button",{name:"Create mining channel",exact:true}).click();
+    await setup.getByLabel("Channel name",{exact:true}).fill("mining-lab");
+    await setup.getByRole("button",{name:"Create mining channel",exact:true}).click();
     await expect(page.getByRole("tab",{name:"Activity",exact:true})).toBeVisible();
     await expect(page.locator("main .topbar")).toContainText("mining-lab");
     expect(await connection.query([{ids:[root.id]}])).toHaveLength(1);
@@ -128,6 +148,13 @@ test("Mining links native chat, retains fleet history, and manages through one p
       tags:[["d","existing-mining"]],content:JSON.stringify({...retiredMeta,archived:false})}));
     await miningNav.click();
     await expect(page.locator("main .topbar")).toContainText("mining-lab");
+    const probe=await page.evaluate(()=>Reflect.get(window,"customPanelProbe"));
+    expect(new Set(probe.openings.map((entry:{custom:{kind:string}})=>entry.custom.kind))).toEqual(new Set(["nav","navSummary","navTab","thread"]));
+    expect(probe.requests.some((entry:{action?:string})=>entry.action==="ensure_channel")).toBe(true);
+    expect(probe.requests.some((entry:{action?:string})=>entry.action==="open_tab")).toBe(true);
+    expect(probe.closed.length).toBeGreaterThan(0);
+    expect(guiLoads).toBe(1);
+    expect(browserErrors).toEqual([]);
 
   } finally {connection.disconnect();human.disconnect();quill.disconnect();relay.kill();}
 });

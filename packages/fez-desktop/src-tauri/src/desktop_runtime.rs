@@ -566,7 +566,7 @@ fn adopt_legacy_agents(home: &Path, owner: &str, relays: &str) -> Result<(), Str
 }
 
 pub(crate) fn show(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus(); }
+    if let Some(window) = app.get_window("main") { let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus(); }
 }
 pub(crate) fn quit_requested(app: &tauri::AppHandle, api: &tauri::ExitRequestApi) {
     if prevent_quit(app) { api.prevent_exit(); }

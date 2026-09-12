@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import React from "react";
 import { IsolatedPanelLauncher } from "./IsolatedPanelLauncher";
+import { registerIsolatedContributions } from "./IsolatedContributions";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -12,6 +13,9 @@ import { toast } from "./toast";
 import { invitePersona } from "./invite-persona";
 import type { Dispose, MountRender } from "./mount-result";
 import { createGuiClient, requireGuiPermission, type GuiClient } from "./gui-client";
+import { parseDeclarativeGui } from "./declarative-gui";
+import { DeclarativeSettings, type SettingsHost } from "./DeclarativeSettings";
+import { registerIsolatedCustomContributions } from "./IsolatedCustomContributions";
 
 /**
  * Mirrors src/extension-permissions.ts (the eval-pinned source of truth).
@@ -66,6 +70,8 @@ function relayHostnames(): string[] {
  */
 
 export interface GuiExtensionApi {
+  /** Host-owned confirmation; cancellation never authorizes the action. */
+  confirm?: (details: { title: string; body?: string; context?: string }) => Promise<boolean>;
   React: typeof React;
   parseQuery: typeof parseQuery;
   /** Absent without read:channels. Writes and crypto check their own grants. */
@@ -195,11 +201,12 @@ export interface GuiExtensionApi {
   openPanel?: (title: string, render: MountRender) => void;
   /** A palette, or a { light, dark } pair that follows the OS. */
   registerTheme: (name: string, vars: ThemePack) => void;
-  /** Decorate chat messages: when match(content) is true, render() is
-   * mounted under the message body (how the polls card enters). */
+  /** Decorate chat messages below the body, or replace it with a structured view.
+   * A null render keeps the normal body; the signed author stays visible. */
   registerMessageDecorator: (
     match: (content: string) => boolean,
-    render: (props: { content: string; msgId: string; channelId: string; authorName: string }) => React.ReactNode
+    render: (props: { content: string; msgId: string; channelId: string; authorName: string }) => React.ReactNode,
+    options?: { replaceBody?: boolean }
   ) => void;
   /** Add a slash command to the GUI composer (/name). */
   registerGuiCommand: (name: string, run: (args: string) => Promise<string> | string) => void;
@@ -305,8 +312,11 @@ export interface GuiExtensionApi {
  */
 export interface PageViewProps {
   content: string;
-  save: (next: string) => Promise<void>;
-  comment: (text: string, anchor: string, mentions: string[]) => Promise<void>;
+  /** Opaque document version used to reject stale isolated edits. */
+  versionId?: string;
+  // The optional callback is host-owned; isolated bundles only receive the data-only broker API.
+  save: (next: string, beforePublish?: () => Promise<void>) => Promise<void>;
+  comment: (text: string, anchor: string, mentions: string[], beforePublish?: () => Promise<void>) => Promise<void>;
   title: string;
   channelId: string;
     slug?: string;
@@ -341,13 +351,28 @@ export interface BlockProps {
 export interface MessageDecorator {
   match: (content: string) => boolean;
   render: (props: { content: string; msgId: string; channelId: string; authorName: string }) => React.ReactNode;
+  replaceBody?: boolean;
 }
 const decorators: MessageDecorator[] = [];
-export function registerMessageDecorator(match: MessageDecorator["match"], render: MessageDecorator["render"]): void {
-  decorators.push({ match, render });
+export function registerMessageDecorator(match: MessageDecorator["match"], render: MessageDecorator["render"], options?: { replaceBody?: boolean }): void {
+  decorators.push({ match, render, replaceBody: options?.replaceBody });
 }
 export function messageDecorators(): readonly MessageDecorator[] {
   return decorators;
+}
+
+/** A presentation never changes the signed author or the original copy/reply content. */
+export function messagePresentation(props: Parameters<MessageDecorator["render"]>[0]): { body: React.ReactNode; decorations: React.ReactNode[] } {
+  let body: React.ReactNode;
+  const decorations: React.ReactNode[] = [];
+  for (const decorator of decorators) {
+    if (!decorator.match(props.content)) continue;
+    const node = decorator.render(props);
+    if (node == null || node === false) continue;
+    if (decorator.replaceBody) body ??= node;
+    else decorations.push(node);
+  }
+  return { body, decorations };
 }
 
 /**
@@ -461,6 +486,7 @@ export function blockRenderer(lang: string): BlockRender | undefined {
 }
 
 export interface PageView {
+  isolated?: boolean;
   name: string;
   match: (content: string) => boolean | "default";
   render: (props: PageViewProps, host?: HTMLElement) => React.ReactNode | Dispose | void;
@@ -540,6 +566,7 @@ let channelOpener: ((id: string) => void) | undefined;
 export function setChannelOpener(open: typeof channelOpener): void {
   channelOpener = open;
 }
+export function openChannelAt(id: string): void { channelOpener?.(id); }
 
 // The returned disposer closes only this opening, never a replacement pane.
 let panelOpener: ((title: string, render: MountRender) => Dispose) | undefined;
@@ -548,8 +575,8 @@ export function setPanelOpener(open: typeof panelOpener): void {
 }
 
 const pageViews: PageView[] = [];
-export function registerPageView(name: string, match: PageView["match"], render: PageView["render"]): void {
-  pageViews.push({ name, match, render });
+export function registerPageView(name: string, match: PageView["match"], render: PageView["render"], options?: { isolated: boolean }): void {
+  pageViews.push({ name, match, render, ...options });
 }
 
 /** A rail entry owned by an extension — see GuiExtensionApi.registerNavView. */
@@ -642,6 +669,7 @@ export function pageViewsFor(content: string): { views: PageView[]; preferred?: 
 // where the rest of the app already looks for it.
 export { BUILT_IN_DEFAULT } from "./theme-default";
 import { BUILT_IN_DEFAULT } from "./theme-default";
+import { applyDisplayPrefs, loadDisplayPrefs } from "./display-prefs";
 
 export type ThemeVars = Record<string, string>;
 /**
@@ -696,6 +724,13 @@ export function currentMode(): AppearanceMode {
 export function themeFollowsScheme(name = currentTheme()): boolean {
   const pack = name === "default" ? BUILT_IN_DEFAULT : themes.get(name);
   return !!pack && "light" in pack && "dark" in pack;
+}
+
+/** Read a palette for settings previews without repainting the workspace. */
+export function themePalette(name: string, scheme: "light" | "dark"): ThemeVars {
+  const pack = name === "default" ? BUILT_IN_DEFAULT : themes.get(name) ?? cachedThemePack(name);
+  // Omitted tokens inherit App.css's built-in dark palette, just as paint() does.
+  return { ...BUILT_IN_DEFAULT.dark, ...(pack ? variant(pack, scheme) : {}) };
 }
 
 /**
@@ -795,6 +830,7 @@ function applyThemeVars(vars: ThemeVars): void {
  * bug this avoids.
  */
 export function startAppearanceWatch(): void {
+  applyDisplayPrefs(loadDisplayPrefs());
   paint();
   darkQuery()?.addEventListener("change", () => {
     if (currentMode() === "system") paint();
@@ -979,7 +1015,7 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
   restoreBaseline();
   const loaded: string[] = [];
   status.length = 0;
-  type GuiPart = [name: string, code: string, styles: string, settingsSource?: string | null, runtime?: unknown];
+  type GuiPart = [name: string, code: string, styles: string, settingsSource?: string | null, runtime?: unknown, contributions?: unknown];
   let files: GuiPart[];
   try {
     files = await invoke<GuiPart[]>("list_gui_extensions");
@@ -991,9 +1027,66 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
     grants = JSON.parse(await invoke<string>("read_extension_grants"));
   } catch { /* no grants recorded — everything falls back to the legacy grant */ }
 
-  for (const [name, code, styles, settingsSource, runtime] of files) {
-    if (runtime != null && runtime !== "isolated-settings") {
+  for (const [name, code, styles, settingsSource, runtime, contributions] of files) {
+    if (runtime != null && runtime !== "isolated-settings" && runtime !== "isolated-page" && runtime !== "declarative" && runtime !== "isolated") {
       status.push({ name, ok: false, error: "Unsupported GUI runtime — update the extension or Fez" });
+      continue;
+    }
+    if (runtime === "isolated") {
+      let active = true;
+      let closePanel: Dispose | undefined;
+      const rollback = snapshotRegistrations();
+      try {
+        if (!grants[name]?.includes("ui")) throw Error("Isolated views require a recorded ui grant");
+        registerIsolatedCustomContributions(name, client, contributions, {
+          openPanel: (title, render) => {
+            if (!active) return;
+            closePanel?.();
+            closePanel = panelOpener?.(title, render);
+          },
+          registerAgentProfileSection: (label, render) => { agentProfileSections.push({ source: name, label, render }); },
+        });
+        uiDisposers.set(name, () => { active = false; closePanel?.(); });
+        loaded.push(name); status.push({ name, ok: true });
+      } catch (error) { active = false; closePanel?.(); rollback(); status.push({ name, ok: false, error: String(error) }); }
+      continue;
+    }
+    if (runtime === "declarative") {
+      try {
+        if (!grants[name]?.includes("ui")) throw Error("Declarative GUI requires a recorded ui grant");
+        const data = parseDeclarativeGui(code);
+        if (data.settings) {
+          const permissions = grants[name];
+          const require = (permission: string) => requireGuiPermission(name, permissions, "settings", permission);
+          const host: SettingsHost = {
+            permissions,
+            run: (bin, args) => { require("processes"); return invoke("run_extension_bin", { extension: name, bin, args }); },
+            spawn: (bin, job, env) => { require("processes"); return invoke("spawn_extension_agent", { extension: name, bin, name: job, env: Object.entries(env) }); },
+            isRunning: (bin, job) => { require("processes"); return invoke("agent_alive", { persona: job, bin }); },
+            agents: () => { require("ui"); require("read:agents"); return [...client.agents()]; },
+            readPreference: async key => { require("ui"); const state = JSON.parse(await invoke<string>("extension_storage_read", { name })); return state.prefs?.[key]; },
+            writePreference: (key, value) => { require("ui"); return invoke("extension_storage_write", { name, key, value: JSON.stringify(value) }); },
+            allowPreview: url => {
+              require("ui");
+              const hosts = permissions.filter(value => value.startsWith("network:")).map(value => value.slice(8));
+              if (!networkAllowed(hosts, url)) throw Error("The preview's network permission has not been granted. Reinstall the extension and grant it to continue.");
+            },
+          };
+          registerSettingsPanel(name, () => React.createElement(DeclarativeSettings, { sections: data.settings!, host }), { source: settingsSource ?? undefined });
+        }
+        for (const [theme, pack] of Object.entries(data.themes ?? {})) registerTheme(theme, pack);
+        loaded.push(name);
+        status.push({ name, ok: true });
+      } catch (error) { status.push({ name, ok: false, error: String(error) }); }
+      continue;
+    }
+    if (runtime === "isolated-page") {
+      try {
+        if (!grants[name]?.includes("ui") || !grants[name]?.includes("read:channels")) throw Error("Isolated page requires recorded ui and read:channels grants");
+        registerIsolatedContributions(name, client, contributions);
+        loaded.push(name);
+        status.push({ name, ok: true });
+      } catch (error) { status.push({ name, ok: false, error: String(error) }); }
       continue;
     }
     if (runtime === "isolated-settings") {

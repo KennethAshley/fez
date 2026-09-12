@@ -1511,3 +1511,48 @@ mod tests {
     }
 
 }
+
+/// Whether `extension` may start `bin`: the `processes` grant from
+/// settings.json, the `bin` claim from the package's own manifest.
+///
+/// `extension` arrives from the webview and is NOT trustworthy — a gui part
+/// runs in the page and can invoke this command directly, naming whichever
+/// extension it likes. Both checks therefore live here rather than in the
+/// loader that hands out the capability. The named extension must itself hold
+/// `processes` — that's the user's grant, and settings.json is where it
+/// belongs. But whether it SHIPPED `bin` is not a grant anyone makes; it's a
+/// fact about the package on disk, so it's read from `manifest` (the
+/// package's own `package.json`, loaded by the caller via
+/// `installed_manifest`) rather than from a settings cache anyone could
+/// hand-edit. Claiming to be someone else buys nothing that extension could
+/// not already do. What no caller can reach, whatever it claims to be, is a
+/// binary no installed package's manifest lists.
+pub(crate) fn extension_may_spawn(
+    settings: &serde_json::Value,
+    manifest: Option<&serde_json::Value>,
+    extension: &str,
+    bin: &str,
+) -> Result<(), String> {
+    let holds_processes = settings
+        .pointer("/extensionPermissions")
+        .and_then(|v| v.get(extension))
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| a.iter().any(|p| p.as_str() == Some("processes")));
+    if !holds_processes {
+        return Err(format!("{extension} was not granted `processes`"));
+    }
+    let manifest = manifest.ok_or_else(|| format!("{extension} has no installed package"))?;
+    // A bin map KEY is attacker-controlled JSON, stored verbatim from the
+    // package's own package.json — presence in the map is not enough. It
+    // must also be a bare filename (package_install::safe_bin_name), the
+    // same rule install applies before materializing bins: PathBuf::join
+    // silently discards the base on an absolute key and walks out of
+    // ~/.fez/bin on a traversal one, so an unchecked "declared" is a spawn
+    // primitive for any path on disk.
+    let shipped_it = safe_bin_name(bin)
+        && manifest.get("bin").and_then(|v| v.as_object()).is_some_and(|m| m.contains_key(bin));
+    if !shipped_it {
+        return Err(format!("{extension}'s package does not ship a bin called {bin}"));
+    }
+    Ok(())
+}

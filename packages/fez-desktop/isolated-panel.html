@@ -10,12 +10,17 @@
     <title>Extension settings · Fez</title>
     <style>
       :root { color-scheme: light dark; font: 15px system-ui, sans-serif; }
-      body { margin: 0; padding: 24px; }
+      body { margin: 0; padding: 24px; background: var(--bg0, Canvas); color: var(--fg, CanvasText); font-family: var(--font-ui, system-ui, sans-serif); }
+      :root[data-embedded] body { padding: 0 12px 24px 0; }
+      :root[data-embedded] #root > h1 { display: none; }
       h1 { font-size: 20px; margin-top: 0; }
       .settings-hint { opacity: .75; line-height: 1.5; margin-bottom: 20px; }
       .set-row { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
       .set-label { flex: 1; }
-      select, button { font: inherit; padding: 6px 10px; }
+      select, button, input { font: inherit; min-height: 36px; box-sizing: border-box; padding: 6px 10px; color: inherit; background: var(--bg1, Field); border: 1px solid var(--hairline, light-dark(#ddd, #444)); border-radius: 6px; }
+      button { cursor: pointer; }
+      button:disabled { cursor: default; opacity: .6; }
+      :focus-visible { outline: 2px solid var(--accent, Highlight); outline-offset: 2px; }
       .skill-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; border-bottom: 1px solid light-dark(#ddd, #444); padding: 12px 0; }
       .skill-main { flex: 1; min-width: 160px; }
       .skill-actions { display: flex; gap: 8px; }
@@ -26,6 +31,16 @@
       .gh-code-value { font: bold 28px ui-monospace, monospace; margin: 16px 0; }
       .mini.on { background: light-dark(#d9e8ff, #28416b); }
       [role=alert] { color: light-dark(#a21d25, #ff9298); }
+      :root[data-surface=details], :root[data-surface=details] body, :root[data-surface=details] #root { height: 100%; margin: 0; padding: 0; background: transparent; }
+      .host-details-dialog { box-sizing: border-box; width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); margin: auto; padding: 24px; border: 1px solid var(--hairline, light-dark(#ddd, #444)); border-radius: 12px; background: var(--bg1, Canvas); color: var(--fg, CanvasText); box-shadow: 0 16px 60px #0005; }
+      .host-details-dialog[open] { display: flex; flex-direction: column; }
+      .host-details-dialog::backdrop { background: #0007; }
+      .host-details-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 16px; color: var(--fg-dim, GrayText); }
+      .host-details-actions { display: flex; flex: none; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+      .host-details-body { min-height: 0; overflow: auto; overflow-wrap: anywhere; }
+      .host-details-context { margin: 20px 0 0; color: var(--fg-dim, GrayText); font-size: 13px; }
+      .host-details-dialog h1 { margin: 16px 0 12px; font-size: 20px; line-height: 1.45; }
+      .host-details-text { white-space: pre-wrap; line-height: 1.65; }
     </style>
   </head>
   <body><div id="root"></div><script type="module" src="/src/isolated-panel.tsx"></script></body>

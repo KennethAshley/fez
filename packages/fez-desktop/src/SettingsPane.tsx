@@ -4,7 +4,9 @@ import type { FezClient } from "@fezchat/client";
 import { mediaServer, setMediaServer } from "./upload";
 import { createBackup, openBackup, sealText, downloadText } from "./backup";
 import type { BrowserWire } from "./wire";
-import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFollowsScheme, resolvedScheme, guiExtensionStatus, extensionSettingsPanels } from "./gui-extensions";
+import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFollowsScheme, themePalette, resolvedScheme, guiExtensionStatus, extensionSettingsPanels } from "./gui-extensions";
+import { DEFAULT_DISPLAY, loadDisplayPrefs, saveDisplayPrefs, type DisplayPrefs } from "./display-prefs";
+import { version } from "../package.json";
 import { ExtensionPanel } from "./SkillsView";
 import { SkillSecretsSection } from "./SkillSecrets";
 import { KeyboardSettings } from "./KeyboardSettings";
@@ -38,22 +40,33 @@ const BOOT_MEDIA = localStorage.getItem("fez-media-server") ?? "";
  */
 
 const SETTINGS_TABS = {
-  profile: "profile",
-  servers: "servers",
-  appearance: "appearance",
-  notifications: "notifications",
-  keyboard: "keyboard",
-  skills: "secrets",
-  agents: "agent defaults",
-  backup: "backup & identity",
+  profile: "Profile",
+  servers: "Servers",
+  appearance: "Appearance",
+  notifications: "Notifications",
+  keyboard: "Keyboard shortcuts",
+  skills: "Secrets",
+  backup: "Backup & identity",
+  about: "About",
 } as const;
 type SettingsSection = keyof typeof SETTINGS_TABS;
+
+const SETTINGS_SEARCH: Record<SettingsSection, string> = {
+  profile: "display name status public",
+  servers: "relay workspace connection media uploads blossom",
+  appearance: "theme color light dark system text size font message spacing compact comfortable animations motion reset",
+  notifications: "alerts sounds mentions questions banners mute",
+  keyboard: "keys hotkeys bindings shortcuts",
+  skills: "api keys credentials skills providers passwords",
+  backup: "export archive restore encryption identity key account factory reset",
+  about: "version app diagnostics extensions loaded errors",
+};
 
 // Buzz's grouped-nav decision: sections cluster by whose thing they
 // configure, not by feature age. Labels share the rail's divider grammar.
 const SETTINGS_GROUPS: { label: string; sections: SettingsSection[] }[] = [
-  { label: "you", sections: ["profile", "appearance", "notifications", "keyboard", "backup"] },
-  { label: "workspace", sections: ["servers", "agents", "skills"] },
+  { label: "Personal", sections: ["profile", "appearance", "notifications", "keyboard", "backup"] },
+  { label: "Workspace", sections: ["servers", "skills", "about"] },
 ];
 
 /**
@@ -161,16 +174,18 @@ function Row({
  * deal than the width it saves.
  */
 function Seg<T extends string>({
+  label,
   options,
   value,
   onPick,
 }: {
+  label: string;
   options: readonly { value: T; label: string }[];
   value: T;
   onPick: (value: T) => void;
 }) {
   return (
-    <div className="seg" role="group">
+    <div className="seg" role="group" aria-label={label}>
       {options.map((option) => (
         <button
           key={option.value}
@@ -217,10 +232,101 @@ function Toggle({
 }
 
 const MODES = [
-  { value: "system", label: "system" },
-  { value: "light", label: "light" },
-  { value: "dark", label: "dark" },
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
 ] as const;
+
+function ThemeMiniature() {
+  return <span className="theme-mini" aria-hidden="true">
+    <span className="theme-mini-rail"><i /><i /><i /></span>
+    <span className="theme-mini-chat"><i /><i /><i /><i /></span>
+  </span>;
+}
+
+function AppearanceSettings() {
+  const [mode, setMode] = useState(currentMode);
+  const [theme, setTheme] = useState(currentTheme);
+  const [prefs, setPrefs] = useState(loadDisplayPrefs);
+  const [error, setError] = useState<string>();
+  const [scheme, setScheme] = useState(resolvedScheme);
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return;
+    const query = matchMedia("(prefers-color-scheme: dark)");
+    const updateScheme = () => setScheme(resolvedScheme());
+    query.addEventListener("change", updateScheme);
+    return () => query.removeEventListener("change", updateScheme);
+  }, []);
+  const names = [...new Set(["default", ...themeNames(), theme])];
+  const change = (action: () => void) => {
+    try { action(); setError(undefined); }
+    catch { setError("Couldn't save appearance on this Mac. Try the change again."); }
+  };
+  const update = (next: DisplayPrefs) => change(() => { saveDisplayPrefs(next); setPrefs(next); });
+  return <>
+    <Head title="Appearance" sub="Choose your colors and make conversations comfortable to read." />
+    <fieldset className="appearance-section">
+      <legend>Color mode</legend>
+      <div className="appearance-modes">
+        {MODES.map(option => <button key={option.value} type="button" className="appearance-mode"
+          data-mode-preview={option.value} style={themePalette(theme, option.value === "system" ? scheme : option.value) as React.CSSProperties}
+          aria-label={option.label} aria-pressed={mode === option.value}
+          onClick={() => change(() => { applyMode(option.value); setMode(option.value); setScheme(resolvedScheme()); })}>
+          {option.value === "system" ? <span className="theme-mini-split">
+            <span style={themePalette(theme, "light") as React.CSSProperties}><ThemeMiniature /></span>
+            <span style={themePalette(theme, "dark") as React.CSSProperties}><ThemeMiniature /></span>
+          </span> : <ThemeMiniature />}
+          <span className="appearance-mode-name">{option.label}<span aria-hidden="true">{mode === option.value ? "✓" : ""}</span></span>
+        </button>)}
+      </div>
+      <p className="appearance-hint">{!themeFollowsScheme(theme)
+        ? `${theme} has one palette for both light and dark.`
+        : mode === "system" ? "Follows your Mac’s light and dark appearance." : `Always uses ${mode} colors.`}</p>
+    </fieldset>
+    <fieldset className="appearance-section">
+      <legend>Theme</legend>
+      <div className="appearance-themes" aria-label="Installed themes">
+        {names.map(name => <button type="button" key={name} className="theme-option" aria-label={`Theme: ${name === "default" ? "Default" : name}`}
+          aria-pressed={theme === name} onClick={() => change(() => { applyTheme(name); setTheme(name); })}>
+          <span className="theme-swatches" aria-hidden="true">{["--bg0", "--fg", "--accent"].map(token => <i key={token} style={{ background: themePalette(name, scheme)[token] }} />)}</span>
+          <span>{name === "default" ? "Default" : name}</span><span className="theme-picked" aria-hidden="true">{theme === name ? "✓" : ""}</span>
+        </button>)}
+      </div>
+      <p className="appearance-hint">Installed theme packs appear here automatically.</p>
+    </fieldset>
+    <section className="appearance-preview" aria-label="Conversation preview">
+      <div className="appearance-preview-head"><span># design</span><span>Preview</span></div>
+      <div className="bubble">
+        <span className="appearance-avatar" aria-hidden="true">Y</span>
+        <div className="bubble-head"><span className="author">You</span><span className="time">9:41 AM</span></div>
+        <div className="bubble-body">Can you review the board?</div>
+      </div>
+      <div className="bubble">
+        <span className="appearance-avatar fez" aria-hidden="true"><AnimatedSprite sprite={SPRITES.fez} scale={2} /></span>
+        <div className="bubble-head"><span className="author">fez</span><span className="time">9:41 AM</span></div>
+        <div className="bubble-body">Two cards are ready for your review.<br />The notes and checks are on each card.</div>
+      </div>
+    </section>
+    <div className="appearance-reading">
+      <Row label="Message text size" desc="Applies to channel and direct message text."
+        control={<Seg label="Message text size" options={[{ value: "14", label: "14 px" }, { value: "16", label: "16 px" }, { value: "18", label: "18 px" }]}
+          value={String(prefs.messageSize)} onPick={value => update({ ...prefs, messageSize: Number(value) as DisplayPrefs["messageSize"] })} />} />
+      <Row label="Message spacing" desc="Keep room between messages, or fit more on screen."
+        control={<Seg label="Message spacing" options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]}
+          value={prefs.messageSpacing} onPick={value => update({ ...prefs, messageSpacing: value })} />} />
+      <Row label="Reduce motion" desc="Limit interface animations. Your Mac’s Reduce Motion setting is always respected."
+        control={<Toggle label="Reduce motion" on={prefs.reduceMotion} onChange={reduceMotion => update({ ...prefs, reduceMotion })} />} />
+    </div>
+    {error && <p role="alert" className="ob-error">{error}</p>}
+    <div className="set-actions appearance-footer">
+      <span className="set-note">Changes apply immediately and stay on this Mac.</span>
+      <button className="agent-action" onClick={() => change(() => {
+        saveDisplayPrefs(DEFAULT_DISPLAY); setPrefs({ ...DEFAULT_DISPLAY });
+        applyTheme("default"); setTheme("default"); applyMode("system"); setMode("system"); setScheme(resolvedScheme());
+      })}>Reset appearance</button>
+    </div>
+  </>;
+}
 
 export default function SettingsPane({ client, wire, onClose }: { client: FezClient; wire: BrowserWire; onClose: () => void }) {
   const [name, setName] = useState(client.knownNames().get(client.pubkey) ?? "");
@@ -228,11 +334,6 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
   const [relay, setRelay] = useState(relayRaw());
   const [media, setMedia] = useState(mediaServer());
   const [keyHex, setKeyHex] = useState<string>();
-  // The segmented control shows which one is picked, so the picked value
-  // has to be state — an uncontrolled defaultValue never re-renders and
-  // the ember would stay on whatever was selected at mount.
-  const [mode, setMode] = useState(currentMode());
-  const [theme, setTheme] = useState(currentTheme());
   // Written on every change rather than behind a save button: there is
   // nothing to publish and nothing to relaunch, so a save button would
   // only be a way to lose the change.
@@ -245,8 +346,13 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
   // extension gets its own row rather than hiding behind one called
   // "extensions" inside a group also called "extensions".
   const [section, setSection] = useState<SettingsSection | `ext:${string}`>("profile");
-  const extPanels = extensionSettingsPanels().filter((panel) => !panel.source);
+  const [search, setSearch] = useState("");
+  const extPanels = extensionSettingsPanels();
   const openExt = section.startsWith("ext:") ? extPanels.find((p) => `ext:${p.name}` === section) : undefined;
+  const terms = search.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const matches = (text: string) => terms.every(term => text.toLowerCase().includes(term));
+  const groups = SETTINGS_GROUPS.map(group => ({ ...group, sections: group.sections.filter(key => matches(`${SETTINGS_TABS[key]} ${SETTINGS_SEARCH[key]}`)) })).filter(group => group.sections.length);
+  const visibleExtensions = extPanels.filter(panel => matches(`${norm(panel.name)} ${panel.name}`));
 
   const saveProfile = async () => {
     try {
@@ -299,19 +405,22 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
 
   return (
     <div className="settings-screen">
-      <nav className="settings-rail">
+      <nav className="settings-rail" aria-label="Settings">
         {/* Settings replaces the whole shell, so it needs its own
             light-well — without one the traffic lights sat on the back
             button. Same band, same grab bar as the main rail. */}
         <div className="rail-titlebar" data-tauri-drag-region />
-        <button className="settings-back" onClick={onClose}>← back</button>
-        {SETTINGS_GROUPS.map((group) => (
+        <button className="settings-back" onClick={onClose}>← Back to Fez</button>
+        <input className="settings-search" type="search" aria-label="Search settings" placeholder="Search settings…"
+          value={search} onChange={event => setSearch(event.target.value)} />
+        {groups.map((group) => (
           <div key={group.label} className="settings-group">
             <div className="community-name"><span className="community-label">{group.label}</span></div>
             {group.sections.map((key) => (
               <button
                 key={key}
                 className={section === key ? "settings-nav-item active" : "settings-nav-item"}
+                aria-current={section === key ? "page" : undefined}
                 onClick={() => setSection(key)}
               >
                 {SETTINGS_TABS[key]}
@@ -319,13 +428,14 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             ))}
           </div>
         ))}
-        {extPanels.length > 0 && (
+        {visibleExtensions.length > 0 && (
           <div className="settings-group">
-            <div className="community-name"><span className="community-label">extensions</span></div>
-            {extPanels.map((panel) => (
+            <div className="community-name"><span className="community-label">Extensions</span></div>
+            {visibleExtensions.map((panel) => (
               <button
                 key={panel.name}
                 className={section === `ext:${panel.name}` ? "settings-nav-item active" : "settings-nav-item"}
+                aria-current={section === `ext:${panel.name}` ? "page" : undefined}
                 onClick={() => setSection(`ext:${panel.name}`)}
               >
                 {norm(panel.name)}
@@ -333,9 +443,10 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             ))}
           </div>
         )}
+        {!groups.length && !visibleExtensions.length && <p className="settings-no-results" role="status">No settings found. Try “theme”, “sound”, or an extension name.</p>}
         <FezCorner />
       </nav>
-      <div className="settings-body">
+      <div className="settings-body" key={section}>
       <div className="settings-col">
         {section === "profile" && (<>
         <Head title="profile" sub="How you appear to everyone on this relay. Both fields are public and signed by your key." />
@@ -409,56 +520,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         </div>
 
         </>)}
-        {section === "appearance" && (<>
-        <Head title="appearance" sub="How fez looks on this machine. Nothing here leaves your computer." />
-        <div className="manage-section">theme</div>
-        {/* The readout belongs to the control it describes — "following
-            your Mac" was a fact about color mode, never a setting of its
-            own. Say plainly when the chosen theme has only one palette,
-            or "system" looks broken rather than inapplicable. */}
-        <Row
-          label="color mode"
-          desc={
-            !themeFollowsScheme(theme)
-              ? `"${theme}" ships a single palette, so it looks the same either way.`
-              : mode === "system"
-                ? `Following your Mac, currently ${resolvedScheme()}. Choose light or dark to hold one regardless.`
-                : `Held at ${mode}, whatever your Mac does at sunset.`
-          }
-          control={
-            <Seg
-              options={MODES}
-              value={mode}
-              onPick={(next) => { setMode(next); applyMode(next); }}
-            />
-          }
-        />
-        <Row
-          label="theme"
-          desc="The palette every surface is painted in. Theme packs you install appear here."
-          control={
-            <select
-              className="manage-select"
-              value={theme}
-              onChange={(e) => { setTheme(e.target.value); applyTheme(e.target.value); }}
-            >
-              {["default", ...themeNames()].map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
-          }
-        />
-
-        {/* Diagnostics, not settings: no section head over a single
-            read-only line, and the lowest weight on the page. */}
-        {guiExtensionStatus().length > 0 && (
-          <div className="set-diag">
-            gui extensions loaded:{" "}
-            {guiExtensionStatus().map((ext) => `${ext.name} ${ext.ok ? "✓" : `✗ (${ext.error})`}`).join(" · ")}
-          </div>
-        )}
-
-        </>)}
+        {section === "appearance" && <AppearanceSettings />}
         {section === "notifications" && (<>
         <Head title="notifications" sub="Native alerts on this machine. Muting a channel already silences its mentions — this is everything else." />
         <div className="manage-section">desktop alerts</div>
@@ -481,21 +543,13 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         />
 
         <div className="manage-section">what gets through</div>
-        {NOTIFY_KINDS.map((kind) => {
-          const unbuilt = NOTIFY_UNBUILT.has(kind);
+        {NOTIFY_KINDS.filter(kind => !NOTIFY_UNBUILT.has(kind)).map((kind) => {
           return (
             <Row
               key={kind}
               label={NOTIFY_LABELS[kind].label}
-              desc={
-                unbuilt
-                  ? `${NOTIFY_LABELS[kind].desc} Nothing sends this yet — the control is here so the list is the whole list.`
-                  : NOTIFY_LABELS[kind].desc
-              }
+              desc={NOTIFY_LABELS[kind].desc}
               control={
-                unbuilt ? (
-                  <span className="set-value" style={{ color: "var(--fg-dim)" }}>not built yet</span>
-                ) : (
                   <span className="notify-controls">
                     {/* The picker sits with the toggle it belongs to: one
                         row per category, both of its decisions in reach. */}
@@ -530,7 +584,6 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
                       label={NOTIFY_LABELS[kind].label}
                     />
                   </span>
-                )
               }
             />
           );
@@ -549,9 +602,6 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             />
           }
         />
-        <div className="set-diag">
-          built-in sounds are generated, not sampled — drop an .mp3 in public/sounds/ and list it in src/sounds.ts to use your own
-        </div>
 
         </>)}
         {section === "keyboard" && (<>
@@ -563,15 +613,13 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         <SkillSecretsSection onNotice={flash} />
 
         </>)}
-        {section === "agents" && (<>
-        <Head title="agent defaults" sub="There is nothing to set globally — every agent carries its own engine and model." />
-        <div className="manage-section">how agents choose</div>
-        <Row
-          label="model"
-          desc={<>Each agent picks its own when you create or edit it: Claude Code if you have it installed, or any model from your Chutes account (add a key in <b>secrets</b>).</>}
-          control={<span className="set-value">per agent</span>}
-        />
-
+        {section === "about" && (<>
+          <Head title="About Fez" sub="Your desktop app and the extensions running here." />
+          <div className="settings-about-brand"><AnimatedSprite sprite={SPRITES.fez} scale={4} /><div><strong>Fez Desktop</strong><span>Version {version}</span></div></div>
+          <div className="manage-section">Extension status</div>
+          {guiExtensionStatus().length ? <ul className="settings-extension-status">
+            {guiExtensionStatus().map(ext => <li key={ext.name}><span>{norm(ext.name)}</span><span className={ext.ok ? "" : "ob-error"}>{ext.ok ? "Loaded" : `Couldn't load: ${ext.error ?? "Unknown error"}`}</span></li>)}
+          </ul> : <p className="set-note">No extension interfaces are loaded.</p>}
         </>)}
         {/* Configuration lives HERE; the Extensions view is for finding,
             installing and removing. Panels that claim a channel source
@@ -582,7 +630,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             of the app rather than as a different application. */}
         {openExt ? (
           <div className="ext-settings">
-            <Head title={norm(openExt.name)} sub="Installed extension. Everything below is drawn by the extension itself." />
+            <Head title={norm(openExt.name)} sub="Account and preferences for this extension." />
             <ExtensionPanel panel={openExt} />
           </div>
         ) : section.startsWith("ext:") ? (

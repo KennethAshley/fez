@@ -1,0 +1,73 @@
+{
+  "settings": [
+    {
+      "type": "process",
+      "description": "Read websites in a private browser. Set it up once; attached agents start it automatically, including after a reboot.",
+      "bin": "fez-browser",
+      "job": "fez-browser-setup",
+      "status": {
+        "args": [
+          "status"
+        ],
+        "labels": {
+          "missing": "Setup needed",
+          "working": "Setting up",
+          "ready": "Ready",
+          "error": "Needs attention"
+        },
+        "checkingMessage": "Checking browser setup…",
+        "stoppedMessage": "Setup stopped before finishing. Select Set up browser to retry."
+      },
+      "actions": [
+        {
+          "operation": "spawn",
+          "label": "Set up browser",
+          "env": {
+            "FEZ_BROWSER_ACTION": "setup"
+          },
+          "visibleWhen": [
+            "missing",
+            "working",
+            "error"
+          ],
+          "enabledWhen": [
+            "missing",
+            "error"
+          ],
+          "successMessage": "Starting browser setup…"
+        },
+        {
+          "operation": "run",
+          "label": "Test browser",
+          "args": [
+            "test"
+          ],
+          "enabledWhen": [
+            "ready",
+            "error"
+          ],
+          "successMessage": "Browser test passed. You can ask an attached agent to browse."
+        }
+      ],
+      "hints": [
+        {
+          "text": "Select Set up browser to retry, or Test browser to check the existing installation.",
+          "phases": [
+            "error"
+          ]
+        },
+        {
+          "text": "First setup downloads about 313 MB and can take several minutes. You can leave this panel while it runs.",
+          "phases": [
+            "missing",
+            "working",
+            "error"
+          ]
+        },
+        {
+          "text": "To give an agent access, open its editor in Agents and select Browser in tools. Then ask it to open a website in chat."
+        }
+      ]
+    }
+  ]
+}

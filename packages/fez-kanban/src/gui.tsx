@@ -20,7 +20,6 @@
  */
 
 import {
-  BOARD_LANG,
   addCard,
   doneColumn,
   isBoard,
@@ -33,15 +32,16 @@ import {
   type Column,
 } from "./board.js";
 
-import type { GuiExtensionApi, PageViewProps } from "@fezchat/extension-api/gui";
+import type { IsolatedPageApi, PageViewProps } from "@fezchat/extension-api/gui";
+import "./gui.css";
 import { DEFAULT_PROMPT, parseReviews, reviewKey, type BoardReview } from "./reviews.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let h: (...args: any[]) => unknown;
 let useState: <T>(initial: T | (() => T)) => [T, (next: T | ((previous: T) => T)) => void];
-let extensionApi: GuiExtensionApi;
+let extensionApi: IsolatedPageApi;
 
-export default function activate(api: GuiExtensionApi): void {
+export default function activate(api: IsolatedPageApi): void {
   extensionApi = api;
   h = api.React.createElement;
   useState = api.React.useState;
@@ -49,33 +49,7 @@ export default function activate(api: GuiExtensionApi): void {
 
   api.registerPageView("▦ board", isBoard, (props) => <BoardView {...props} />);
 
-  // The settings fence is configuration, not content — in the markdown
-  // view it reads as a small chip instead of a wall of code.
-  api.registerBlockRenderer(
-    BOARD_LANG,
-    ({ body }) => {
-      const done = /done\s*:\s*(.+)/i.exec(body)?.[1]?.trim();
-      const limits = [...body.matchAll(/limit\s*:\s*(.+?)\s*=\s*(\d+)/gi)].map((m) => `${m[1].trim()} ≤ ${m[2]}`);
-      return (
-        <div className="board-settings">
-          <span className="board-settings-tag">▦ board</span>
-          {done && <span className="board-settings-item">{`done: ${done}`}</span>}
-          {limits.map((limit) => (
-            <span className="board-settings-item" key={limit}>
-              {limit}
-            </span>
-          ))}
-        </div>
-      );
-    },
-    {
-      label: "board",
-      description: "kanban — columns are headings, cards are checkboxes",
-      keywords: ["kanban", "cards", "columns", "sprint", "tasks"],
-      template:
-        "```fez:board\ndone: Done\n```\n\n## Backlog\n\n- [ ] $0\n\n## In Progress\n\n## Review\n\n## Done\n",
-    }
-  );
+
 }
 
 interface Drag {
@@ -97,7 +71,7 @@ function BoardView(props: PageViewProps) {
   // own card — published a new version while this was open. Take it,
   // unless a drag is mid-flight, in which case the drop wins and their
   // version becomes its base.
-  if (props.content !== source && !drag) {
+  if (props.content !== source && !drag && !busy) {
     setSource(props.content);
     setBoard(parseBoard(props.content));
   }
@@ -133,7 +107,7 @@ function BoardView(props: PageViewProps) {
     const current = drag;
     setDrag(undefined);
     setOver(undefined);
-    const result = moveCard(parseBoard(serializeBoard(board)), current.card, columnName, index);
+    const result = moveCard(parseBoard(props.content), current.card, columnName, index);
     await commit(result.board, result.error);
   };
 
@@ -142,7 +116,7 @@ function BoardView(props: PageViewProps) {
     setAdding(undefined);
     setDraft("");
     if (!text) return;
-    const result = addCard(parseBoard(serializeBoard(board)), columnName, text);
+    const result = addCard(parseBoard(props.content), columnName, text);
     await commit(result.board, result.error);
   };
 
@@ -223,7 +197,7 @@ function BoardView(props: PageViewProps) {
                       event.preventDefault();
                       void add(column.name);
                     }
-                    if (event.key === "Escape") setAdding(undefined);
+                    if (event.key === "Escape") { event.preventDefault(); setAdding(undefined); }
                   }}
                 />
               )}
@@ -242,7 +216,7 @@ function BoardView(props: PageViewProps) {
                     setOver(undefined);
                   }}
                   onDropBefore={() => void drop(column.name, index)}
-                  onAssign={(agent: string) => void assign(card, agent)}
+                  onAssign={(agent: string) => { void assign(card, agent).catch(error => setError(String(error))); }}
                 />
               ))}
               {column.cards.length === 0 && adding !== column.name && (
@@ -264,7 +238,10 @@ function ReviewControls(props: PageViewProps) {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [agents, setAgents] = useState<[string, string][]>([]);
+  // The isolated host refreshes this snapshot when discovery changes. Missing
+  // read:agents leaves the document usable without exposing agent names.
+  let agents: [string, string][] = [];
+  try { agents = [...client?.agents() ?? []]; } catch { /* unavailable snapshot */ }
   const key = reviewKey({ channelId: props.channelId, slug: props.slug! });
   extensionApi.React.useEffect(() => {
     let stopped = false;
@@ -272,8 +249,7 @@ function ReviewControls(props: PageViewProps) {
     void (async () => {
       if (!client || typeof client.extensionConfig !== "function" || typeof client.agents !== "function") throw Error("Update Fez to configure daily reviews");
       const config = parseReviews(await client.extensionConfig("fez-kanban"));
-      const agents = [...client.agents()];
-      if (!stopped) { setSaved(config.reviews.find(r => reviewKey(r) === key)); setAgents(agents); setLoaded(true); }
+      if (!stopped) { setSaved(config.reviews.find(r => reviewKey(r) === key)); setLoaded(true); }
     })().catch(error => { if (!stopped) setError(error instanceof Error ? error.message : "Could not load review settings"); });
     return () => { stopped = true; };
   }, [key]);
@@ -362,6 +338,13 @@ interface TileProps {
 function CardTile(props: TileProps) {
   const { card } = props;
   const assignee = card.assignees[0];
+  const [error, setError] = useState("");
+  const showDetails = async () => {
+    setError("");
+    try {
+      await extensionApi.showDetails({ title: card.text, body: card.detail.map(line => line.trim()).join("\n"), context: props.column.name });
+    } catch (error) { setError(String(error)); }
+  };
 
   return (
     <div
@@ -379,26 +362,28 @@ function CardTile(props: TileProps) {
         props.onDropBefore();
       }}
     >
-      <div className="board-card-text">
-        {card.done && <span className="board-card-tick">✓</span>}
-        {renderText(card.text)}
-      </div>
-      {card.detail.length > 0 && (
-        <div className="board-card-detail">{card.detail.map((line) => line.trim()).join("\n")}</div>
-      )}
-      {/* The footer deliberately does NOT repeat the assignee: the @name is
-          already in the card text, because that's where the markdown puts
-          it. It carries only what the text can't say — that nobody has this
-          card, or that its @name matches nobody here. */}
-      {foot(card) && (
-        <div className="board-card-foot">
-          {!assignee ? (
-            <span className="board-card-who none">unassigned</span>
-          ) : (
-            <span className="board-card-who unknown">{`@${assignee} isn't here`}</span>
-          )}
-        </div>
-      )}
+      <button type="button" className="board-card-open" aria-haspopup="dialog" onClick={() => void showDetails()}>
+        <span className="board-card-text">
+          {card.done && <span className="board-card-tick">✓</span>}
+          {renderText(card.text)}
+        </span>
+        {card.detail.length > 0 && (
+          <span className="board-card-detail">{card.detail.map((line) => line.trim()).join("\n")}</span>
+        )}
+        {/* The footer deliberately does NOT repeat the assignee: the @name is
+            already in the card text, because that's where the markdown puts
+            it. It carries only what the text can't say — that nobody has this
+            card, or that its @name matches nobody here. */}
+        {foot(card) && (
+          <span className="board-card-foot">
+            {!assignee ? (
+              <span className="board-card-who none">unassigned</span>
+            ) : (
+              <span className="board-card-who unknown">{`@${assignee} isn't here`}</span>
+            )}
+          </span>
+        )}
+      </button>
       {/* Hand-off lives in the corner on hover, like every other action in
           this app — a button per card, always shown, is a row of noise on a
           surface whose whole job is to be scannable. */}
@@ -411,6 +396,7 @@ function CardTile(props: TileProps) {
           →
         </button>
       )}
+      {error && <p role="alert" className="board-error">{error}</p>}
     </div>
   );
 }

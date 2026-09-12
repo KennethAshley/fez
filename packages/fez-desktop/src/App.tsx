@@ -69,7 +69,7 @@ import FirstRun, { FirstTask } from "./FirstRun";
 import HistoryStatus from "./HistoryStatus";
 import { isNostrKeyInput, pubkeyFromInput, resolvePubkeyInput } from "./public-key";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
-import { messageDecorators, settingsPanelForSource, extensionSettingsPanels } from "./gui-extensions";
+import { messagePresentation, settingsPanelForSource, extensionSettingsPanels } from "./gui-extensions";
 import { norm } from "./extensions-catalog";
 import { EMOJI, searchEmoji } from "./emoji";
 import HireProposalCard from "./HireProposalCard";
@@ -791,7 +791,7 @@ function Shell({
 
   const openLoopCount =
     (loopScan?.msgs.filter((m) => !loopScan.answered.has(m.id)).length ?? 0) +
-    benchPending;
+    benchPending + client.waitingInputs().length;
   const working = client.workingAgents();
 
   const channelJump = useRef(0);
@@ -1136,6 +1136,7 @@ function Shell({
     <div className="shell" style={{ "--rail-w": `${railW}px`, "--pane-w": `${paneW}px` } as React.CSSProperties}>
       <BootSplash loading={false} />
       <Toaster />
+      <AgentInput client={client} onOpen={request => void openQuestion(request)} />
       <div className="channel-order-status" role="status">{channelOrderStatus}</div>
       {!connected && (
         <div className="conn-bar">
@@ -1172,7 +1173,6 @@ function Shell({
         </button>
         {!client.state.workspace.owner && <div className="workspace-unclaimed">unclaimed</div>}
         <div className="rail-scroll">
-        <AgentInput client={client} onOpen={request => void openQuestion(request)} />
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
           <span className="nav-glyph">▤</span> inbox
           {openLoopCount > 0 && <span className="badge">{openLoopCount}</span>}
@@ -1621,6 +1621,7 @@ function Shell({
           scan={loopScan}
           onOpenChannel={(channelId, msgId) => void openChannel(channelId, msgId)}
           onOpenDm={openDm}
+          onOpenQuestion={request => void openQuestion(request)}
         />
       )}
       {view.kind === "pulse" && (
@@ -3554,6 +3555,10 @@ function Bubble({
     return Math.floor((date.getTime() - Date.now()) / 1000);
   };
 
+  const presentation = !dm && !msg.deletedBy
+    ? messagePresentation({ content: msg.content, msgId: msg.id, channelId, authorName: msg.authorName })
+    : { body: undefined, decorations: [] };
+
   /** Slack's right-click: the full action list as a context menu at the cursor. */
   const menuItem = (label: string, glyph: string, run: () => void, danger = false) => (
     <button
@@ -3773,7 +3778,7 @@ function Bubble({
         </div>
       ) : (
         <div className="bubble-body md">
-          <MdBody text={stripArtifactMarkers(stripInstallMarkers(msg.content))} tagged={mentionNames} onMention={openMention} media={msg.media} authorName={client.displayName(msg.authorPk)} />
+          {presentation.body ?? <MdBody text={stripArtifactMarkers(stripInstallMarkers(msg.content))} tagged={mentionNames} onMention={openMention} media={msg.media} authorName={client.displayName(msg.authorPk)} />}
         </div>
       )}
       {proposalIdsIn(msg.content).map((id) => (
@@ -3788,14 +3793,9 @@ function Bubble({
       {installOffers(msg.content).length > 0 && (
         <InstallOffer content={msg.content} authorName={msg.authorName} client={client} />
       )}
-      {!dm &&
-        messageDecorators()
-          .filter((d) => d.match(msg.content))
-          .map((d, i) => (
-            <div key={`deco-${i}`} className="msg-decoration">
-              {d.render({ content: msg.content, msgId: msg.id, channelId, authorName: msg.authorName })}
-            </div>
-          ))}
+      {presentation.decorations.map((node, i) => (
+        <div key={`deco-${i}`} className="msg-decoration">{node}</div>
+      ))}
       <div className="bubble-foot">
         {reactions &&
           [...reactions.entries()].map(([emoji, who]) => (

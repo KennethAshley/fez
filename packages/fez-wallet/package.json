@@ -1,7 +1,7 @@
 {
   "name": "@fezchat/wallet",
-  "version": "0.1.15",
-  "description": "Per-agent allowance wallets for fez \u2014 HD-derived accounts from one master mnemonic, TAO live (EVM later), threshold consent via owner-signed reactions. The balance IS the cap.",
+  "version": "0.1.16",
+  "description": "Per-agent allowance wallets for fez — HD-derived accounts from one master mnemonic, TAO live (EVM later), threshold consent via owner-signed reactions. The balance IS the cap.",
   "type": "module",
   "main": "dist/tools.js",
   "types": "dist/types/tools.d.ts",
@@ -33,9 +33,62 @@
       "read:channels",
       "read:agents",
       "ui",
-      "processes"
+      "processes",
+      "network:taostats.io",
+      "network:basescan.org",
+      "network:sepolia.basescan.org"
     ],
-    "minFezVersion": "0.2.0"
+    "minFezVersion": "0.2.0",
+    "guiRuntime": "isolated",
+    "guiContributions": {
+      "settings": true,
+      "messages": [
+        {
+          "label": "Review wallet request",
+          "match": {
+            "linePrefix": "💸 **"
+          }
+        },
+        {
+          "label": "Receive address",
+          "match": {
+            "contains": "receive address",
+            "token": {
+              "alphabet": "base58",
+              "min": 40,
+              "max": 60
+            }
+          }
+        },
+        {
+          "label": "Payment receipts",
+          "match": {
+            "hasReceipts": true
+          }
+        },
+        {
+          "label": "Wallet addresses",
+          "match": {
+            "token": {
+              "alphabet": "base58",
+              "prefix": "5",
+              "min": 40,
+              "max": 50,
+              "excludeFences": true
+            },
+            "excludeContains": [
+              "💸 **",
+              "receive address"
+            ]
+          }
+        }
+      ],
+      "profiles": [
+        {
+          "label": "Stake"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "esbuild src/mcp.ts src/cli.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/tools.ts --bundle --format=esm --platform=node --outfile=dist/tools.js && tsc -p tsconfig.types.json",

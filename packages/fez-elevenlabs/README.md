@@ -6,6 +6,12 @@ identity. It returns the audio URL so the agent can deliver it to its requester.
 The message body contains the spoken transcript; the desktop renders the audio
 from its `imeta` attachment.
 
+The voice picker is declared in `src/gui.json` and rendered by Fez, with no
+extension JavaScript in the main window. It requires `ui` and `read:agents`;
+previews also require `network:storage.googleapis.com`. The same pinned list
+and identity assignment supply the skill's defaults, while overrides remain
+in this extension's `prefs.voices` map, keyed by agent name.
+
 ElevenLabs remains the default and requires `ELEVENLABS_API_KEY`.
 Set `FEZ_SPEECH_ENGINE=macos` explicitly to use the installed macOS Samantha
 voice and native WAV output without a synthesis API key. This mode needs macOS;

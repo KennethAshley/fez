@@ -63,6 +63,8 @@ export interface ArtifactLike {
 
 /** Props a page view receives — a whole document (wiki page or channel doc). */
 export interface PageViewProps {
+  /** Opaque version supplied by isolated page hosts for optimistic concurrency. */
+  versionId?: string;
   content: string;
   save: (next: string) => Promise<void>;
   comment: (text: string, anchor: string, mentions: string[]) => Promise<void>;
@@ -101,6 +103,16 @@ export interface BlockProps {
  */
 export type IsolatedPanelApi = Pick<GuiExtensionApi, "React" | "prefs" | "secrets" | "openUrl" | "fetch" | "registerSettingsPanel"> & {
   client?: Pick<GuiClient, "agents" | "extensionConfig" | "saveExtensionConfig" | "listChannels" | "createChannel">;
+  /** Show plain text in Fez's app-wide dialog, with this extension identified as its source. */
+  showDetails(details: { title: string; body?: string; context?: string }): Promise<void>;
+  /** Closing or dismissing Fez's confirmation dialog resolves false. */
+  confirm(details: { title: string; body?: string; context?: string }): Promise<boolean>;
+};
+
+/** A document-bound view: saves/comments target only the supplied version and page. */
+export type IsolatedPageApi = Omit<IsolatedPanelApi, "registerSettingsPanel" | "client"> & {
+  client?: NonNullable<IsolatedPanelApi["client"]> & Pick<GuiClient, "pkByName">;
+  registerPageView(name: string, match: (content: string) => boolean | "default", render: (props: PageViewProps) => El): void;
 };
 
 export interface GuiExtensionApi {
@@ -158,6 +170,8 @@ export interface GuiExtensionApi {
   };
   /** Open a browser to `url`. */
   openUrl(url: string): Promise<void>;
+  /** Available in isolated views; source identity and buttons are rendered by Fez. */
+  confirm?(details: { title: string; body?: string; context?: string }): Promise<boolean>;
   /**
    * A card in Settings that configures this extension. `opts.source` ties
    * it to a channel source for the rail. `render` may be the mount form
@@ -173,7 +187,9 @@ export interface GuiExtensionApi {
   /** Decorate chat messages whose content matches — a card under the bubble. */
   registerMessageDecorator(
     match: (content: string) => boolean,
-    render: (props: { content: string; msgId: string; channelId: string; authorName: string }) => El
+    render: (props: { content: string; msgId: string; channelId: string; authorName: string }) => El,
+    /** Present structured content in place of the body; null keeps the normal body. */
+    options?: { replaceBody?: boolean }
   ): void;
   /**
    * A lens over a whole THREAD, keyed off its root message's content —

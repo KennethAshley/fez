@@ -72,6 +72,23 @@ describe("document selection anchors", () => {
 });
 
 describe("signed collaborative documents", () => {
+  it.each(["channel", "wiki", "comment"])("rechecks a scoped caller after asynchronous reads and before signing a %s write", async kind => {
+    const { client, wire } = fixture();
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const query = wire.query;
+    vi.spyOn(wire, "query").mockImplementation(async filters => { await blocked; return query(filters); });
+    const publish = vi.spyOn(wire, "publish");
+    let revoked = false;
+    const authorize = vi.fn(async () => { if (revoked) throw Error("panel closed or permission revoked"); });
+    const write = kind === "channel" ? client.publishDoc(channel, "blocked", undefined, authorize)
+      : kind === "wiki" ? client.publishWikiDoc(channel, "Fixture", "blocked", undefined, "fixture", authorize)
+      : client.publishDocComment(channel, "blocked", { parentId: "fixture-parent" }, authorize);
+    revoked = true; release();
+    await expect(write).rejects.toThrow("panel closed or permission revoked");
+    expect(authorize).toHaveBeenCalledOnce();
+    expect(publish).not.toHaveBeenCalled();
+  });
   it("keeps a page's address when its display title changes", async () => {
     const { client } = fixture();
     const first = await client.publishWikiDoc(channel, "release-checklist", "# Release Process");

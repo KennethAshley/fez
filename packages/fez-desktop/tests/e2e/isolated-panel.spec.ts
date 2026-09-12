@@ -1,15 +1,56 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
-const code = readFileSync(new URL("../../../fez-elevenlabs/dist/gui.js", import.meta.url), "utf8");
+const code = `var __fezExt = { default(api) {
+  const { createElement: h, useState, useEffect } = api.React;
+  function Settings() {
+    const [value, setValue] = useState("");
+    const [error, setError] = useState("");
+    useEffect(() => { api.prefs.get("color").then(value => setValue(value || "")); }, []);
+    async function save(value) {
+      try { await api.prefs.set("color", value); setValue(value); }
+      catch (error) { setError(String(error)); }
+    }
+    return h("div", null,
+      h("select", {"aria-label": "Color", value, onChange: event => save(event.target.value)},
+        h("option", {value: ""}, "Default"), h("option", {value: "bronze"}, "Bronze"), h("option", {value: "silver"}, "Silver")),
+      error ? h("p", {role: "alert"}, error) : null);
+  }
+  api.registerSettingsPanel("Example", () => h(Settings));
+} };`;
 
-test("the shipped voice panel saves through the narrow broker and shows denied writes", async ({ page }) => {
+test("embedded controls forward only host shortcuts and focus traversal through the broker", async ({ page }) => {
+  await page.addInitScript(() => {
+    const shortcuts: string[] = [];
+    Object.assign(window, { panelShortcuts: shortcuts, __TAURI_INTERNALS__: { invoke: async (_command: string, { request }: { request: { op: string; shortcut: string } }) => {
+      if (request.op === "host_shortcut") { shortcuts.push(request.shortcut); return null; }
+      if (request.op === "bootstrap") return {
+        name: "keyboard-test", styles: "", client: false, agents: null,
+        code: `var __fezExt = {default(api) { api.registerSettingsPanel("keyboard", host => { host.innerHTML = '<input aria-label="Name"><button>Save</button>'; return () => {}; }); }};`,
+      };
+      throw Error("unexpected request");
+    } } });
+  });
+  await page.goto("/isolated-panel.html");
+  await page.evaluate(() => { document.documentElement.dataset.embedded = "true"; });
+  await page.getByRole("textbox", { name: "Name" }).fill("normal typing");
+  await page.keyboard.press("Meta+k");
+  await page.keyboard.press("Meta+,");
+  await page.keyboard.press("Escape");
+  await page.getByRole("textbox", { name: "Name" }).focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.getByRole("button", { name: "Save" }).focus();
+  await page.keyboard.press("Tab");
+  expect(await page.evaluate(() => Reflect.get(window, "panelShortcuts"))).toEqual(["palette", "settings", "escape", "focus_previous", "focus_next"]);
+});
+
+test("isolated settings save through the narrow broker and keep denied writes unsaved", async ({ page }) => {
   await page.addInitScript(({ code }) => {
     const data: Record<string, unknown> = {};
     Object.assign(window, { __TAURI_INTERNALS__: { invoke: async (command: string, args: { request: { op: string; key: string; value: unknown } }) => {
       if (command !== "isolated_panel_request") throw new Error(`native command denied: ${command}`);
       const { op, key, value } = args.request;
-      if (op === "bootstrap") return { name: "elevenlabs", code, styles: "", client: true, agents: [["a".repeat(64), "fez"]] };
+      if (op === "bootstrap") return { name: "settings-test", code, styles: "", client: false, agents: null };
       if (op === "get_preference") return key in data ? { value: data[key] } : {};
       if (op === "set_preference") {
         if (data[key]) throw new Error("extension requires ui permission");
@@ -20,15 +61,12 @@ test("the shipped voice panel saves through the narrow broker and shows denied w
     } } });
   }, { code });
   await page.goto("/isolated-panel.html");
-  await expect(page.getByText("@fez", { exact: true })).toBeVisible();
-  const select = page.getByRole("combobox");
-  await select.selectOption("CwhRBWXzGAHq8TQ4Fs17");
-  await expect(select).toHaveValue("CwhRBWXzGAHq8TQ4Fs17");
-  await select.selectOption("EXAVITQu4vr4xnSDxMaL");
+  const select = page.getByRole("combobox", { name: "Color" });
+  await select.selectOption("bronze");
+  await expect(select).toHaveValue("bronze");
+  await select.selectOption("silver");
   await expect(page.getByRole("alert")).toContainText("ui permission");
-  await expect(select).toHaveValue("CwhRBWXzGAHq8TQ4Fs17");
-  await page.getByRole("button", { name: "Preview Roger" }).click();
-  await expect(page.getByRole("alert")).toContainText("preview is unavailable");
+  await expect(select).toHaveValue("bronze");
 });
 
 test("mount callbacks run in the isolated document and dispose when the panel closes", async ({ page }) => {

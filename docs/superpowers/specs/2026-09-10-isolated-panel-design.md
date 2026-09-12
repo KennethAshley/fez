@@ -9,8 +9,8 @@ the legacy GUI host; unknown or malformed declarations fail before evaluation.
 This does not sandbox headless/executable parts. Older desktop releases ignore
 the new field, so packages relying on it require the updated desktop build.
 
-The main loader registers a launcher without evaluating the selected bundle
-or injecting its CSS. Rust opens a separate nonpersistent webview at a fixed
+The main loader registers an embedded panel host without evaluating the selected bundle
+or injecting its CSS. Rust embeds a separate nonpersistent child webview in the main window at a fixed
 bundled entry; navigation and popups are denied. The runner supports both
 legacy React elements and mount/dispose callbacks. It never falls back to
 executing a failed panel in main.
@@ -40,7 +40,7 @@ Existing native commands still implement keychain set/has and browser opening.
 No keychain value is returned by the API. Config/secret inputs are bounded.
 
 Requests are rechecked before dispatch and before returning data. Host requests
-expire after 30 seconds; closing a window drops pending replies. Each panel
+expire after 30 seconds; leaving the panel or reloading main drops pending replies. Each panel
 allows at most 16 requests in flight. Already dispatched work can finish;
 revocation/close does not roll back writes or stop an active HTTP request.
 
@@ -71,8 +71,7 @@ global Settings. Existing recorded grants are not silently expanded.
 This is not a complete network sandbox: resource CSP blocks direct fetch,
 WebSocket and media loads, but the real WKWebView probe confirms WebRTC/STUN
 traffic remains possible. Separate webviews do not guarantee separate OS
-processes. Voice previews, process execution, live subscriptions, inline
-embedding and full migration of other GUI surfaces remain later work.
+processes. Voice previews, process execution, live subscriptions, full migration of other GUI surfaces remain later work.
 
 ## Verification
 
@@ -87,3 +86,16 @@ The manual bundled WKWebView probe verifies private browser storage, preference
 writes, config and simulated secret routing, large JSON and binary channel
 delivery, cross-extension denial, plugin/native denials, CSP, navigation and
 popups. It separately reports the known WebRTC limitation.
+
+## Embedded presentation — 2026-09-12
+
+The same native session and webview-label checks now back an inline Settings
+slot, including source-backed GitHub and Slack settings. Channel shortcuts
+use a larger in-app modal. Main alone sets the child bounds, appearance and
+visibility; host overlays hide it, unmount closes it, and main navigation
+revokes and closes all children. A closed shortcut enum supports Escape,
+settings, command palette and focus traversal without forwarding arbitrary
+keystrokes. Tauri's existing `unstable` feature exposes child webviews.
+
+Installed packages without the runtime declaration remain on the legacy
+host. Updating the desktop does not change their manifests or permissions.

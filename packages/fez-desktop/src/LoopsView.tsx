@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { FezClient, WireEvent } from "@fezchat/client";
+import { INPUT_WAIT_MS, type FezClient, type PendingInput, type WireEvent } from "@fezchat/client";
 import { foldLedger } from "./BenchProposals";
 
 /**
@@ -15,15 +15,14 @@ import { foldLedger } from "./BenchProposals";
  *
  * Two bands, in the order that matters: what is BLOCKED on your
  * signature, then what is merely running. Blocked items carry their
- * real buttons, because a list that makes you navigate somewhere else
- * to act is a list you stop opening.
+ * real buttons; private forms open in their original conversation.
  */
 
 const CHOICE_EMOJI = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"];
 
 interface Loop {
   id: string;
-  kind: "approval" | "choice" | "proposal" | "workflow" | "working";
+  kind: "approval" | "choice" | "question" | "proposal" | "workflow" | "working";
   glyph: string;
   who: string;
   where?: string;
@@ -57,11 +56,13 @@ export function OpenLoops({
   client,
   scan,
   onOpenMessage,
+  onOpenQuestion,
 }: {
   client: FezClient;
   /** Relay-scanned approval/choice messages — see the note in App.tsx. */
   scan?: { msgs: WireEvent[]; answered: Set<string> };
   onOpenMessage: (channelId: string, msgId: string) => void;
+  onOpenQuestion: (request: PendingInput) => void;
 }) {
   const [proposals, setProposals] = useState<ReturnType<typeof foldLedger>>();
   const [, bump] = useState(0);
@@ -79,6 +80,17 @@ export function OpenLoops({
   }, [loadProposals]);
 
   const loops: Loop[] = [];
+
+  const questions = client.waitingInputs();
+  const requestedAt = new Map(client.inputHistory().map(entry => [entry.id, entry.requestedAt]));
+  for (const request of questions) {
+    loops.push({
+      id: request.id, kind: "question", glyph: "?", who: client.displayName(request.agentPk),
+      where: request.origin?.kind === "channel" ? client.channelRef(request.origin.channelId)?.name : undefined,
+      title: request.form.message, ts: requestedAt.get(request.id) ?? request.expiresAt - INPUT_WAIT_MS, blocked: true,
+      open: () => onOpenQuestion(request),
+    });
+  }
 
   // ── approvals and choices with no answer (from the relay scan) ────
   const nameOf = (channelId: string) => client.channelRef(channelId);
@@ -168,6 +180,7 @@ export function OpenLoops({
   // ── agents mid-turn right now ──────────────────────────────────────
   const now = Date.now();
   for (const [agent, work] of client.workingAgents()) {
+    if (questions.some(request => client.displayName(request.agentPk) === agent)) continue;
     if (now - work.ts > 30_000) continue;
     loops.push({
       id: `working:${agent}`,
@@ -220,6 +233,10 @@ export function OpenLoops({
                   <div className="loop-actions">
                     <button className="agent-action approve-btn" onClick={() => loop.act?.(true)}>✓ approve</button>
                     <button className="agent-action danger" onClick={() => loop.act?.(false)}>✕ deny</button>
+                  </div>
+                ) : loop.kind === "question" ? (
+                  <div className="loop-actions">
+                    <button className="agent-action" onClick={loop.open}>Answer question →</button>
                   </div>
                 ) : null}
               </div>

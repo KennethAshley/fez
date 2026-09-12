@@ -5,6 +5,10 @@ and agent attachment are available in the desktop GUI. Once set up, the
 browser starts when an agent first opens a page and stops with its connection.
 No login service or terminal command is needed after a reboot.
 
+Settings are declared in `src/gui.json` and rendered by Fez. The GUI ships
+JSON only; its process actions still require the recorded `processes` grant
+and run this package's own `fez-browser` binary.
+
 ## Use in Fez
 
 1. Open **Extensions → Browser → review & install**, then grant the listed permissions.

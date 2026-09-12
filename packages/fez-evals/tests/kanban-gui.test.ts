@@ -82,6 +82,7 @@ function load() {
     registerPageView: (name: string, match: View["match"], render: View["render"]) => views.push({ name, match, render }),
     registerBlockRenderer: (lang: string, render: unknown) => blocks.set(lang, render),
     registerGuiCommand: () => {},
+    registerMessageDecorator: () => {},
   });
   return { views, blocks, reset: () => (cursor = 0) };
 }
@@ -103,7 +104,10 @@ describe("the kanban gui bundle as shipped", () => {
   it("registers a page view — the failure mode is registering nothing", () => {
     expect(views).toHaveLength(1);
     expect(view.name).toBe("▦ board");
-    expect(blocks.has("fez:board")).toBe(true);
+    expect(blocks.size).toBe(0); // Main-window blocks are manifest data, not executable GUI registrations.
+    const manifest = JSON.parse(readFileSync(new URL("../../fez-kanban/package.json", import.meta.url), "utf8"));
+    expect(manifest.fez.guiRuntime).toBe("isolated-page");
+    expect(manifest.fez.guiContributions.blocks[0].language).toBe("fez:board");
   });
 
   it("opens board documents as boards and leaves prose alone", () => {

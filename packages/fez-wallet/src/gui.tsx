@@ -1026,7 +1026,10 @@ export default function activate(api: GuiExtensionApi): void {
       }
     }, [say, complain]);
 
-    const onX402Network = useCallback((next: string) => {
+    const networkChanging = useRef(false);
+    const onX402Network = useCallback(async (next: string) => {
+      if (networkChanging.current) return;
+      networkChanging.current = true;
       // Flipping to mainnet is the one click in this panel that turns play
       // money into real money — it gets a confirm the TAO selector (which
       // moves between two funded-on-purpose chains) doesn't need.
@@ -1034,15 +1037,16 @@ export default function activate(api: GuiExtensionApi): void {
       // straight into mainnet — name the effective numbers here, or the
       // owner confirms a network flip with no idea agents can already
       // spend real money unattended up to whatever they last set for testnet.
-      if (
-        next === "base" &&
-        !confirm(
-          `Flip x402 payments to Base MAINNET? Agents will spend REAL USDC — auto-approving up to $${autoSaved} per call, $${capSaved}/day, without asking you.`
-        )
-      )
-        return;
-      void writeX402({ network: next }, `✓ x402 now on ${x402NetworkLabel(next)}`);
-    }, [writeX402, autoSaved, capSaved]);
+      try {
+        if (next === "base") {
+          if (typeof api.confirm !== "function") throw Error("Update Fez to confirm switching to Base mainnet.");
+          if (!await api.confirm({ title: "Flip x402 payments to Base MAINNET?",
+            body: `Agents will spend REAL USDC — auto-approving up to $${autoSaved} per call, $${capSaved}/day, without asking you.` })) return;
+        }
+        await writeX402({ network: next }, `✓ x402 now on ${x402NetworkLabel(next)}`);
+      } catch (error) { complain(`✗ not saved: ${error instanceof Error ? error.message : String(error)}`); }
+      finally { networkChanging.current = false; }
+    }, [writeX402, autoSaved, capSaved, complain]);
 
     const saveX402Numbers = useCallback(() => {
       const patch: Record<string, unknown> = {};

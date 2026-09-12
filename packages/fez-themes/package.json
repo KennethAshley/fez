@@ -1,21 +1,26 @@
 {
   "name": "@fezchat/themes",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "The classics, worn by fez — Dracula, Nord, Catppuccin, Solarized, One Dark, Tokyo Night, GitHub, Rosé Pine, Everforest. Each a light/dark pair, mapped onto fez's tokens from the projects' published palettes.",
   "type": "module",
   "fez": {
     "type": "extension",
     "parts": {
-      "gui": "dist/gui.js"
+      "gui": "dist/gui.json"
     },
-    "permissions": ["ui"]
+    "guiRuntime": "declarative",
+    "permissions": [
+      "ui"
+    ]
   },
   "scripts": {
-    "build": "esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
+    "build": "node scripts/build.mjs",
     "check": "tsc --noEmit"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "devDependencies": {
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0"

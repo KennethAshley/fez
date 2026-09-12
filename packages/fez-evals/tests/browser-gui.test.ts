@@ -1,55 +1,79 @@
+// @vitest-environment jsdom
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { resolve } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import React, { act } from "../../fez-desktop/node_modules/react/index.js";
+import { createRoot } from "../../fez-desktop/node_modules/react-dom/client.js";
+import { DeclarativeSettings, type SettingsHost } from "../../fez-desktop/src/DeclarativeSettings.js";
+import { parseDeclarativeGui } from "../../fez-desktop/src/declarative-gui.js";
 
-interface Element { type: unknown; props: Record<string, unknown>; children: unknown[] }
-function panel(permissions = true, failSetup = false) {
-  const code = readFileSync(new URL("../../fez-browser/dist/gui.js", import.meta.url), "utf8");
-  let render: () => Element;
-  let cursor = 0;
-  const states: unknown[] = [];
-  const calls: unknown[] = [];
-  const h = (type: unknown, props: Record<string, unknown>, ...children: unknown[]): Element => ({ type, props: props ?? {}, children });
-  const React = {
-    createElement: h,
-    useState: (initial: unknown) => {
-      const slot = cursor++;
-      if (states.length <= slot) states.push(initial);
-      return [states[slot], (value: unknown) => { states[slot] = value; }];
-    },
-    // Startup polling is exercised by the browser walkthrough; these cases
-    // target permission gating and the setup action's host boundary.
-    useEffect: () => {},
+const sections = parseDeclarativeGui(readFileSync(resolve(__dirname, "../../fez-browser/src/gui.json"), "utf8")).settings!;
+let root: ReturnType<typeof createRoot>;
+let host: SettingsHost;
+beforeEach(() => {
+  document.body.innerHTML = "<div id='root'></div>";
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  root = createRoot(document.getElementById("root")!);
+  host = { permissions: ["ui", "processes"],
+    run: vi.fn(async () => ({ code: 0, stdout: '{"phase":"missing","message":"Set up first"}', stderr: "" })),
+    spawn: vi.fn(async () => { throw Error("Download unavailable"); }), isRunning: vi.fn(async () => false),
+    agents: () => [], readPreference: async () => undefined, writePreference: async () => {}, allowPreview: () => {},
   };
-  const api = { React, registerSettingsPanel: (_name: string, callback: () => Element) => { render = callback; },
-    ...(permissions ? {
-      processes: { run: async () => ({ code: 0, stdout: JSON.stringify({ phase: "missing", message: "Set up the browser" }), stderr: "" }) },
-      agents: { spawn: async (...args: unknown[]) => { calls.push(args); if (failSetup) throw new Error("Download unavailable"); return 123; }, isRunning: async () => true },
-    } : {}),
-  };
-  new Function(`${code};return __fezExt`)().default(api);
-  function draw(): Element { cursor = 0; const root = render(); return (root.type as () => Element)(); }
-  function nodes(node: unknown): Element[] {
-    if (!node || typeof node !== "object") return [];
-    const el = node as Element;
-    return [el, ...(el.children ?? []).flatMap(nodes)];
-  }
-  return { draw, nodes, calls };
-}
+});
+afterEach(async () => { await act(async () => root.unmount()); vi.unstubAllGlobals(); vi.useRealTimers(); });
+const render = () => act(async () => root.render(React.createElement(DeclarativeSettings, { sections, host })));
+const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === label)!;
 
-describe("Browser settings panel", () => {
-  it("explains a missing process grant instead of showing a setup button that cannot work", () => {
-    const p = panel(false);
-    const tree = p.draw();
-    expect(JSON.stringify(tree)).toMatch(/permission|grant/i);
-    expect(p.nodes(tree).filter(n => n.type === "button")).toHaveLength(0);
+describe("Browser declarative settings", () => {
+  it("explains a missing process grant without offering unusable actions or polling", async () => {
+    host.permissions = ["ui"];
+    await render();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("processes");
+    expect(document.querySelectorAll("button")).toHaveLength(0);
+    expect(host.run).not.toHaveBeenCalled();
   });
-
-  it("runs setup through the package-owned background program and shows failures", async () => {
-    const p = panel(true, true);
-    const button = p.nodes(p.draw()).find(n => n.type === "button" && n.children.includes("Set up browser"))!;
-    expect(button).toBeDefined();
-    await (button.props.onClick as () => Promise<void>)();
-    expect(p.calls).toEqual([["fez-browser", { name: "fez-browser-setup", env: { FEZ_BROWSER_ACTION: "setup" } }]]);
-    expect(JSON.stringify(p.draw())).toContain("Download unavailable");
+  it("uses the package-owned setup job and displays spawn failures", async () => {
+    await render();
+    await act(async () => button("Set up browser").click());
+    expect(host.spawn).toHaveBeenCalledWith("fez-browser", "fez-browser-setup", { FEZ_BROWSER_ACTION: "setup" });
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Download unavailable");
+  });
+  it("detects stopped setup jobs, permits retry, and stops polling when the panel closes", async () => {
+    vi.useFakeTimers();
+    host.run = vi.fn(async () => ({ code: 0, stdout: '{"phase":"working","message":"Downloading"}', stderr: "" }));
+    await render();
+    expect(document.body.textContent).toContain("Setup stopped before finishing");
+    expect(button("Set up browser").disabled).toBe(false);
+    expect(button("Test browser").disabled).toBe(false);
+    expect(host.isRunning).toHaveBeenCalledWith("fez-browser", "fez-browser-setup");
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(host.run).toHaveBeenCalledTimes(2);
+    await act(async () => root.render(null));
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(host.run).toHaveBeenCalledTimes(2);
+  });
+  it("shows ready state, sends the test action, and reports both failure and success", async () => {
+    host.run = vi.fn(async (_bin, args) => ({ code: args[0] === "test" ? 1 : 0, stdout: '{"phase":"ready","message":"Ready to browse"}', stderr: "Browser unavailable" }));
+    await render();
+    expect(button("Set up browser")).toBeUndefined();
+    await act(async () => button("Test browser").click());
+    expect(host.run).toHaveBeenCalledWith("fez-browser", ["test"]);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Browser unavailable");
+    vi.mocked(host.run).mockResolvedValue({ code: 0, stdout: "", stderr: "" });
+    await act(async () => button("Test browser").click());
+    expect(document.body.textContent).toContain("Browser test passed. You can ask an attached agent to browse.");
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+  it("rejects malformed status output and disables duplicate setup while starting", async () => {
+    host.run = vi.fn(async () => ({ code: 0, stdout: '{"phase":"<script>","message":"oops"}', stderr: "" }));
+    let complete!: () => void;
+    host.spawn = vi.fn(() => new Promise<void>(resolve => { complete = resolve; }));
+    await render();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Unexpected process status");
+    await act(async () => { button("Set up browser").click(); button("Set up browser").click(); });
+    expect(host.spawn).toHaveBeenCalledTimes(1);
+    expect(button("Set up browser").disabled).toBe(true);
+    await act(async () => complete());
+    expect(document.body.textContent).toContain("Starting browser setup…");
   });
 });

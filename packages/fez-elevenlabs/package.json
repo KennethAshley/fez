@@ -1,12 +1,18 @@
 {
   "name": "@fezchat/elevenlabs",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
-  "description": "Agents speak \u2014 ElevenLabs TTS as a fez skill. fez_speak(channel, text) posts a voice note in the agent's own stable voice.",
+  "description": "Agents speak — ElevenLabs TTS as a fez skill. fez_speak(channel, text) posts a voice note in the agent's own stable voice.",
   "type": "module",
   "exports": {
-    "./dist/acceptance.js": { "types": "./src/acceptance.ts", "import": "./dist/acceptance.js" },
-    "./dist/observation.js": { "types": "./src/observation.ts", "import": "./dist/observation.js" },
+    "./dist/acceptance.js": {
+      "types": "./src/acceptance.ts",
+      "import": "./dist/acceptance.js"
+    },
+    "./dist/observation.js": {
+      "types": "./src/observation.ts",
+      "import": "./dist/observation.js"
+    },
     "./dist/*": "./dist/*"
   },
   "fez": {
@@ -18,10 +24,11 @@
           "dist/mcp.js"
         ]
       },
-      "gui": "dist/gui.js"
+      "gui": "dist/gui.json"
     },
     "permissions": [
       "network:api.elevenlabs.io",
+      "network:storage.googleapis.com",
       "network:relay",
       "publish",
       "read:channels",
@@ -29,10 +36,10 @@
       "ui"
     ],
     "minFezVersion": "0.2.0",
-    "guiRuntime": "isolated-settings"
+    "guiRuntime": "declarative"
   },
   "scripts": {
-    "build": "esbuild src/mcp.ts src/acceptance.ts src/observation.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js",
+    "build": "esbuild src/mcp.ts src/acceptance.ts src/observation.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && cp src/gui.json dist/gui.json && rm -f dist/gui.js",
     "check": "tsc --noEmit",
     "test": "vitest --run"
   },

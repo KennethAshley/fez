@@ -1,3 +1,5 @@
+import { matchPageDocument } from "../../../src/extensions/gui-contributions.js";
+
 /**
  * A kanban board that IS a markdown document.
  *
@@ -93,10 +95,7 @@ export interface Board {
  * button, not a surprise.
  */
 export function isBoard(markdown: string): boolean | "default" {
-  if (settingsFence(markdown)) return "default";
-  const board = parseBoard(markdown);
-  const withCards = board.columns.filter((column) => column.cards.length > 0);
-  return withCards.length >= 2 || (withCards.length >= 1 && board.columns.length >= 2);
+  return matchPageDocument(markdown, { fence: BOARD_LANG, checklistSections: 2 });
 }
 
 function settingsFence(markdown: string): string | undefined {

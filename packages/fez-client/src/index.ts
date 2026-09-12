@@ -1502,9 +1502,11 @@ export class FezClient {
     );
   }
 
-  async publishDoc(channelId: string, content: string, baseId?: string): Promise<WireEvent> {
+  /** Scoped hosts recheck their caller after version reads, immediately before signing. */
+  async publishDoc(channelId: string, content: string, baseId?: string, beforePublish?: () => Promise<void>): Promise<WireEvent> {
     const latest = (await this.docVersions(channelId)).at(-1);
     assertDocBase(latest, baseId);
+    await beforePublish?.();
     const event = await this.wire.publish({
       kind: K.DOC,
       created_at: Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1),
@@ -1609,11 +1611,13 @@ export class FezClient {
   async publishDocComment(
     channelId: string,
     text: string,
-    opts: { anchor?: string; anchorContext?: DocAnchor; writerPk?: string; slug?: string; parentId?: string; mentionPks?: string[]; resolve?: boolean } = {}
+    opts: { anchor?: string; anchorContext?: DocAnchor; writerPk?: string; slug?: string; parentId?: string; mentionPks?: string[]; resolve?: boolean } = {},
+    beforePublish?: () => Promise<void>
   ): Promise<WireEvent> {
     if (opts.writerPk && !/^[a-f0-9]{64}$/.test(opts.writerPk)) throw new Error("Invalid writer pubkey");
     if (opts.parentId) await this.docComments({ channelId, slug: opts.slug });
     const related = [...this.docCommentEvents.values()].filter(event => event.id === opts.parentId || event.tags.some(t => t[0] === "e" && t[1] === opts.parentId));
+    await beforePublish?.();
     const event = await this.wire.publish({
       kind: K.DOC_COMMENT,
       created_at: Math.max(Math.floor(Date.now() / 1000), ...related.map(event => event.created_at + 1)),
@@ -1634,10 +1638,11 @@ export class FezClient {
   }
 
   /** An existing page's address stays stable even when its displayed title changes. */
-  async publishWikiDoc(channelId: string, name: string, content: string, baseId?: string, slug = wikiSlug(name)): Promise<WireEvent> {
+  async publishWikiDoc(channelId: string, name: string, content: string, baseId?: string, slug = wikiSlug(name), beforePublish?: () => Promise<void>): Promise<WireEvent> {
     if (!slug || wikiSlug(slug) !== slug) throw new Error("Invalid document address.");
     const latest = (await this.wikiVersions(slug)).at(-1);
     assertDocBase(latest, baseId);
+    await beforePublish?.();
     const event = await this.wire.publish({
       kind: K.DOC,
       created_at: Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1),
