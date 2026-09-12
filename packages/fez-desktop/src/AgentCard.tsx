@@ -4,12 +4,6 @@ import { hasFace } from "./agent-face";
 /**
  * One agent, at roster size.
  *
- * The creature is unboxed on purpose. fez's section rule is "label +
- * hairline, never a bordered card", and these sprites are high-contrast
- * pixel art that already carry their own implicit frame — a filled card
- * frames them twice and turns the roster into a grid of swatches. The
- * card is the page ground plus a hairline; the creature floats on it.
- *
  * A persona that has never spawned has no face, and that is the truth
  * rather than a gap to paper over: the sprite is generated from the
  * agent's key, and `get_pubkey` only READS the keychain, so no key
@@ -90,7 +84,7 @@ export default function AgentCard({
       {description ? (
         <span className="agent-card-desc">{description}</span>
       ) : (
-        <span className="agent-card-desc dim">no description — orchestrators route on it</span>
+        <span className="agent-card-desc dim">Add a description so your team knows when to ask for help.</span>
       )}
       {record && <span className="agent-card-desc mention-key">{record}</span>}
       {skills.length > 0 ? (

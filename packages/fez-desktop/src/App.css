@@ -15,6 +15,7 @@
   palette is the app's, the triangle is the brand's, and one of them
   changing should never drag the other with it. */
   --brand: #FF6A00;
+  --font-ui: -apple-system, "SF Pro Text", Helvetica, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", menlo, monospace;
   --bg-rail: #17191a;
   --hairline: #32302f;
@@ -26,9 +27,10 @@ html, body, #root { height: 100%; }
 body {
   background: var(--bg0);
   color: var(--fg);
-  font: 14px/1.5 -apple-system, "SF Pro Text", Helvetica, sans-serif;
+  font: 14px/1.5 var(--font-ui);
   overflow: hidden;
 }
+:where(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .boot { height: 100%; display: grid; place-items: center; color: var(--fg-dim); background: var(--bg0); }
 .agent-input {
   position: fixed; right: 20px; bottom: 20px; z-index: 150;
@@ -167,7 +169,7 @@ body {
   border-right: 1px solid var(--hairline, var(--bg2));
   padding: 0 8px 0;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13px;
   /* hidden, not auto: .rail-scroll is the scrolling child, and a rail
      that scrolls as a whole takes the self card out of view with it. */
   display: flex;
@@ -197,7 +199,7 @@ body {
 .community { margin-bottom: 14px; margin-top: 18px; }
 .community + .community { margin-top: 14px; }
 .community-name {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+  font-size: 12px; font-family: var(--font-ui); font-weight: 500;
   color: var(--fg-dim); padding: 4px 10px;
   display: flex; align-items: center; gap: 6px;
 }
@@ -208,7 +210,7 @@ body {
 .channel {
   display: flex; align-items: center; gap: 6px; width: 100%;
   background: none; border: 0; color: var(--fg-dim); font: inherit;
-  padding: 5px 10px; border-radius: 6px; cursor: pointer; text-align: left;
+  padding: 6px 10px; min-height: 32px; border-radius: 6px; cursor: pointer; text-align: left;
   position: relative;
 }
 /* ── channel states ────────────────────────────────────────
@@ -321,16 +323,15 @@ body {
   font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
 }
 .timeline {
-  flex: 1; overflow-y: auto; padding: 14px 18px;
-  padding: 14px 22px;
+  flex: 1; overflow-y: auto; padding: 20px 26px;
 }
 
 .bubble {
   position: relative;
-  margin: 0 -10px; padding: 4px 10px; border-radius: 6px; max-width: none;
+  margin: 0 -10px; padding: 7px 10px; border-radius: 6px; max-width: none;
   display: grid; grid-template-columns: 30px minmax(0, 1fr); column-gap: 12px;
 }
-.bubble-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 2px; }
+.bubble-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
 .author {
   font-weight: 600; color: var(--yellow);
   font-size: 13px;
@@ -340,7 +341,9 @@ body {
 .bubble-body {
   white-space: pre-wrap; overflow-wrap: break-word;
   background: none; padding: 0 0 0 1px; border-radius: 0;
+  line-height: 1.65;
 }
+.bubble-body > :is(p, ul, ol, blockquote) { max-width: 78ch; }
 .bubble.mine .bubble-body {
   background: var(--bg-mine);
   background: none;
@@ -368,12 +371,12 @@ body {
 }
 
 .typing { padding: 0 18px 4px; color: var(--fg-dim); font-size: 12px; font-style: italic; }
-.composer { padding: 10px 18px 16px; position: relative; }
+.composer { padding: 12px 26px 18px; position: relative; }
 .composer textarea {
   width: 100%; border: 1px solid var(--bg2); border-radius: 8px;
   color: var(--fg); font: inherit; padding: 10px 14px; outline: none;
   resize: none; line-height: 1.45; display: block; max-height: 140px;
-  font-family: var(--font-mono); font-size: 13px;
+  font-family: var(--font-ui); font-size: 14px;
   background: var(--bg0); border-color: var(--hairline);
 }
 .composer textarea:focus {
@@ -826,7 +829,7 @@ select.ob-input:hover { border-color: var(--accent); }
 .agent-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .agent-action {
   background: var(--bg2); border: 0; color: var(--fg); font: inherit; font-size: 12px;
-  padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  padding: 5px 11px; min-height: 30px; border-radius: 6px; cursor: pointer;
 }
 .agent-action:hover { color: var(--accent); }
 .agent-action:disabled { opacity: 0.6; cursor: default; }
@@ -862,8 +865,8 @@ select.ob-input:hover { border-color: var(--accent); }
 .manage-sub { color: var(--fg-dim); font-size: 12px; margin-bottom: 10px; }
 .manage-notice { background: var(--bg2); border-radius: 6px; padding: 6px 10px; font-size: 12px; margin-bottom: 10px; }
 .manage-section {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim);
-  margin: 14px 0 6px;
+  font-size: 12px; font-weight: 500; color: var(--fg-dim);
+  margin: 20px 0 10px;
   display: flex; align-items: center; gap: 8px;
 }
 .manage-section::after { content: ""; flex: 1; height: 1px; background: var(--hairline); order: 1; }
@@ -928,22 +931,25 @@ select.ob-input:hover { border-color: var(--accent); }
    between siblings in the list. */
 .rail > .home-link { margin-top: 6px; }
 .home-section {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim);
-  margin: 18px 0 8px;
+  font-size: 12px; font-weight: 500; color: var(--fg-dim);
+  margin: 24px 0 10px;
   display: flex; align-items: center; gap: 8px;
 }
 .home-section::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
 .home-section:first-child { margin-top: 0; }
+.timeline.home { padding: 24px 32px; }
+.home > :is(.home-section, .inbox-row, .pane-empty) { max-width: 900px; }
 /* Ten filled cards at equal weight gave the eye nowhere to land, and a
    rule between every row just traded one grid for another. Nothing
    separates them but air and the creature holding the left column;
    hover is what draws the row. */
 .inbox-row {
-  display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left;
-  background: none; border: 0; color: var(--fg); font: inherit; padding: 8px;
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; text-align: left;
+  background: none; border: 0; color: var(--fg); font: inherit; padding: 12px 8px;
   border-radius: 8px; cursor: pointer; position: relative;
 }
-.inbox-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.inbox-main { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
+.inbox-main .search-snippet { font-size: 14px; line-height: 1.55; }
 .inbox-glyph { width: 22px; text-align: center; color: var(--fg-dim); font-size: 14px; flex: none; }
 .inbox-row:hover { background: color-mix(in srgb, var(--bg2) 45%, transparent); }
 .inbox-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
@@ -955,7 +961,7 @@ select.ob-input:hover { border-color: var(--accent); }
    row nested in a field to display:block — which is why a skill's name
    and its description rendered welded together with no gap. A field's
    label is its direct child; a row inside the field owns its own layout. */
-.settings-field > label { display: block; font-size: 11px; color: var(--fg-dim); margin-bottom: 3px; }
+.settings-field > label { display: block; font-size: 12px; color: var(--fg-dim); margin-bottom: 6px; }
 .settings-hint { color: var(--fg-dim); font-size: 12px; margin-bottom: 8px; }
 .pane .ob-key {
   display: block; word-break: break-all; background: var(--bg0); border: 1px solid var(--bg2);
@@ -1982,13 +1988,13 @@ button.author:hover { text-decoration: underline; }
 .settings-rail {
   width: 220px; min-width: 220px; background: var(--bg-rail);
   border-right: 1px solid var(--hairline); padding: 0 8px 12px;
-  font-family: var(--font-mono); font-size: 12.5px;
+  font-family: var(--font-ui); font-size: 13px;
   display: flex; flex-direction: column; overflow-y: auto;
 }
 .settings-back {
   display: flex; align-items: center; gap: 6px; width: 100%;
   background: none; border: 0; color: var(--fg-dim); font: inherit;
-  padding: 5px 10px; border-radius: 6px; cursor: pointer; text-align: left;
+  padding: 8px 10px; border-radius: 6px; cursor: pointer; text-align: left;
   margin-bottom: 8px;
 }
 .settings-back:hover { background: color-mix(in srgb, var(--bg2) 55%, transparent); color: var(--fg); }
@@ -1996,8 +2002,8 @@ button.author:hover { text-decoration: underline; }
 .settings-group { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
 .settings-nav-item {
   position: relative;
-  background: none; border: 0; color: var(--fg-dim); font: inherit; font-size: 12.5px;
-  text-align: left; padding: 5px 10px; border-radius: 6px; cursor: pointer;
+  background: none; border: 0; color: var(--fg-dim); font: inherit; font-size: 13px;
+  text-align: left; padding: 8px 10px; border-radius: 6px; cursor: pointer;
 }
 .settings-nav-item:hover { background: color-mix(in srgb, var(--bg2) 55%, transparent); color: var(--fg); }
 .settings-nav-item.active {
@@ -2063,7 +2069,7 @@ button.author:hover { text-decoration: underline; }
    separately below, because they want different numbers — 680 alone let
    a description run tight at 48ch while a wss:// URL got a 608px input.
    The left gutter keeps the column off the rail. */
-.settings-col { max-width: 680px; padding: 40px 36px 64px 72px; font-size: 13px; }
+.settings-col { max-width: 760px; padding: 36px 40px 64px; font-size: 13px; }
 /* Extension pages break the core measure: 680px was tuned for label/desc
    rows, but an extension draws its own layouts — ledgers, account blocks,
    action rows — and squeezing a money table into a prose column wraps
@@ -2075,22 +2081,23 @@ button.author:hover { text-decoration: underline; }
    the rows; there is no bordered card anywhere in here. */
 .set-head { margin-bottom: 26px; }
 .set-title {
-  font-family: var(--font-mono); font-size: 19px; font-weight: 600;
-  color: var(--fg); letter-spacing: -0.2px; margin: 0;
+  font-family: var(--font-ui); font-size: 24px; font-weight: 600; line-height: 1.3;
+  color: var(--fg); letter-spacing: -0.5px; margin: 0;
 }
-.set-sub { font-size: 12.5px; color: var(--fg-dim); margin-top: 5px; max-width: 52ch; }
+.set-title::first-letter { text-transform: uppercase; }
+.set-sub { font-size: 14px; line-height: 1.65; color: var(--fg-dim); margin-top: 8px; max-width: 56ch; }
 
 /* One setting is one row: meaning on the left, control right at a
    predictable x. Short values sit alone out there, and that is the
    trade — a common x is what makes the column scannable. */
 .set-row {
   display: grid; grid-template-columns: 1fr auto; gap: 4px 28px;
-  align-items: center; padding: 13px 0;
+  align-items: center; padding: 18px 0;
   border-bottom: 1px solid var(--hairline);
 }
 .set-row:last-child { border-bottom: 0; }
-.set-label { font-size: 13px; color: var(--fg); }
-.set-desc { font-size: 12px; color: var(--fg-dim); margin-top: 3px; max-width: 56ch; grid-column: 1; }
+.set-label { font-size: 14px; color: var(--fg); }
+.set-desc { font-size: 13px; line-height: 1.6; color: var(--fg-dim); margin-top: 3px; max-width: 56ch; grid-column: 1; }
 .set-control { grid-column: 2; grid-row: 1 / span 2; justify-self: end; }
 .set-row:not(:has(.set-desc)) .set-control { grid-row: 1; }
 
@@ -2109,7 +2116,7 @@ button.author:hover { text-decoration: underline; }
 .seg { display: inline-flex; border: 1px solid var(--hairline); border-radius: 7px; overflow: hidden; }
 .seg button {
   position: relative; background: none; border: 0; cursor: pointer;
-  font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-dim); padding: 5px 13px;
+  font-family: var(--font-ui); font-size: 12px; color: var(--fg-dim); padding: 7px 13px;
 }
 .seg button + button { border-left: 1px solid var(--hairline); }
 .seg button:hover { color: var(--fg); background: color-mix(in srgb, var(--bg2) 45%, transparent); }
@@ -2313,11 +2320,11 @@ button.author:hover { text-decoration: underline; }
 .gallery-head .gallery-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .gallery-title { font-weight: 600; font-size: 14px; color: var(--fg); }
 .gallery-name { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
-.gallery-blurb { font-size: 12.5px; color: var(--fg-dim); margin-top: 3px; line-height: 1.4;
+.gallery-blurb { font-size: 13px; color: var(--fg-dim); margin-top: 5px; line-height: 1.5;
   /* two lines then the knife — uniform cards are what make a big shelf scannable;
      the full text rides the title attr and the detail view */
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  min-height: calc(2 * 1.4em); }
+  min-height: calc(2 * 1.5em); }
 .gallery-where { font-size: 11.5px; color: var(--fg-dim); opacity: 0.8; margin-top: 4px; font-style: italic; }
 /* The foot must never clip: "review & install" is wider than the old
    "install", and the installed state carries a version chip AND an
@@ -2572,7 +2579,7 @@ button.author:hover { text-decoration: underline; }
   display: flex; align-items: center; gap: 8px; min-width: 0;
   margin: 10px 10px 12px; padding: 8px 10px;
   border: 1px solid var(--hairline); border-radius: 8px; background: var(--bg0);
-  color: var(--fg-dim); font: inherit; font-size: 13px; cursor: pointer; text-align: left;
+  color: var(--fg-dim); font: 13px/1.5 var(--font-ui); cursor: pointer; text-align: left;
   transition: border-color 0.15s ease, color 0.15s ease;
 }
 .rail-search:hover, .rail-search:focus-visible { border-color: var(--accent); color: var(--fg); }
@@ -2754,7 +2761,7 @@ button.author:hover { text-decoration: underline; }
    sentence made it the heaviest thing on screen after the header. */
 .ext-legend {
   padding: 4px 2px 0; margin-bottom: 6px;
-  font-size: 11.5px; color: var(--fg-dim); line-height: 1.5; max-width: 640px;
+  font-size: 13px; color: var(--fg-dim); line-height: 1.6; max-width: 72ch;
 }
 .ext-legend strong { color: var(--fg); font-weight: 700; }
 
@@ -2855,8 +2862,8 @@ button.author:hover { text-decoration: underline; }
 .composer .composer-box textarea,
 .composer .composer-box textarea:focus,
 .composer .composer-box textarea.editing {
-  background: none; border: 0; box-shadow: none; padding: 6px 2px;
-  color: var(--yellow);
+  background: none; border: 0; box-shadow: none; padding: 10px 4px;
+  color: var(--fg);
 }
 
 .format-bar {
@@ -2891,8 +2898,9 @@ button.author:hover { text-decoration: underline; }
   width: 180px; flex: none; border-right: 1px solid var(--hairline);
   overflow-y: auto; padding: 14px 8px; background: var(--bg0);
 }
-.wiki-list-head { font-family: var(--font-mono); color: var(--fg-dim); font-size: 12px; padding: 2px 8px 8px;
+.wiki-list-head { color: var(--fg-dim); font: 12px/1.5 var(--font-mono); padding: 2px 8px 12px;
   display: flex; align-items: center; justify-content: space-between; }
+.wiki-list .channel { font-family: var(--font-mono); font-size: 12px; padding: 7px 8px; }
 .wiki-group { margin-bottom: 12px; }
 .wiki-group-name {
   display: flex; align-items: center; gap: 4px; font-family: var(--font-mono);
@@ -2908,13 +2916,17 @@ button.author:hover { text-decoration: underline; }
 .wiki-page { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .wiki-document-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
 .wiki-document { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
-.wiki-scroll { flex: 1; overflow-y: auto; padding: 24px 32px; min-height: 0; }
-/* It IS a .topbar-row now — same height, same rule, same everything as
-   the channel header. Only the horizontal inset differs, matching
-   .wiki-scroll's 26px so the title sits over the text it names. */
-.wiki-page-head { gap: 10px; padding-left: 26px; padding-right: 26px; }
-.wiki-title { font-size: 14px; font-weight: 500; }
-.wiki-body { max-width: 72ch; margin: 20px auto 0; font-size: 16px; line-height: 1.8; }
+.wiki-scroll { flex: 1; overflow: auto; padding: 22px 28px; min-height: 0; }
+.wiki-page-head { flex-wrap: wrap; gap: 12px 20px; padding: 14px 28px; }
+/* The header identifies the page; the document carries its own headline. */
+.wiki-title { flex: 1; min-width: 140px; margin: 0; font: 600 17px/1.4 var(--font-mono); letter-spacing: -.2px; overflow-wrap: anywhere; }
+.wiki-page-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.wiki-page-tools .page-views { margin: 0; font-family: var(--font-mono); }
+.wiki-page-tools .agent-action, .wiki-page-tools .page-view { font-size: 12px; min-height: 30px; }
+.wiki-conversation-toggle[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+.wiki-discussion-count { margin-left: 6px; font-variant-numeric: tabular-nums; }
+.wiki-scroll > .doc-meta { font-family: inherit; font-size: 12px; margin-bottom: 20px; }
+.wiki-body { max-width: 72ch; margin: 20px 0 0; font-size: 16px; line-height: 1.8; }
 .wiki-body h1 { letter-spacing: -0.6px; font-size: 28px; line-height: 1.3; }
 .wiki-body h2 { letter-spacing: -0.3px; font-size: 20px; line-height: 1.4; }
 .wiki-body .doc-line { padding: 6px 10px; margin: 0 -10px 8px; border-left: 2px solid transparent; }
@@ -2928,7 +2940,11 @@ button.author:hover { text-decoration: underline; }
 .doc-edit-receipt button { color: inherit; font: inherit; background: none; border: 0; padding: 2px; cursor: pointer; text-decoration: underline; }
 .doc-load-error { color: var(--red); font-size: 13px; padding: 10px 0; }
 .doc-conversation { display: flex; flex-direction: column; width: 320px; flex: none; min-height: 0; border-left: 1px solid var(--hairline); background: var(--bg0); }
-.doc-activity-tabs { display: flex; align-items: center; gap: 20px; padding: 0 18px; border-bottom: 1px solid var(--hairline); flex: none; }
+.doc-conversation[hidden] { display: none; }
+.doc-activity-head { display: flex; align-items: center; flex: none; border-bottom: 1px solid var(--hairline); padding-right: 10px; }
+.doc-activity-tabs { display: flex; align-items: center; gap: 20px; padding: 0 18px; flex: 1; }
+.doc-conversation-close { background: none; border: 0; color: var(--fg-dim); font: inherit; font-size: 20px; width: 30px; height: 30px; border-radius: 4px; cursor: pointer; }
+.doc-conversation-close:hover { color: var(--fg); background: var(--bg2); }
 .doc-activity-tabs button { padding: 14px 0 12px; color: var(--fg-dim); background: none; border: 0; border-bottom: 2px solid transparent; font: inherit; font-size: 12px; cursor: pointer; }
 .doc-activity-tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
 .doc-activity-tabs button span { margin-left: 5px; font-size: 11px; color: var(--fg-dim); }
@@ -2986,6 +3002,7 @@ button.author:hover { text-decoration: underline; }
   .wiki-list { width: 145px; }
   .doc-conversation { width: 290px; }
   .wiki-scroll { padding: 20px; }
+  .wiki-page-head { padding: 14px 20px; }
 }
 
 @container docs (max-width: 730px) {
@@ -2994,8 +3011,7 @@ button.author:hover { text-decoration: underline; }
   .doc-conversation { width: 100%; height: 50%; min-height: 270px; border-left: 0; border-top: 1px solid var(--hairline); }
   .doc-discussion-compose .comment-input { min-height: 58px; max-height: 120px; }
   .doc-discussion-hint { margin-top: 4px; }
-  .wiki-title { font-size: 12px; }
-  .wiki-page-head { padding-left: 18px; padding-right: 18px; }
+  .wiki-title { font-size: 16px; }
 }
 .wiki-editor { height: 100%; min-height: 240px; display: flex; flex-direction: column; gap: 8px; min-width: 0; border: 0; padding: 0; margin: 0; }
 .wiki-editor .doc-textarea { flex: 1; min-height: 0; }
@@ -3337,18 +3353,18 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 /* ── kanban board (fez-kanban extension) ── */
 .board-columns {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
+  gap: 16px;
+  align-items: stretch;
   overflow-x: auto;
   padding-bottom: 8px;
 }
 .board-column {
-  flex: 0 0 260px;
-  background: var(--bg0);
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  padding: 8px;
-  min-height: 90px;
+  flex: 1 0 180px;
+  min-width: 0;
+  background: transparent;
+  border-top: 1px solid var(--hairline);
+  padding: 10px 0;
+  min-height: 220px;
   transition: border-color 0.12s, background 0.12s;
 }
 .board-column.over { border-color: var(--accent); background: var(--bg1); }
@@ -3359,7 +3375,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   gap: 6px;
   padding: 2px 4px 8px;
 }
-.board-column-name { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+.board-column-name { font: 500 12px/1.5 var(--font-mono); }
 .board-column-count { color: var(--fg-dim); font-size: 11px; }
 .board-add {
   margin-left: auto;
@@ -3367,27 +3383,27 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   border: none;
   color: var(--fg-dim);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 18px;
   line-height: 1;
-  padding: 0 4px;
+  padding: 4px;
+  min-width: 28px;
+  min-height: 28px;
 }
 .board-add:hover { color: var(--fg); }
 .board-limit-warn { color: var(--yellow); font-size: 11px; padding: 0 4px 6px; }
 .board-column-empty {
   color: var(--fg-dim);
-  font-size: 11px;
+  font-size: 12px;
   text-align: center;
-  padding: 14px 0;
-  border: 1px dashed var(--hairline);
-  border-radius: 6px;
+  padding: 38px 0;
 }
 .board-card {
   position: relative;
   --tint: var(--accent);
-  background: color-mix(in srgb, var(--tint) 8%, var(--bg1));
-  border: 1px solid color-mix(in srgb, var(--tint) 28%, var(--hairline));
+  background: var(--bg1);
+  border: 1px solid var(--hairline);
   border-radius: 6px;
-  padding: 7px 9px;
+  padding: 10px 11px;
   margin-bottom: 6px;
   cursor: grab;
 }
@@ -3395,11 +3411,9 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .board-card.dragging { opacity: 0.4; }
 .board-card.done {
   --tint: var(--green);
-  background: color-mix(in srgb, var(--tint) 8%, var(--bg1));
-  border-color: color-mix(in srgb, var(--tint) 28%, var(--hairline));
 }
 .board-card.done .board-card-text { color: var(--fg-dim); }
-.board-card-text { font-size: 12.5px; line-height: 1.45; }
+.board-card-text { font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
 .board-card-tick { color: var(--green); margin-right: 5px; }
 .board-card-detail {
   color: var(--fg-dim);
@@ -3420,7 +3434,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   position: absolute;
   top: 4px;
   right: 5px;
-  display: none;
+  opacity: 0;
   background: var(--bg2);
   border: 1px solid var(--hairline);
   border-radius: 4px;
@@ -3430,7 +3444,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   line-height: 1;
   padding: 3px 5px;
 }
-.board-card:hover .board-card-hand { display: block; }
+.board-card:hover .board-card-hand, .board-card:focus-within .board-card-hand { opacity: 1; }
 .board-card-hand:hover { color: var(--accent); border-color: var(--accent); }
 .board-mention { color: var(--accent); }
 .board-new {
@@ -3457,6 +3471,28 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   gap: 10px;
 }
 .board-readonly { color: var(--fg-dim); font-size: 11px; padding-top: 10px; }
+.board-review { margin-bottom: 24px; padding: 0 0 20px; border-bottom: 1px solid var(--hairline); }
+.board-review-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; }
+.board-review-info { min-width: 0; }
+.board-review-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 14px; }
+.board-review-heading strong { font: 500 12px/1.5 var(--font-mono); }
+.board-review-status { display: inline-flex; align-items: center; gap: 5px; color: var(--fg-dim); font-size: 11px; }
+.board-review-status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.board-review-status.active { color: var(--accent); }
+.board-review-info p { margin: 5px 0 0; color: var(--fg-dim); font-size: 12px; overflow-wrap: anywhere; }
+.board-review-info p strong { color: var(--fg); font-weight: 400; font-variant-numeric: tabular-nums; }
+.board-review-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.board-review .agent-action { min-height: 30px; font: 12px/1.5 var(--font-mono); padding: 5px 10px; }
+.board-review-form { display: grid; gap: 16px; max-width: 640px; padding-top: 24px; }
+.board-review-form label { display: grid; gap: 6px; font-size: 12px; color: var(--fg-dim); min-width: 0; }
+.board-review-form input, .board-review-form select, .board-review-form textarea { width: 100%; min-width: 0; box-sizing: border-box; background: var(--bg0); color: var(--fg); border: 1px solid var(--hairline); border-radius: 5px; padding: 9px 10px; font: inherit; font-size: 13px; line-height: 1.5; }
+.board-review-form textarea { resize: vertical; }
+.board-review-fields { display: flex; flex-wrap: wrap; gap: 16px; }
+.board-review-fields label { flex: 1 1 160px; }
+.board-review-form p { color: var(--fg-dim); font-size: 12px; line-height: 1.65; margin: 0; }
+.board-review .board-review-save { background: var(--accent); border-color: var(--accent); color: var(--bg0); }
+.board-review .board-review-remove { margin-left: auto; color: var(--red); }
+.wiki-main button:focus-visible, .board-review :is(input, select, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .board-settings {
   display: flex;
   gap: 8px;
@@ -4116,19 +4152,19 @@ button.ob-brain:active { transform: translateY(1px); }
    page's first line sits at the same y whatever its width. */
 .fez-page {
   max-width: var(--measure-read);
-  padding: 40px 36px 64px 72px;
+  flex: 1; width: 100%; min-height: 0; overflow-y: auto;
+  padding: 36px 40px 64px;
   font-size: 13px;
 }
 .fez-page.wide { max-width: var(--measure-scan); }
 
 .page-head { margin-bottom: 22px; }
-/* Mono for the title, sans for the prose under it — the inversion of
-   the usual pairing, and the app's voice since the TUI. */
+/* Page titles share Docs' reading scale; handles and code keep the mono face. */
 .page-title {
-  font-family: var(--font-mono); font-size: 19px; font-weight: 600;
-  color: var(--fg); letter-spacing: -0.2px; margin: 0;
+  font-family: var(--font-ui); font-size: 24px; font-weight: 600; line-height: 1.3;
+  color: var(--fg); letter-spacing: -0.5px; margin: 0;
 }
-.page-sub { font-size: 12.5px; color: var(--fg-dim); margin-top: 5px; max-width: 56ch; }
+.page-sub { font-size: 14px; line-height: 1.65; color: var(--fg-dim); margin-top: 8px; max-width: 64ch; }
 
 /* The measure rule: a hairline the exact width of the column, ending
    in the one live fact this page has. It draws the column's edge on a
@@ -4162,26 +4198,19 @@ a.page-fact:hover { color: var(--fg); }
 .page-fact-action:hover { color: var(--brand); }
 .page-fact-action:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
-/* ── agents page ───────────────────────────────────────────────
-   A roster is scanned row-to-row, so it takes --measure-scan.
-   The cards carry no fill: fez's section rule is label + hairline,
-   never a bordered card, and these sprites are high-contrast pixel
-   art that a filled card frames twice. The ground is the page; the
-   creature floats on it and the hairline does the separating. */
+/* Each agent stands on its own; unused grid cells stay on the page ground. */
 .agent-grid {
-  display: grid; gap: 1px;
-  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
-  background: var(--hairline);
-  border: 1px solid var(--hairline);
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
   margin-top: 18px;
 }
 .agent-card {
   position: relative; display: flex; flex-direction: column; align-items: center;
-  gap: 6px; padding: 20px 14px 16px; text-align: center;
-  background: var(--bg1); border: 0; color: var(--fg); font: inherit;
+  gap: 8px; padding: 24px 18px 20px; text-align: center;
+  background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px; color: var(--fg); font: inherit;
   cursor: pointer; transition: background 110ms ease;
 }
-.agent-card:hover { background: var(--bg2); }
+.agent-card:hover { background: color-mix(in srgb, var(--bg2) 45%, var(--bg1)); border-color: var(--fg-dim); }
 .agent-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* Selection is the square ember notch, drawn as an overlay so nothing
    shifts and no radius can round it. Same rule as the rail. */
@@ -4207,10 +4236,10 @@ a.page-fact:hover { color: var(--fg); }
   display: grid; place-items: center; width: 72px; height: 72px;
   font-size: 34px; color: var(--fg-dim); line-height: 1;
 }
-.agent-card-name { font-weight: 600; }
+.agent-card-name { font-weight: 600; font-size: 14px; }
 .agent-card-desc {
-  color: var(--fg-dim); font-size: 12px; line-height: 1.35;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  color: var(--fg-dim); font-size: 13px; line-height: 1.55;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
   overflow: hidden;
 }
 .agent-card-desc.dim { opacity: 0.6; font-style: italic; }
@@ -4223,6 +4252,11 @@ a.page-fact:hover { color: var(--fg); }
   margin-top: 2px; min-height: 18px;
 }
 .skill-strip.empty { color: var(--fg-dim); font-size: 12px; }
+.agent-card .skill-strip { margin-top: auto; padding-top: 4px; }
+@media (width <= 900px) {
+  .fez-page { padding: 28px 24px 40px; }
+  .timeline, .composer { padding-left: 20px; padding-right: 20px; }
+}
 .skill-chip, .input-recommended {
   font-family: var(--font-mono); font-size: 10.5px; line-height: 1.6;
   padding: 0 6px 0 5px; color: var(--fg-dim);

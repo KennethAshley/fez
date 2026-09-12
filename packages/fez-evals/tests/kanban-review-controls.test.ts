@@ -38,7 +38,8 @@ it("saves the daily schedule, pauses/resumes, and removes it without touching an
     await click("Save schedule");
     expect(config.reviews[0]).toEqual(other);
     expect(config.reviews[1]).toMatchObject({ channelId: "work", slug: "fez-work", worker, time: "09:00", timeZone: "America/New_York", enabled: true });
-    expect(host.textContent).toContain("Daily review · 09:00 America/New_York");
+    expect(host.textContent).toContain("Scheduled");
+    expect(host.textContent).toContain("9:00 AM · Eastern Time · @fez");
     save.mockRejectedValueOnce(Error("relay offline"));
     await click("Pause");
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("relay offline");

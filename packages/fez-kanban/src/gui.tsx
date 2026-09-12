@@ -297,33 +297,46 @@ function ReviewControls(props: PageViewProps) {
     } catch (error) { setError(error instanceof Error ? error.message : "Could not save review settings"); }
     finally { setBusy(false); }
   };
-  const field = (name: "timeZone" | "time", label: string) => <label style={{ display: "grid", gap: 4 }}>{label}
+  const field = (name: "timeZone" | "time", label: string) => <label>{label}
     <input type={name === "time" ? "time" : "text"} value={draft![name]} required disabled={busy}
       onChange={(event: { target: { value: string } }) => setDraft({ ...draft!, [name]: event.target.value })} />
   </label>;
-  return <section aria-label="Daily board review" style={{ marginBottom: 16 }}>
-    <div className="board-settings" style={{ flexWrap: "wrap" }}>
-      <span>{!loaded ? "Loading review schedule…" : saved ? `${saved.enabled ? "Daily review" : "Review paused"} · ${saved.time} ${saved.timeZone}` : "Daily board review"}</span>
-      {saved && <button className="mini" disabled={busy || !loaded} onClick={() => { void save({ ...saved, enabled: !saved.enabled, enabledAt: saved.enabled ? saved.enabledAt : Date.now() }); }}>{saved.enabled ? "Pause" : "Resume"}</button>}
-      <button className="mini" disabled={busy || !loaded} onClick={edit}>{saved ? "Edit schedule" : "Schedule review"}</button>
+  const time = saved && new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC" })
+    .format(new Date(`2000-01-01T${saved.time}:00Z`));
+  const timeZone = saved && new Intl.DateTimeFormat("en", { timeZone: saved.timeZone, timeZoneName: "longGeneric" })
+    .formatToParts().find(part => part.type === "timeZoneName")?.value;
+  return <section aria-label="Daily board review" className="board-review">
+    <div className="board-review-summary">
+      <div className="board-review-info">
+        <div className="board-review-heading"><strong>Daily board review</strong>
+          {saved && <span className={`board-review-status${saved.enabled ? " active" : ""}`}>{saved.enabled ? "Scheduled" : "Paused"}</span>}
+        </div>
+        <p>{!loaded ? "Loading review schedule…" : saved
+          ? <span><strong>{time}</strong> · {timeZone ?? saved.timeZone} · @{agents.find(([pk]) => pk === saved.worker)?.[1] ?? "unavailable agent"}</span>
+          : "Give an agent a daily time to move this board forward."}</p>
+      </div>
+      <div className="board-review-actions">
+        {saved && <button className="agent-action" disabled={busy || !loaded} onClick={() => { void save({ ...saved, enabled: !saved.enabled, enabledAt: saved.enabled ? saved.enabledAt : Date.now() }); }}>{saved.enabled ? "Pause" : "Resume"}</button>}
+        <button className="agent-action" disabled={busy || !loaded} onClick={edit}>{saved ? "Edit schedule" : "Schedule review"}</button>
+      </div>
     </div>
-    {draft && <form style={{ display: "grid", gap: 12, maxWidth: 640, padding: "12px 0" }} onSubmit={(event: { preventDefault(): void }) => { event.preventDefault(); void save({ ...draft, enabledAt: Date.now() }); }}>
-      <label style={{ display: "grid", gap: 4 }}>Review agent
+    {draft && <form className="board-review-form" onSubmit={(event: { preventDefault(): void }) => { event.preventDefault(); void save({ ...draft, enabledAt: Date.now() }); }}>
+      <label>Review agent
         <select value={draft.worker} required disabled={busy} onChange={(event: { target: { value: string } }) => setDraft({ ...draft, worker: event.target.value })}>
           <option value="">Choose an agent</option>
           {agents.map(([pk, name]) => <option key={pk} value={pk}>{name}</option>)}
         </select>
       </label>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>{field("time", "Daily at")}{field("timeZone", "Time zone")}</div>
-      <label style={{ display: "grid", gap: 4 }}>Review instructions
+      <div className="board-review-fields">{field("time", "Daily at")}{field("timeZone", "Time zone")}</div>
+      <label>Review instructions
         <textarea value={draft.prompt} required maxLength={10_000} rows={5} disabled={busy}
           onChange={(event: { target: { value: string } }) => setDraft({ ...draft, prompt: event.target.value })} />
       </label>
-      <p style={{ margin: 0 }}>Starts at the next scheduled time while Fez is running. Each review opens a channel thread and waits for the previous assignment to finish. Pausing stops future reviews; current work continues.</p>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button type="submit" disabled={busy}>{busy ? "Saving…" : "Save schedule"}</button>
-        <button type="button" disabled={busy} onClick={() => setDraft(undefined)}>Cancel</button>
-        {saved && <button type="button" disabled={busy} onClick={() => { void save(); }}>Remove schedule</button>}
+      <p>Keep Fez open for scheduled reviews. Each review opens a channel thread after the previous assignment finishes. Pausing stops future reviews; current work continues.</p>
+      <div className="board-review-actions">
+        <button className="agent-action board-review-save" type="submit" disabled={busy}>{busy ? "Saving…" : "Save schedule"}</button>
+        <button className="agent-action" type="button" disabled={busy} onClick={() => setDraft(undefined)}>Cancel</button>
+        {saved && <button className="agent-action board-review-remove" type="button" disabled={busy} onClick={() => { void save(); }}>Remove schedule</button>}
       </div>
     </form>}
     {error && <p role="alert" className="board-error">{error}</p>}

@@ -1,12 +1,12 @@
 /* The same compact inventory and pixel relics as Extensions. Theme tokens stay shared. */
 .tools-page .pulse-scroll { gap: 12px; }
 .tools-page .pulse-scroll > :not(.overlay) { width: 100%; min-width: 0; }
-.tools-intro p { max-width: 76ch; color: var(--fg-dim); font-size: 12px; line-height: 1.5; }
+.tools-intro p { max-width: 76ch; color: var(--fg-dim); font-size: 13px; line-height: 1.6; }
 .tools-page h2 { font: 600 13px/1.4 var(--font-mono); color: var(--fg); }
 .tools-page .settings-hint { line-height: 1.6; }
 .tools-page :is(.ext-tab, .agent-action, .mini, .tool-location, .tool-setup > summary, .tools-pack-heading h2) { font-family: var(--font-mono); text-transform: lowercase; }
 .tools-page .ext-legend[hidden], .tools-page .ext-filters[hidden] { display: none; }
-.tools-page .agent-action { font-size: 11px; white-space: normal; }
+.tools-page .agent-action { font-size: 12px; white-space: normal; }
 .tools-page :is(button, input, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .tools-page :disabled { opacity: .5; cursor: not-allowed; }
 .tools-page .manage-section { font-family: var(--font-mono); text-transform: lowercase; letter-spacing: normal; }
@@ -19,7 +19,7 @@
 .tool-item:hover { background: color-mix(in srgb, var(--bg2) 20%, transparent); }
 .tool-item:last-child { border-bottom: 0; }
 .tool-item-head .skill-main { gap: 3px; }
-.tool-item-head p { max-width: 76ch; font-size: 12.5px; line-height: 1.4; color: var(--fg-dim); }
+.tool-item-head p { max-width: 76ch; font-size: 13px; line-height: 1.55; color: var(--fg-dim); }
 .tool-location { flex-shrink: 0; font-size: 11px; color: var(--fg-dim); }
 .tool-access { font: 11px/1.5 var(--font-mono); color: var(--fg-dim); overflow-wrap: anywhere; }
 .tool-item .skill-give { padding-block: 4px; }
@@ -49,7 +49,7 @@
 .tools-source { padding-top: 16px; }
 .tools-source-fields { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; margin-block: 12px; }
 .tools-source-fields.git-source { grid-template-columns: minmax(0, 1fr); }
-.tools-source-fields label { display: grid; gap: 4px; font: 11px/1.5 var(--font-mono); text-transform: lowercase; }
+.tools-source-fields label { display: grid; gap: 6px; font: 12px/1.5 var(--font-ui); }
 .tools-source-fields .manage-input { width: 100%; min-width: 0; font-size: 12px; }
 .tools-source > .ob-error { color: var(--red); margin-bottom: 10px; }
 .tools-page .tools-empty { padding: 16px 0; display: grid; justify-items: start; gap: 8px; }
