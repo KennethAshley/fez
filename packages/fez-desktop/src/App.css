@@ -1953,6 +1953,13 @@ button.author:hover { text-decoration: underline; }
 }
 
 .hovercard-head { display: flex; align-items: center; gap: 8px; }
+/* Keep the hover target continuous across the six-pixel trigger gap. */
+.hovercard::before { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 8px; }
+.hovercard.below::before { top: auto; bottom: 100%; }
+button.hovercard { color: var(--fg); font-family: inherit; cursor: pointer; }
+button.hovercard:hover .hovercard-name { text-decoration: underline; }
+button.hovercard:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dm-profile-trigger { display: inline-flex; align-items: center; gap: 8px; }
 .hovercard-id { display: flex; flex-direction: column; min-width: 0; }
 .hovercard-name { font-weight: 700; }
 .hovercard-presence { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-dim); }
@@ -4524,6 +4531,8 @@ a.page-fact:hover { color: var(--fg); }
 }
 .ucard-id { min-width: 0; }
 .ucard-name { display: flex; align-items: center; gap: 8px; color: var(--brand); font-weight: 700; font-size: 15px; }
+button.ucard-name { background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer; }
+button.ucard-name:hover { text-decoration: underline; }
 .ucard-presence { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 2px var(--bg2); }
 .ucard-npub { color: var(--fg-dim); font-size: 11.5px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ucard-list { padding: 6px; }

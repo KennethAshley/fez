@@ -4,6 +4,10 @@ import PersonaEditor from "./PersonaEditor";
 import type { FezClient } from "@fezchat/client";
 import Avatar from "./Avatar";
 import CopyNpub from "./CopyNpub";
+import { SaltSection, AgentProfileExtras } from "./AgentReputation";
+import { fetchSaltPanel, type SaltPanel } from "./salt-record";
+import { relaySet } from "./relay";
+import { BAZAAR_RELAY } from "./bazaar-record";
 
 /**
  * Profile card — click any name, get the person (or agent) behind it.
@@ -32,14 +36,24 @@ export default function ProfilePane({
   onClose: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [localPersona, setLocalPersona] = useState<string>();
+  const [localIdentity, setLocalIdentity] = useState<{ pk: string; name: string }>();
+  const localPersona = localIdentity?.pk === pk ? localIdentity.name : undefined;
   const agentNameForFiles = client.agents().get(pk);
   useEffect(() => {
+    let cancelled = false;
     setEditing(false);
-    if (!agentNameForFiles) return setLocalPersona(undefined);
-    void invoke<string[]>("list_personas")
-      .then((names) => setLocalPersona(names.find((n) => n.toLowerCase() === agentNameForFiles.toLowerCase())))
-      .catch(() => setLocalPersona(undefined));
+    setLocalIdentity(undefined);
+    if (!agentNameForFiles) return;
+    void (async () => {
+      const names = await invoke<string[]>("list_personas");
+      const name = names.find((n) => n.toLowerCase() === agentNameForFiles.toLowerCase());
+      // Names are self-asserted. Only the matching local key may expose
+      // persona editing or link this profile to a wallet account.
+      if (name && await invoke<string>("get_pubkey", { account: `agent:${name}` }) === pk && !cancelled) {
+        setLocalIdentity({ pk, name });
+      }
+    })().catch(() => {});
+    return () => { cancelled = true; };
   }, [pk, agentNameForFiles]);
   const self = pk === client.pubkey;
   const name = client.displayName(pk);
@@ -50,6 +64,20 @@ export default function ProfilePane({
   const live = busy && Date.now() - busy.ts < 30_000;
 
   const role = client.state.roleOf(pk);
+  const isAgent = !!agentName || role === "bot";
+  const viewer = client.pubkey;
+  const [reputation, setReputation] = useState<{ pk: string; viewer: string; panel: SaltPanel | "error" }>();
+  useEffect(() => {
+    let cancelled = false;
+    setReputation(undefined);
+    if (!isAgent) return;
+    void fetchSaltPanel({
+      pk, viewer, relays: [...relaySet(), BAZAAR_RELAY],
+      isViewerAgent: (k) => k === viewer || client.agents().has(k),
+      inViewerCircle: (k) => client.state.isMember(k),
+    }).then((panel) => { if (!cancelled) setReputation({ pk, viewer, panel }); });
+    return () => { cancelled = true; };
+  }, [client, pk, viewer, isAgent]);
   const canInvite = client.state.isOwner(client.pubkey) && !client.state.workspace.members.has(pk) && !self;
   const [inviteState, setInviteState] = useState<"idle" | "sending" | "done" | "error">("idle");
 
@@ -125,6 +153,14 @@ export default function ProfilePane({
             </button>
           )}
         </div>
+        {isAgent && (
+          <>
+            <div className="manage-section">standing</div>
+            <SaltSection panel={reputation?.pk === pk && reputation.viewer === viewer ? reputation.panel : undefined}
+              viewer={viewer} displayName={(key) => client.displayName(key)} />
+            <AgentProfileExtras pubkey={pk} persona={localPersona} />
+          </>
+        )}
       </div>
     </aside>
   );

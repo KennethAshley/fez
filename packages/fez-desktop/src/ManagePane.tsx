@@ -23,10 +23,12 @@ import { pinDesktopWorkspaceOwner } from "./wire";
 export default function ManagePane({
   client,
   onOpenChannel,
+  onProfile,
   onClose,
 }: {
   client: FezClient;
   onOpenChannel: (channelId: string) => void;
+  onProfile: (pk: string) => void;
   onClose: () => void;
 }) {
   const current = client.state.currentChannel();
@@ -88,7 +90,7 @@ export default function ManagePane({
             )}
           </div>
         ))}
-        {card && <UserCard pk={card.pk} at={card} client={client} onClose={() => setCard(null)} />}
+        {card && <UserCard pk={card.pk} at={card} client={client} onProfile={onProfile} onClose={() => setCard(null)} />}
 
         {amCreator && <InviteBox client={client} onResult={flash} />}
 

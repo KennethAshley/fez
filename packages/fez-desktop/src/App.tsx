@@ -1337,13 +1337,16 @@ function Shell({
             {dmConvos.slice(0, 10).map(([key, convo]) => {
               const group = key.includes("+");
               const active = view.kind === "dm" && view.convoKey === key;
-              return (
-                <HoverCard key={key} client={client} pk={key}>
-                  <button className={active ? "channel active" : "channel"} onClick={() => openDm(key)}>
-                    {!group && <Avatar pk={key} size={16} title={client.dmTitle(key)} />}
-                    {group ? <span className="group-mark">&</span> : <span className={client.isOnline(key) ? "dot on" : "dot off"} />} {client.dmTitle(key)}
-                    {convo.unread > 0 && !active && <span className="badge">{convo.unread}</span>}
-                  </button>
+              const row = (
+                <button key={key} className={active ? "channel active" : "channel"} onClick={() => openDm(key)}>
+                  {!group && <Avatar pk={key} size={16} title={client.dmTitle(key)} quip={false} />}
+                  {group ? <span className="group-mark">&</span> : <span className={client.isOnline(key) ? "dot on" : "dot off"} />} {client.dmTitle(key)}
+                  {convo.unread > 0 && !active && <span className="badge">{convo.unread}</span>}
+                </button>
+              );
+              return group ? row : (
+                <HoverCard key={key} client={client} pk={key} onProfile={() => setPane({ kind: "profile", pk: key })}>
+                  {row}
                 </HoverCard>
               );
             })}
@@ -1359,9 +1362,9 @@ function Shell({
                 .sort(([apk, an], [bpk, bn]) => Number(client.isOnline(bpk)) - Number(client.isOnline(apk)) || an.localeCompare(bn))
                 .slice(0, 8);
               return cast.map(([pk, agentName]) => (
-                <HoverCard key={pk} client={client} pk={pk}>
+                <HoverCard key={pk} client={client} pk={pk} onProfile={() => setPane({ kind: "profile", pk })}>
                   <button className="channel cast" onClick={() => openDm(pk)}>
-                    <Avatar pk={pk} size={16} title={agentName} />
+                    <Avatar pk={pk} size={16} title={agentName} quip={false} />
                     <span className={client.isOnline(pk) ? "dot on" : "dot off"} /> {agentName}
                   </button>
                 </HoverCard>
@@ -1894,6 +1897,7 @@ function Shell({
       {pane?.kind === "manage" && (
         <ManagePane
           client={client}
+          onProfile={(pk) => setPane({ kind: "profile", pk })}
           onOpenChannel={(channelId) => void openChannel(channelId)}
           onClose={() => setPane(undefined)}
         />
@@ -2948,25 +2952,24 @@ function DmView({
               to, in the same grammar as their rail row — face, presence,
               name. A group shows its little pile instead. */}
           {group ? (
-            <span className="party-pile">
-              {peers.filter((pk) => pk !== client.pubkey).slice(0, 3).map((pk) => (
-                <span key={pk} className="party-pile-face">
-                  <Avatar pk={pk} size={18} title={client.displayName(pk)} quip={false} />
-                </span>
-              ))}
-            </span>
-          ) : (
-            <Avatar pk={convoKey} size={20} title={client.dmTitle(convoKey)} quip={false} />
-          )}
-          {group ? (
-            client.dmTitle(convoKey)
-          ) : (
             <>
-              <HoverCard client={client} pk={convoKey}>
-                <button className="author" title="profile" onClick={() => onProfile(convoKey)}>{client.dmTitle(convoKey)}</button>
-              </HoverCard>
-              <span className={client.isOnline(convoKey) ? "dot on" : "dot off"} />
+              <span className="party-pile">
+                {peers.filter((pk) => pk !== client.pubkey).slice(0, 3).map((pk) => (
+                  <span key={pk} className="party-pile-face">
+                    <Avatar pk={pk} size={18} title={client.displayName(pk)} quip={false} />
+                  </span>
+                ))}
+              </span>
+              {client.dmTitle(convoKey)}
             </>
+          ) : (
+            <HoverCard client={client} pk={convoKey} onProfile={() => onProfile(convoKey)}>
+              <button className="author dm-profile-trigger" aria-label={`View ${client.dmTitle(convoKey)}'s profile`} onClick={() => onProfile(convoKey)}>
+                <Avatar pk={convoKey} size={20} title={client.dmTitle(convoKey)} quip={false} />
+                {client.dmTitle(convoKey)}
+                <span className={client.isOnline(convoKey) ? "dot on" : "dot off"} />
+              </button>
+            </HoverCard>
           )}
           <span className="dm-note">⚷ end-to-end encrypted{group ? " · every participant sees every message" : ""}</span>
         </div>
@@ -3642,9 +3645,9 @@ function Bubble({
       >
         <Avatar pk={msg.authorPk} title={msg.authorName} size={30} />
       </button>
-      {cardAt && <UserCard pk={msg.authorPk} at={cardAt} client={client} onClose={() => setCardAt(null)} />}
+      {cardAt && <UserCard pk={msg.authorPk} at={cardAt} client={client} onProfile={() => onAuthor?.()} onClose={() => setCardAt(null)} />}
       <div className="bubble-head">
-        <HoverCard client={client} pk={msg.authorPk}>
+        <HoverCard client={client} pk={msg.authorPk} onProfile={onAuthor}>
           <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
         </HoverCard>
         {(() => {
