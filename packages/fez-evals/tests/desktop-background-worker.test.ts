@@ -28,7 +28,7 @@ afterEach(async () => {
     if (child.exitCode !== null || child.signalCode !== null) continue;
     const exited = once(child, "exit"); child.kill("SIGTERM"); await exited;
   }
-  for (const pid of orphans.splice(0)) { try { process.kill(pid, "SIGTERM"); } catch {} }
+  for (const pid of orphans.splice(0)) { try { process.kill(pid, "SIGTERM"); } catch { /* The fixture process may already have exited. */ } }
   for (const stop of cleanup.splice(0)) await stop();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });

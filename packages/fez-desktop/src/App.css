@@ -15,7 +15,7 @@
   palette is the app's, the triangle is the brand's, and one of them
   changing should never drag the other with it. */
   --brand: #FF6A00;
-  --font-ui: -apple-system, "SF Pro Text", Helvetica, sans-serif;
+  --font-ui: -apple-system, "SF Pro Text", helvetica, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", menlo, monospace;
   --bg-rail: #17191a;
   --hairline: #32302f;
@@ -185,6 +185,7 @@ body {
 :root[data-vibrancy="sidebar"] .rail-search,
 :root[data-vibrancy="sidebar"] .self-card { background: color-mix(in srgb, var(--bg0) 45%, transparent); }
 :root[data-vibrancy="sidebar"] .self-card:hover { background: color-mix(in srgb, var(--bg1) 65%, transparent); }
+
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
   :root[data-vibrancy="sidebar"] body { background: var(--bg0); }
   :root[data-vibrancy="sidebar"] .rail { background: var(--bg-rail, var(--bg1)); }
@@ -3477,7 +3478,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .board-review-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 14px; }
 .board-review-heading strong { font: 500 12px/1.5 var(--font-mono); }
 .board-review-status { display: inline-flex; align-items: center; gap: 5px; color: var(--fg-dim); font-size: 11px; }
-.board-review-status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.board-review-status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentcolor; }
 .board-review-status.active { color: var(--accent); }
 .board-review-info p { margin: 5px 0 0; color: var(--fg-dim); font-size: 12px; overflow-wrap: anywhere; }
 .board-review-info p strong { color: var(--fg); font-weight: 400; font-variant-numeric: tabular-nums; }
@@ -4253,6 +4254,7 @@ a.page-fact:hover { color: var(--fg); }
 }
 .skill-strip.empty { color: var(--fg-dim); font-size: 12px; }
 .agent-card .skill-strip { margin-top: auto; padding-top: 4px; }
+
 @media (width <= 900px) {
   .fez-page { padding: 28px 24px 40px; }
   .timeline, .composer { padding-left: 20px; padding-right: 20px; }

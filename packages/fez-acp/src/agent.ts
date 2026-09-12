@@ -1144,7 +1144,7 @@ async function main() {
     workInbox.cursor(channel, Math.floor(Date.now() / 1000) - WORK_LOOKBACK_S);
     workInbox.cursor(`result:${channel}`, 0);
   }
-  let recoveryTimer: ReturnType<typeof setInterval> | undefined;
+  let recoveryTimer: ReturnType<typeof setInterval> | undefined = undefined;
   const steadyAt = Date.now();
   // Steady reactions: defend against claims, stand down when superseded.
   // Our take-over standing decays as its supersede beats are spent — once

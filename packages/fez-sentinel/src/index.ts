@@ -203,7 +203,7 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
 
   fs.mkdirSync(path.dirname(PIDFILE), { recursive: true });
   fs.writeFileSync(PIDFILE, String(process.pid));
-  let backgroundHost: Awaited<ReturnType<typeof prepareBackgroundTasks>> | undefined;
+  let backgroundHost: Awaited<ReturnType<typeof prepareBackgroundTasks>> | undefined = undefined;
   const cleanup = () => {
     void backgroundHost?.stop();
     try {

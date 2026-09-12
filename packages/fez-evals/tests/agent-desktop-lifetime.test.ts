@@ -19,7 +19,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   for (const child of children) child.kill("SIGKILL");
-  for (const pid of orphanGroups) { try { process.kill(-pid, "SIGKILL"); } catch {} }
+  for (const pid of orphanGroups) { try { process.kill(-pid, "SIGKILL"); } catch { /* The fixture process may already have exited. */ } }
   if (dir) await rm(dir, { recursive: true, force: true });
 });
 

@@ -41,6 +41,7 @@ const FRESH_MACHINE: Handlers = {
   write_persona: () => "",
   read_persona: () => { throw "no persona"; },
   start_managed_agent: () => null,
+  start_desktop_runtime: () => ({ background: false, restored: 0 }),
   stop_managed_agents: () => null,
   managed_agent_status: () => JSON.stringify({}),
   runner_status: () => true,

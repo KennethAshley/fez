@@ -31,7 +31,7 @@ export function bindAgentLifetime(close: () => Promise<void>, parent = process.e
         // also catches adapters still opening and absent from the session pool.
         // SIGKILL also ends this leader; preserve successful intentional exits
         // for the native reaper, which otherwise sees every idle exit as a crash.
-        if (code === 0) { try { writeSync(1, `FEZ_AGENT_STOPPED=${process.pid}\n`); } catch {} }
+        if (code === 0) { try { writeSync(1, `FEZ_AGENT_STOPPED=${process.pid}\n`); } catch { /* The parent may have closed stdout during shutdown. */ } }
         try { process.kill(-process.pid, "SIGKILL"); } catch { /* already gone */ }
       }
       process.exit(code);

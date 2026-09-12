@@ -50,7 +50,7 @@ export class DurableWork {
         }
         if (Object.values(data.cursors).some(time => typeof time !== "number" || !Number.isFinite(time))) throw new Error("invalid cursor");
         this.data = data;
-      } catch (error) { throw new Error(`Cannot recover inbox ${this.file}: ${String(error)}`); }
+      } catch (error) { throw new Error(`Cannot recover inbox ${this.file}: ${String(error)}`, { cause: error }); }
     }
   }
   private save(next: Inbox): void { atomic(this.file, next); this.data = next; }
