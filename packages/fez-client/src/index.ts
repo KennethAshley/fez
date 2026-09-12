@@ -2,6 +2,7 @@ import { wikiSlug, orderVersions, assertDocBase, docCommentThreads, type DocAnch
 export * from "./docs.js";
 export * from "./memory.js";
 export * from "./artifacts.js";
+export { completeWork, workResult, acceptWork } from "./work-completion.js";
 export { parseQuery, describeQuery, type Query, type QuerySource, type QueryView } from "./query-lang.js";
 export {
   latestPerAddress,

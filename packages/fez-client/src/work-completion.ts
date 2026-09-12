@@ -30,6 +30,9 @@ export function workResultForAgent(event: WorkEvent, request: WorkEvent): "succe
   if (!externalResultHandler(request)) return workResult(event, request);
 }
 
+/** Build an unsigned channel result for an explicit assignment. The caller
+ * verifies the request and author permissions, then signs and publishes the
+ * returned template. A success submission still needs requester acceptance. */
 export function completeWork(request: WorkEvent, worker: string, opts: {
   status: "success" | "error"; summary: string; capability: string; artifacts: string[];
 }) {
@@ -50,8 +53,9 @@ export function completeWork(request: WorkEvent, worker: string, opts: {
   ] };
 }
 
-/** Acceptance belongs to the requester, never to the worker. A chit
- * records that requester's judgment; it is not independent quality proof. */
+/** Build an unsigned acceptance after the caller verifies the signed inputs
+ * and checks the deliverable. Acceptance belongs to the requester, never to
+ * the worker; the chit records that judgment, not independent quality proof. */
 export function acceptWork(result: WorkEvent, request: WorkEvent, issuer: string, note: string) {
   if (request.pubkey !== issuer || workResult(result, request) !== "success") {
     throw new Error("Only the requester can accept a successful result from the assigned worker.");
