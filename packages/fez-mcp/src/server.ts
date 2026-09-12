@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Filter } from "nostr-tools";
 import { wikiSlug, orderVersions, assertDocBase, docCommentThreads } from "../../fez-client/src/docs.js";
 import { WorkspaceState } from "../../fez-client/src/workspace-state.js";
+import { LESSON_PREFIX, parseLesson } from "../../fez-client/src/lessons.js";
 import type { WireEvent } from "../../fez-client/src/index.js";
 import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
 import { attachedSkills, loadSkillBody } from "./skills.js";
@@ -423,26 +424,33 @@ server.registerTool(
 
 async function memHeads() {
   if (!owner) throw new Error("memory tools need FEZ_AGENT_OWNER");
-  const events = await relay.query([{ kinds: [KIND_AGENT_ENGRAM], authors: [myPubkey], "#p": [owner] }]);
+  const result = await relay.queryWithStatus([{ kinds: [KIND_AGENT_ENGRAM], authors: [myPubkey], "#p": [owner] }]);
+  if (result.failures.length) throw new Error("Private memory read is incomplete. Retry before reading or changing memory.");
   const convKey = conversationKey(secret, owner);
-  return { convKey, heads: engramHeads(events as never, myPubkey, owner, convKey) };
+  return { convKey, heads: engramHeads(result.events, myPubkey, owner, convKey) };
 }
 
 server.registerTool(
   "fez_mem_set",
   {
     description:
-      'Write a persistent memory record that survives session recycles. slug "core" = your identity/rules/goals (a full rewrite); "mem/<topic>" = an individual fact.',
-    inputSchema: { slug: z.string(), value: z.string() },
+      'Write private memory across sessions. "core" = identity/rules/goals (full rewrite); "mem/<topic>" = a fact. "mem/lessons/<topic>" = a candidate lesson: JSON string with when (scope/condition, <=400 chars), action (<=4000), evidence (observed correction/check, <=4000), source (actual message/task/artifact/check-log reference, <=1000). Read before correcting a topic. value null forgets a mem/ entry, not core.',
+    inputSchema: { slug: z.string(), value: z.string().nullable() },
   },
   async ({ slug, value }) => {
     if (!isValidSlug(slug)) return text(`Bad slug "${slug}" — use "core" or mem/<lowercase-alnum>.`);
+    if (slug === "core" && value === null) return text("core cannot be forgotten — rewrite it instead.");
+    if (slug.startsWith(LESSON_PREFIX) && value !== null) {
+      const lesson = parseLesson(value);
+      if (!lesson) return text("Bad lesson: use JSON with nonempty when (<=400), action (<=4000), evidence (<=4000), source (<=1000) strings.");
+      value = JSON.stringify(lesson);
+    }
     const { convKey, heads } = await memHeads();
     const createdAt = Math.max(Math.floor(Date.now() / 1000), (heads.get(slug)?.event.created_at ?? 0) + 1);
-    const body = slug === "core" ? { slug, profile: value } : { slug, value };
-    const template = buildEngramEvent(convKey, owner!, body as never, createdAt);
-    await relay.publish(finalizeEvent({ ...template, pubkey: myPubkey } as never, secret));
-    return text(`${slug} written (${value.length} chars).`);
+    const body = slug === "core" ? { slug, profile: value! } : { slug, value };
+    const template = buildEngramEvent(convKey, owner!, body, createdAt);
+    await relay.publish(finalizeEvent(template, secret));
+    return text(value === null ? `${slug} forgotten (history retained).` : `${slug} written (${value.length} chars).`);
   }
 );
 
@@ -459,11 +467,12 @@ server.registerTool(
 
 server.registerTool(
   "fez_mem_list",
-  { description: "List your persistent memory slugs.", inputSchema: {} },
-  async () => {
+  { description: 'List your persistent memory slugs. Use prefix "mem/lessons/" to find candidate lessons, then fez_mem_get for the condition, action, and evidence.', inputSchema: { prefix: z.string().optional() } },
+  async ({ prefix }) => {
     const { heads } = await memHeads();
     const rows = [...heads.values()]
       .filter((h) => h.body.value !== null || h.body.slug === "core")
+      .filter((h) => !prefix || h.body.slug.startsWith(prefix))
       .map((h) => `• ${h.body.slug}`);
     return text(rows.join("\n") || "(no memory yet)");
   }

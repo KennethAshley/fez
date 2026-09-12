@@ -75,7 +75,7 @@ import { workResult, workResultForAgent } from "../../fez-client/src/work-comple
 import { EvaluationError, evaluationExecutableAvailable, evaluationReady, evaluationRuntime, assertEvaluationToolsUnchanged, readEvaluationRequest, runEvaluation } from "./evaluation.js";
 import { runMeteredHire } from "./hire-usage.js";
 import { deliverHire } from "./hire-delivery.js";
-import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
+import { memoryPromptParts, memoryStateFromHeads, type CoreMemoryState } from "./memory-prompt.js";
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
 import { fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
@@ -755,10 +755,10 @@ async function main() {
     if (!owner || !memConvKey) return "unknown";
     if (Date.now() - memCache.at < 30_000) return memCache.state;
     try {
-      const events = await relay.query([{ kinds: [KIND_AGENT_ENGRAM], authors: [myPubkey], "#p": [owner] }]);
-      const core = engramHeads(events as never, myPubkey, owner, memConvKey).get("core");
+      const result = await relay.queryWithStatus([{ kinds: [KIND_AGENT_ENGRAM], authors: [myPubkey], "#p": [owner] }]);
+      if (result.failures.length) throw new Error("Private memory read is incomplete");
       memCache = {
-        state: core?.body.profile ? { core: core.body.profile } : "none",
+        state: memoryStateFromHeads(engramHeads(result.events, myPubkey, owner, memConvKey)),
         at: Date.now(),
       };
     } catch {
@@ -1864,6 +1864,7 @@ async function main() {
         const manualSection = activatedSkill ? readSkillInstructions(activatedSkill.path, activatedSkill.setting, activatedSkill.root, true) : undefined;
         const buildPrompt = async (fresh: boolean): Promise<string> => {
           const memory = memoryPromptParts(await coreMemoryState());
+          const sourceNotice = `Current source message ID: ${event.id}; channel: ${untrustedValue(channelId)}; author: ${event.pubkey}${event.pubkey === owner ? " (your owner)" : ""}.`;
           const workNotice = completedRequest
             ? `Delegated result ${event.id} for request ${completedRequest.id}: ${workResult(event, completedRequest)}. Check the deliverable against the original request: ${untrustedValue(completedRequest.content)}. If it meets the request, call fez_accept_work with resultId=${event.id} and a note naming what you actually checked. Then deliver the outcome to the original user. Submission alone is not acceptance. Do not @mention the worker to acknowledge it.`
             : !doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey)
@@ -1871,6 +1872,7 @@ async function main() {
               : undefined;
           if (!fresh) {
             return [
+              sourceNotice,
               ...(manualSection ? [manualSection] : []),
               ...(workNotice ? [workNotice] : []),
               // Core rides EVERY turn, not just the fresh prompt: the
@@ -1883,7 +1885,7 @@ async function main() {
               ...(steering.length > 0
                 ? [
                     `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response:`,
-                    ...steering.map(e => `${who(e.pubkey)}: ${e.content}`),
+                    ...steering.map(e => `${who(e.pubkey)} (message ID: ${e.id}): ${e.content}`),
                   ]
                 : []),
               docFraming
@@ -1892,6 +1894,7 @@ async function main() {
             ].join("\n\n");
           }
           return [
+            sourceNotice,
             ...(manualSection ? [manualSection] : []),
             ...(workNotice ? [workNotice] : []),
             persona.systemPrompt ?? "",
@@ -1963,7 +1966,7 @@ async function main() {
             ...(steering.length > 0
               ? [
                   `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response rather than answering separately:`,
-                  ...steering.map(e => `${who(e.pubkey)}: ${e.content}`),
+                  ...steering.map(e => `${who(e.pubkey)} (message ID: ${e.id}): ${e.content}`),
                 ]
               : []),
             // Next to the trigger, as work for THIS turn — the ambient
@@ -2260,8 +2263,10 @@ async function main() {
       const manualSection = activatedSkill ? readSkillInstructions(activatedSkill.path, activatedSkill.setting, activatedSkill.root, true) : undefined;
       const buildPrompt = async (fresh: boolean): Promise<string> => {
         const memory = memoryPromptParts(await coreMemoryState());
+        const sourceNotice = `Current private source message ID: ${dm.id}; author: ${dm.senderPk}${dm.senderPk === owner ? " (your owner)" : ""}.`;
         if (!fresh) {
           return [
+            sourceNotice,
             ...(manualSection ? [manualSection] : []),
             // Same rule as the channel path: core rides every turn so a
             // harness-side compaction can't drop the agent's identity.
@@ -2274,6 +2279,7 @@ async function main() {
             ? `This is a GROUP conversation with ${replyTargets.length + 1} participants (${replyTargets.map((pk) => pk.slice(0, 8)).join(", ")} and you) — your reply is delivered to everyone in it.`
             : undefined;
         return [
+          sourceNotice,
           ...(manualSection ? [manualSection] : []),
           persona.systemPrompt ?? "",
           ...(memory.section ? [memory.section] : []),
