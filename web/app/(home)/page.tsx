@@ -2,6 +2,7 @@ import { HandleCycle } from '@/components/handle-cycle';
 import { AgentCodex } from '@/components/qud/agent-codex';
 import { Dialogue } from '@/components/qud/dialogue';
 import { SiteHeader } from '@/components/site-header';
+import { EmailSignup } from '@/components/email-signup';
 
 const ACCENT = 'text-[#FF6A00]';
 
@@ -33,6 +34,7 @@ export default function HomePage() {
               <p className="mt-2 text-[10px] text-neutral-700">macOS · apple silicon · early</p>
             </div>
             )}
+            <EmailSignup />
           </div>
           <p className="mb-10 text-xs leading-relaxed text-neutral-500">
             The first Bazaar gauntlet runs on testnet subnet 553: brief → script → spoken

@@ -7,13 +7,13 @@ const ACCENT = 'text-[#FF6A00]';
 export const metadata: Metadata = {
   title: 'fez — privacy',
   description:
-    'What fez knows about you: a key you hold, relays you choose, and nothing on our side — because there is no our side.',
+    'How Fez handles local identities, relay data, connected services, and optional email updates.',
 };
 
 /**
  * The privacy policy is short because the architecture is the policy:
- * fez ships no accounts, no fez-operated database of users, and no
- * server that sees your tokens. Every claim below is checkable against
+ * the desktop ships no accounts and no server that sees your tokens.
+ * The website separately collects optional email signups. Claims are checkable against
  * the open source. Google's brand verification also requires this page
  * to exist and to carry the Limited Use statement — it does.
  */
@@ -35,13 +35,13 @@ export default function PrivacyPage() {
           <h1 className="pb-2 text-xl font-bold text-white">
             privacy<span className={ACCENT}>.</span>
           </h1>
-          <p className="pb-10 text-xs text-neutral-600">effective 2026-09-08 · applies to the fez desktop app and fez.chat</p>
+          <p className="pb-10 text-xs text-neutral-600">effective 2026-09-12 · applies to the fez desktop app and fez.chat</p>
 
           <Section title="the short version">
             <p>
-              fez has no accounts, no sign-up, and no fez-operated database of users. Your identity is a
-              cryptographic key minted on your machine and stored in your OS keychain. What fez could know
-              about you is limited by design: there is no server of ours for your data to land on.
+              The Fez desktop app requires no account or email address. Your identity is a cryptographic
+              key minted on your machine and stored in your OS keychain. The website offers a separate,
+              optional email signup for release updates and beta feedback requests.
             </p>
           </Section>
 
@@ -97,8 +97,20 @@ export default function PrivacyPage() {
 
           <Section title="this website">
             <p>
-              fez.chat is a static site hosted on Vercel, whose infrastructure keeps standard request logs.
+              fez.chat is hosted on Vercel, whose infrastructure keeps standard request logs.
               The site sets no fez cookies and runs no fez tracking.
+            </p>
+          </Section>
+
+          <Section title="optional email updates">
+            <p>
+              If you submit the email signup form, we store your email address and signup date in our
+              Supabase database. We use them for Fez release updates and occasional beta feedback
+              requests. Signing up is optional and does not grant or restrict access to Fez.
+            </p>
+            <p>
+              The signup list is private, is not published to Nostr relays, and is not linked to your
+              Fez identity or sold. You can ask us to remove your address by replying to an update.
             </p>
           </Section>
 
