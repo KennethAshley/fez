@@ -1,4 +1,5 @@
 import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
+import { registerWalletReputation } from "./gui-reputation.js";
 import type { SpendEntry } from "./log.js";
 import type { Network } from "./storage-mirror.js";
 import qrcode from "qrcode-generator";
@@ -871,6 +872,7 @@ export default function activate(api: GuiExtensionApi): void {
 
   // ── wallet panel ─────────────────────────────────────────────────
   api.registerSettingsPanel("Wallet", () => <WalletPanel />);
+  registerWalletReputation(api);
 
   function WalletPanel(): JSX.Element {
     const [addresses, setAddresses] = useState<AddressBook>({});

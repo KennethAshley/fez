@@ -1613,7 +1613,7 @@ function Shell({
       )}
       {view.kind === "guest" && (() => {
         const guest = listGuests().find((g) => g.pk === view.pk);
-        return guest ? <GuestThreadView key={guest.pk} wire={wire} selfPk={client.pubkey} guest={guest} /> : null;
+        return guest ? <GuestThreadView key={guest.pk} wire={wire} selfPk={client.pubkey} guest={guest} client={client} /> : null;
       })()}
       {view.kind === "home" && (
         <HomeView

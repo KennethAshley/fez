@@ -6,12 +6,15 @@ import { createRoot } from "../../fez-desktop/node_modules/react-dom/client.js";
 import { GuestThreadView, useGuestUnreads, type Guest } from "../../fez-desktop/src/guest-threads.js";
 import type { BrowserWire } from "../../fez-desktop/src/wire.js";
 import { readGuestJobs } from "../../fez-desktop/src/guest-job.js";
+import { FezClient, type Wire } from "../../fez-client/src/index.js";
+import { deriveSalt } from "../../fez-client/src/salt.js";
+import type { fetchSaltPanel } from "../../fez-desktop/src/salt-record.js";
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), salt: vi.fn() }));
 vi.mock("../../fez-desktop/node_modules/@tauri-apps/api/core.js", () => ({ invoke: mocks.invoke }));
 vi.mock("../../fez-desktop/src/relay.js", () => ({ relaySet: () => [] }));
 vi.mock("../../fez-desktop/src/salt-record.js", () => ({
-  fetchSaltPanel: async () => "error", invalidateSaltPanel: () => {}, tierLabel: () => "", tierTitle: () => "",
+  fetchSaltPanel: mocks.salt, invalidateSaltPanel: () => {}, tierLabel: () => "", tierTitle: () => "",
 }));
 
 class Socket {
@@ -47,6 +50,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", { locks: { request: async (_key: string, _options: unknown, action: (lock: object) => Promise<void>) => action({}) } });
   mocks.invoke.mockReset();
+  mocks.salt.mockReset().mockResolvedValue("error");
   mocks.invoke.mockImplementation(async (command: string, input?: { args?: string[] }) => command === "extension_storage_read"
     ? JSON.stringify({ addresses: { personas: { buyer: payerAddress } } }) : input?.args?.[0] === "capabilities" ? capabilityOutput() : "{}");
   Element.prototype.scrollIntoView = vi.fn();
@@ -177,7 +181,7 @@ it("blocks an older wallet before it can ignore payment guard flags", async () =
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-async function render(unreads = false) {
+async function render(unreads = false, client?: FezClient) {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -187,7 +191,7 @@ async function render(unreads = false) {
   }
   await act(async () => root.render(unreads
     ? React.createElement(Unreads)
-    : React.createElement(GuestThreadView, { guest, selfPk: ownerPk, wire: {
+    : React.createElement(GuestThreadView, { guest, selfPk: ownerPk, client, wire: {
       signEvent: async (template: { kind: number; content: string; tags: string[][]; created_at?: number }) => finalizeEvent({ created_at: Math.floor(Date.now() / 1000), ...template }, ownerKey),
     } as BrowserWire })));
   const socket = Socket.all.at(-1)!;
@@ -195,6 +199,25 @@ async function render(unreads = false) {
   if (!unreads) expect(mocks.invoke.mock.calls, "wallet mirror should be read").toContainEqual(["extension_storage_read", { name: "wallet" }]);
   return { host, socket, close: async () => { await act(async () => root.unmount()); host.remove(); } };
 }
+
+it("shows a workspace endorser by name and in the correct circle in guest reputation", async () => {
+  const client = new FezClient({ pubkey: ownerPk } as Wire);
+  const alice = "a".repeat(64);
+  client.state.workspace.members.set(alice, "member");
+  vi.spyOn(client, "displayName").mockReturnValue("Alice");
+  mocks.salt.mockImplementation(async (opts: Parameters<typeof fetchSaltPanel>[0]) => deriveSalt({
+    ...opts, agent: opts.pk, attestations: [],
+    evidence: [{ signer: alice, kind: "vouch", note: "Thorough researcher", at: 100, moneyBacked: false }],
+  }));
+  const view = await render(false, client);
+  try {
+    const reputation = view.host.querySelector(".guest-reputation")!;
+    expect(reputation.textContent).toContain("Alice");
+    expect(reputation.textContent).toContain("In your circle");
+    expect(view.host.textContent).not.toContain("summon anyway?");
+    expect(mocks.salt.mock.calls[0][0].relays).toContain(guest.relay);
+  } finally { await view.close(); }
+});
 
 it("does not expose a payment destination from a forged announce", async () => {
   const view = await render();

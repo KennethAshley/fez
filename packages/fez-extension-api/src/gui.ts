@@ -164,6 +164,10 @@ export interface GuiExtensionApi {
    * (see `MountRender`).
    */
   registerSettingsPanel(name: string, render: MountRender, opts?: { source?: string }): void;
+  /** Extra facts in agent reputation views. `persona` is only supplied for
+   * local agents; a foreign agent's display name is never a wallet identity.
+   * Requires ui. Supports both element and mount/dispose render forms. */
+  registerAgentProfileSection(label: string, render: (props: { pubkey: string; persona?: string }, host?: HTMLElement) => El | Dispose | void): void;
   /** A slash command in the desktop composer. */
   registerGuiCommand(name: string, run: (args: string) => Promise<string> | string): void;
   /** Decorate chat messages whose content matches — a card under the bubble. */

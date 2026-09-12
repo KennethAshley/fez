@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { FezClient } from "@fezchat/client";
 import { Avatar as UiAvatar } from "@fezchat/ui";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -10,6 +11,7 @@ import { BAZAAR_RELAY } from "./bazaar-record";
 import { fetchSaltPanel, invalidateSaltPanel, tierLabel, tierTitle, type SaltPanel } from "./salt-record";
 
 import { parseGuestEvent, isGuestReplyTo, replaceableEventWins } from "../../fez-client/src/guest-protocol.js";
+import { SaltSection, AgentProfileExtras } from "./AgentReputation";
 import { GuestHirePanel } from "./GuestHirePanel.js";
 import { readGuestJobs } from "./guest-job.js";
 
@@ -237,11 +239,13 @@ type Turn =
   | { kind: "theirs"; id: string; ts: number; text: string; status: string }
   | { kind: "progress"; id: string; ts: number; text: string };
 
-export function GuestThreadView(props: { wire: BrowserWire; selfPk: string; guest: Guest }) {
+type GuestThreadProps = { wire: BrowserWire; selfPk: string; guest: Guest; client?: FezClient };
+
+export function GuestThreadView(props: GuestThreadProps) {
   return <GuestConversation key={JSON.stringify([props.selfPk, props.guest.pk, props.guest.relay])} {...props} />;
 }
 
-function GuestConversation({ wire, selfPk, guest }: { wire: BrowserWire; selfPk: string; guest: Guest }) {
+function GuestConversation({ wire, selfPk, guest, client }: GuestThreadProps) {
   const [events, setEvents] = useState<Map<string, ParsedGuest>>(new Map());
   const [draft, setDraft] = useState(() => guest.draft ?? "");
   // Reopening the SAME guest (same pk) with a fresh draft — a second
@@ -259,26 +263,26 @@ function GuestConversation({ wire, selfPk, guest }: { wire: BrowserWire; selfPk:
   const [error, setError] = useState<string>();
   const [offer, setOffer] = useState<Extract<ParsedGuest, { type: "announce" }>>();
   const [face, setFace] = useState({ name: guest.name, picture: guest.picture });
-  // Salt: what people outside this agent's household say. No workspace
-  // client here, so rings are viewer-only — exactly the vantage that
-  // makes a stranger "nameless", which is who the gate is for.
+  // Use the same workspace relationships as local profiles, even when
+  // the agent itself works at a foreign venue.
   const [salt, setSalt] = useState<SaltPanel | "error">();
   const [saltAck, setSaltAck] = useState(() => !!guest.saltAck);
+  const readSalt = useCallback(() => fetchSaltPanel({
+    pk: guest.pk,
+    viewer: selfPk,
+    relays: [...new Set([...relaySet(), BAZAAR_RELAY, guest.relay])],
+    isViewerAgent: (k) => k === selfPk || !!client?.agents().has(k),
+    inViewerCircle: (k) => !!client?.state.isMember(k),
+  }), [guest.pk, guest.relay, selfPk, client]);
   useEffect(() => {
     let cancelled = false;
     setSalt(undefined);
     setSaltAck(!!listGuests().find((g) => g.pk === guest.pk)?.saltAck);
-    void fetchSaltPanel({
-      pk: guest.pk,
-      viewer: selfPk,
-      relays: [...relaySet(), BAZAAR_RELAY],
-      isViewerAgent: (k) => k === selfPk,
-      inViewerCircle: () => false,
-    })
+    void readSalt()
       .then((p) => { if (!cancelled) setSalt(p); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [guest.pk, selfPk]);
+  }, [guest.pk, readSalt]);
   // The once-per-guest gate: real salt, no ack, and a tier where nobody
   // the viewer can verify has vouched. "error" is excluded on purpose.
   const summonGate = !!(salt && salt !== "error" && !saltAck && (salt.tier === "nameless" || salt.tier === "spoken-of"));
@@ -308,13 +312,7 @@ function GuestConversation({ wire, selfPk, guest }: { wire: BrowserWire; selfPk:
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(["EVENT", ev]));
       invalidateSaltPanel(guest.pk);
-      const p = await fetchSaltPanel({
-        pk: guest.pk,
-        viewer: selfPk,
-        relays: [...relaySet(), BAZAAR_RELAY],
-        isViewerAgent: (k) => k === selfPk,
-        inViewerCircle: () => false,
-      });
+      const p = await readSalt();
       setSalt(p);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -702,6 +700,11 @@ function GuestConversation({ wire, selfPk, guest }: { wire: BrowserWire; selfPk:
       <div className="guest-banner">
         {`Anyone can read this thread. Share only the context intended for this job. Messages are signed with your identity and directed to ${name}.`}
       </div>
+      <details className="guest-reputation">
+        <summary>Agent reputation</summary>
+        <SaltSection panel={salt} viewer={selfPk} displayName={client ? (pk) => client.displayName(pk) : undefined} />
+        <AgentProfileExtras pubkey={guest.pk} />
+      </details>
       <GuestHirePanel key={JSON.stringify([selfPk, guest.pk, guest.relay])}
         scope={{ ownerPk: selfPk, guestPk: guest.pk, relay: guest.relay }}
         tasks={tasks.filter(task => !pendingIds.has(task.event.id))} results={results} offer={freshOffer} />
@@ -753,20 +756,6 @@ function GuestConversation({ wire, selfPk, guest }: { wire: BrowserWire; selfPk:
           <div className="guest-banner" style={{ color: "var(--brand, #FF6A00)", padding: 0 }}>
             no salt between you and anyone you know — summon anyway?
           </div>
-          {[...salt.ring0, ...salt.ring1].slice(0, 5).map((e, i) => (
-            <div key={`${e.signer}${i}`} className="guest-banner" style={{ padding: 0 }}>
-              {`${e.note} — ${e.signer.slice(0, 8)} · ${new Date(e.at * 1000).toLocaleDateString()}${e.moneyBacked ? " · paid" : ""}`}
-            </div>
-          ))}
-          {salt.ring2Signers > 0 ? (
-            <div
-              className="guest-banner"
-              style={{ padding: 0 }}
-              title="distinct keys, sybil-able — each is at least a real keypair vouching in public"
-            >
-              {`spoken of by ${salt.ring2Signers} key${salt.ring2Signers === 1 ? "" : "s"}`}
-            </div>
-          ) : null}
           <button
             className="agent-action"
             onClick={() => {

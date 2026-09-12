@@ -478,7 +478,7 @@ export * from "./skill-source.js";
 export * from "./skill-attach.js";
 export * from "./persona-keys.js";
 export * from "./salt.js";
-import { deriveSalt, type SaltEvidence, type SaltPanel } from "./salt.js";
+import { chitEvidence, deriveSalt, type SaltPanel } from "./salt.js";
 import {
   resolveMentions,
   type MentionBindings,
@@ -2004,12 +2004,7 @@ export class FezClient {
       : [];
 
     const p = (e: { tags: string[][] }, name: string) => e.tags.find((t) => t[0] === name)?.[1];
-    const evidence: SaltEvidence[] = [];
-    for (const e of [...chits, ...pays]) {
-      if (p(e, "p") !== agentPk) continue;
-      evidence.push({ signer: e.pubkey, kind: "chit", workId: p(e, "e"), note: e.content,
-        at: e.created_at, moneyBacked: e.kind === K.PAYMENT_RECEIPT });
-    }
+    const evidence = chitEvidence(agentPk, [...chits, ...pays]);
     // Latest vouch per signer; empty content = revoked.
     const latestVouch = new Map<string, (typeof vouches)[number]>();
     for (const v of vouches) {

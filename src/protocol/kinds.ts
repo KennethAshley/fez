@@ -26,6 +26,8 @@ export const KIND_AGENT_ATTESTATION = 47006;
  * ["e", workEventId]? (the merge, 47003 result, or message accepted),
  * ["h", channelId]?. Content: short plaintext of what was done.
  * Positive-only by construction: published on acceptance, nothing otherwise.
+ * A payment receipt can back a chit only when signer, agent, and explicit
+ * work id match. A receipt alone is never evidence of accepted work.
  * Valid on any relay — validity is only the issuer's signature — so an
  * agent republishing chits it received where it's being evaluated is
  * expected behavior. See docs/superpowers/specs/2026-09-05-salt-reputation-design.md.
@@ -72,8 +74,9 @@ export const KIND_AGENT_AUDIT = 47020;
  */
 export const KIND_TURN_METRIC = 47030;
 
-/** A payment, e-tagged to the message it paid for. Signed by the payer;
- * verifiable by anyone against the block it names. */
+/** A payment, optionally e-tagged to the work it paid for. Signed by the
+ * payer; verifiable against the block it names. This records payment,
+ * including prepaid leases, not acceptance — acceptance needs a chit. */
 export const KIND_PAYMENT_RECEIPT = 47040;
 
 // 47041 is RESERVED: the bazaar's npub↔hotkey binding kind (fez-bazaar

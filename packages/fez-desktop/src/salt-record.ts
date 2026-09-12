@@ -6,7 +6,7 @@
  * it works, not where it was born.
  */
 import { verifyEvent } from "nostr-tools/pure";
-import { deriveSalt, type SaltEvidence, type SaltPanel, type Tier } from "../../fez-client/src/salt.js";
+import { chitEvidence, deriveSalt, type SaltInput, type SaltPanel, type Tier } from "../../fez-client/src/salt.js";
 import { RelayConnection } from "../../../src/protocol/relay.js";
 
 export type { SaltPanel, Tier };
@@ -16,12 +16,13 @@ interface RawEvent {
   tags: string[][]; created_at: number;
 }
 
-const panelCache = new Map<string, SaltPanel | "error">();
+// Cache evidence, not a viewer's relationship to its signers.
+const evidenceCache = new Map<string, Pick<SaltInput, "evidence" | "attestations">>();
 
 /** Bust one agent's cached panel — the vouch button just changed the
  *  evidence, and a session-cached tier would deny it happened. */
 export function invalidateSaltPanel(pk: string): void {
-  panelCache.delete(pk);
+  for (const key of evidenceCache.keys()) if (key.startsWith(`${pk}:`)) evidenceCache.delete(key);
 }
 
 const tag = (e: RawEvent, name: string) => e.tags.find((t) => t[0] === name)?.[1];
@@ -33,8 +34,9 @@ export async function fetchSaltPanel(opts: {
   isViewerAgent(pk: string): boolean;
   inViewerCircle(pk: string): boolean;
 }): Promise<SaltPanel | "error"> {
-  const hit = panelCache.get(opts.pk);
-  if (hit && hit !== "error") return hit;
+  const cacheKey = `${opts.pk}:${[...new Set(opts.relays)].sort().join(",")}`;
+  const hit = evidenceCache.get(cacheKey);
+  if (hit) return deriveSalt({ ...opts, agent: opts.pk, ...hit });
   const relay = new RelayConnection({ urls: opts.relays });
   try {
     await relay.connect();
@@ -62,12 +64,7 @@ export async function fetchSaltPanel(opts: {
       ? await q({ kinds: [47006], authors: owners, limit: 500 })
       : [];
 
-    const evidence: SaltEvidence[] = [];
-    for (const e of [...chits, ...pays]) {
-      if (tag(e, "p") !== opts.pk) continue;
-      evidence.push({ signer: e.pubkey, kind: "chit", workId: tag(e, "e"), note: e.content,
-        at: e.created_at, moneyBacked: e.kind === 47040 });
-    }
+    const evidence = chitEvidence(opts.pk, [...chits, ...pays]);
     // Latest vouch per signer; empty content = revoked.
     const latestVouch = new Map<string, RawEvent>();
     for (const v of vouches) {
@@ -91,7 +88,7 @@ export async function fetchSaltPanel(opts: {
       isViewerAgent: opts.isViewerAgent,
       inViewerCircle: opts.inViewerCircle,
     });
-    panelCache.set(opts.pk, panel);
+    evidenceCache.set(cacheKey, { evidence, attestations });
     return panel;
   } catch {
     return "error";
@@ -103,7 +100,7 @@ export async function fetchSaltPanel(opts: {
 export function tierLabel(tier: Tier): string {
   switch (tier) {
     case "salted": return "salted";
-    case "circle": return "vouched by your circle";
+    case "circle": return "salt from your circle";
     case "spoken-of": return "spoken of";
     case "nameless": return "nameless";
   }
@@ -113,9 +110,9 @@ export function tierLabel(tier: Tier): string {
  *  YOUR vantage (the same event reads differently to a stranger). */
 export function tierTitle(tier: Tier): string {
   switch (tier) {
-    case "salted": return "you (or one of your agents) vouched for this agent — the strongest signal you can have";
-    case "circle": return "someone you trust vouched for this agent; you haven't yourself";
-    case "spoken-of": return "distinct keys, sybil-able — each is at least a real keypair vouching in public";
-    case "nameless": return "no one you can verify has attested this agent's work";
+    case "salted": return "you or one of your agents accepted work or vouched for this agent";
+    case "circle": return "someone in your circle accepted work or vouched for this agent";
+    case "spoken-of": return "public chits or vouches from keys outside your circle; a key count does not establish trust";
+    case "nameless": return "no chits or active vouches found in the queried relays";
   }
 }

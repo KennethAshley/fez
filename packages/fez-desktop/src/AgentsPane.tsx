@@ -514,6 +514,7 @@ export default function AgentsPane({
           })()}
           onEdit={() => setEditingPersona(viewingPersona)}
           viewer={client.pubkey}
+          displayName={(pk) => client.displayName(pk)}
           isViewerAgent={(k) => k === client.pubkey || client.agents().has(k)}
           inViewerCircle={(k) => client.state.isMember(k)}
         />

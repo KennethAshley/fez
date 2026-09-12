@@ -214,6 +214,8 @@ export interface GuiExtensionApi {
     render: MountRender,
     opts?: { source?: string }
   ) => void;
+  /** Extra facts in an agent's reputation view, owned by this extension. */
+  registerAgentProfileSection: (label: string, render: AgentProfileSection["render"]) => void;
   /**
    * This extension's own secrets, namespaced to it, and WRITE-ONLY —
    * `set` and `has`, never `get`. Consumers (a poller or spawned agent)
@@ -393,6 +395,21 @@ export function registerSettingsPanel(
 }
 export function extensionSettingsPanels(): readonly SettingsPanel[] {
   return settingsPanels;
+}
+
+export interface AgentProfileContext {
+  pubkey: string;
+  /** A local persona name; absent for foreign agents. Never infer it from a display name. */
+  persona?: string;
+}
+export interface AgentProfileSection {
+  source: string;
+  label: string;
+  render: (props: AgentProfileContext, host?: HTMLElement) => ReturnType<MountRender>;
+}
+const agentProfileSections: AgentProfileSection[] = [];
+export function extensionAgentProfileSections(): readonly AgentProfileSection[] {
+  return agentProfileSections;
 }
 
 /** The panel that configures a bridge's channels, if one claims them. */
@@ -902,6 +919,7 @@ function snapshotRegistrations(): Dispose {
   const snapshots = [
     snapshotArray(decorators),
     snapshotArray(settingsPanels),
+    snapshotArray(agentProfileSections),
     snapshotMap(guiCommands),
     snapshotArray(markdownPlugins),
     snapshotMap(blockRenderers),
@@ -1171,6 +1189,14 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
         ? (_label: string, render: MountRender, opts?: { source?: string }) =>
             registerSettingsPanel(name, render, opts)
         : (refuse("ui", "add a settings panel") as never),
+      registerAgentProfileSection: may("ui")
+        ? (label, render) => {
+            const section = { source: name, label, render };
+            const at = agentProfileSections.findIndex((s) => s.source === name && s.label === label);
+            if (at >= 0) agentProfileSections[at] = section;
+            else agentProfileSections.push(section);
+          }
+        : (refuse("ui", "add an agent profile section") as never),
     };
     const rollback = snapshotRegistrations();
     try {

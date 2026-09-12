@@ -901,7 +901,7 @@ export class FezTUI {
           } else {
             const panel = await this.fezClient.saltPanel(pk);
             const lines = [...panel.ring0, ...panel.ring1].map(
-              (e) => `  ${e.note} — ${e.signer.slice(0, 8)} · ${new Date(e.at * 1000).toLocaleDateString()}${e.moneyBacked ? " · paid" : ""}`
+              (e) => `  ${e.note} — ${e.signer.slice(0, 8)} · ${new Date(e.at * 1000).toLocaleDateString()}${e.moneyBacked ? " · payment receipt (unverified)" : ""}`
             );
             const out = [`salt: ${panel.tier}`, ...lines];
             if (panel.ring2Signers > 0) out.push(`  spoken of by ${panel.ring2Signers} key${panel.ring2Signers === 1 ? "" : "s"}`);

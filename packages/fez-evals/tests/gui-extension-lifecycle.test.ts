@@ -56,6 +56,19 @@ it("reports asynchronous activation failures and continues loading other extensi
   ]);
 });
 
+it("loads agent profile sections and removes them on extension unload", async () => {
+  native.files = [["probe", "var __fezExt = { default: function(api) { api.registerAgentProfileSection('stake', function(props) { return props.pubkey; }); } };", ""]];
+  const host = await import("../../fez-desktop/src/gui-extensions.js");
+  expect(await host.reloadGuiExtensions({} as FezClient)).toEqual(["probe"]);
+  const sections = host.extensionAgentProfileSections();
+  expect(sections).toHaveLength(1);
+  expect(sections[0].source).toBe("probe");
+  expect(sections[0].render({ pubkey: "agent", persona: "local-agent" })).toBe("agent");
+  native.files = [];
+  await host.reloadGuiExtensions({} as FezClient);
+  expect(host.extensionAgentProfileSections()).toEqual([]);
+});
+
 it("rolls back registrations added or replaced by a failed asynchronous activation", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   native.files = [
@@ -72,6 +85,7 @@ it("rolls back registrations added or replaced by a failed asynchronous activati
       api.registerNavView('shared', { glyph: 'B', label: 'Broken' }, function() {});
       api.registerMessageDecorator(function() { return true; }, function() {});
       api.registerSettingsPanel('broken', function() {});
+      api.registerAgentProfileSection('broken', function() {});
       api.registerMarkdownPlugin('broken');
       api.registerBlockRenderer('shared', function() { return 'broken'; }, { label: 'Broken', template: 'broken' });
       api.registerThreadView('broken', function() { return true; }, function() {});
@@ -93,6 +107,7 @@ it("rolls back registrations added or replaced by a failed asynchronous activati
   expect(host.extensionNavViews().map((view) => view.label)).toEqual(["Healthy"]);
   expect(host.messageDecorators()).toEqual([]);
   expect(host.extensionSettingsPanels().map((panel) => panel.name)).toEqual(["probe"]);
+  expect(host.extensionAgentProfileSections()).toEqual([]);
   expect(host.docMarkdownPlugins()).toEqual(["healthy"]);
   expect(host.blockRenderer("shared")?.({ info: "", body: "", raw: "", channelId: "" })).toBe("healthy");
   expect(host.extensionBlockMenu()).toEqual([]);

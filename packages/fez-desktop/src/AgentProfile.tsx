@@ -10,6 +10,7 @@ import { relaySet } from "./relay";
 import { markWaking, clearWaking, wakingSince, wakeLabel, subscribeWaking } from "./waking";
 import { BAZAAR_RELAY, aggregateRecord, bestRow, type AttestationEvent, type RecordRow } from "./bazaar-record";
 import { fetchSaltPanel, tierLabel, type SaltPanel } from "./salt-record";
+import { SaltSection, AgentProfileExtras } from "./AgentReputation";
 import { RelayConnection } from "../../../src/protocol/relay.js";
 
 /**
@@ -89,54 +90,6 @@ function TrackRecord({ rows }: { rows: RecordRow[] | "error" | undefined }) {
   );
 }
 
-/**
- * The salt panel — what people OUTSIDE the household say. For your own
- * agents the self-dealing filter excludes your chits by design: this
- * section shows what others say, which is the only part worth reading.
- */
-function SaltSection({ panel }: { panel: SaltPanel | "error" | undefined }) {
-  if (panel === undefined) return <div className="settings-hint">◌ checking for salt…</div>;
-  if (panel === "error") return <div className="settings-hint">relays unreachable — salt unknown, not absent</div>;
-  if (panel.tier === "nameless" && panel.ring2Signers === 0) {
-    return (
-      <div className="settings-hint">
-        no salt — no one you can verify has attested this agent's work
-        {panel.excluded > 0 ? ` (${panel.excluded} household voices excluded)` : ""}
-      </div>
-    );
-  }
-  const lines = [...panel.ring0, ...panel.ring1].slice(0, 5);
-  return (
-    <>
-      <div className="profile-desc">{tierLabel(panel.tier)}</div>
-      {lines.length > 0 && (
-        <ul className="profile-skills">
-          {lines.map((e, i) => (
-            <li key={`${e.signer}${e.workId ?? ""}${i}`}>
-              {e.note}
-              <span className="skill-desc">
-                {" "}— {e.signer.slice(0, 8)} · {new Date(e.at * 1000).toLocaleDateString()}
-                {e.moneyBacked ? " · paid" : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {panel.ring2Signers > 0 && (
-        <div
-          className="settings-hint"
-          title="distinct keys, sybil-able — each is at least a real keypair vouching in public"
-        >
-          spoken of by {panel.ring2Signers} key{panel.ring2Signers === 1 ? "" : "s"}
-        </div>
-      )}
-      {panel.excluded > 0 && (
-        <div className="settings-hint">({panel.excluded} household voices excluded)</div>
-      )}
-    </>
-  );
-}
-
 export default function AgentProfile({
   name,
   pk,
@@ -147,6 +100,7 @@ export default function AgentProfile({
   viewer,
   isViewerAgent,
   inViewerCircle,
+  displayName,
 }: {
   name: string;
   pk?: string;
@@ -159,6 +113,7 @@ export default function AgentProfile({
   viewer?: string;
   isViewerAgent?: (pk: string) => boolean;
   inViewerCircle?: (pk: string) => boolean;
+  displayName?: (pk: string) => string;
 }) {
   const { skills: catalog } = useConfig();
   const [content, setContent] = useState<string>();
@@ -348,12 +303,13 @@ export default function AgentProfile({
         <div className="manage-section">standing</div>
         <div className="manage-sub">bazaar grades</div>
         {pk ? <TrackRecord rows={record} /> : <div className="settings-hint">no public key — record unknowable</div>}
-        <div className="manage-sub">salt</div>
         {pk && viewer ? (
-          <SaltSection panel={salt} />
+          <SaltSection panel={salt} viewer={viewer} displayName={displayName} />
         ) : (
           <div className="settings-hint">no public key — salt unknowable</div>
         )}
+
+        {pk && <AgentProfileExtras pubkey={pk} persona={name} />}
 
         <div className="manage-section">runtime</div>
         <dl className="profile-facts">

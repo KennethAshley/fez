@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { createRequire } from "node:module";
 import { FezClient, type Artifact, type ClientEvents, type Wire } from "../../fez-client/src/index.js";
 import { handlePanelRequest } from "../../fez-desktop/src/IsolatedPanelLauncher";
-import { extensionSettingsPanels, guiExtensionStatus, loadGuiExtensions, reloadGuiExtensions, messageDecorators, pageViewsFor, type GuiExtensionApi, type PageViewProps } from "../../fez-desktop/src/gui-extensions";
+import { extensionSettingsPanels, extensionAgentProfileSections, guiExtensionStatus, loadGuiExtensions, reloadGuiExtensions, messageDecorators, pageViewsFor, type GuiExtensionApi, type PageViewProps } from "../../fez-desktop/src/gui-extensions";
 
 vi.mock("../../fez-desktop/src/artifact-viewers", () => ({ registerArtifactViewer: vi.fn(), snapshotArtifactViewers: () => () => {} }));
 vi.mock("../../fez-desktop/src/notify", () => ({ notifyEvent: vi.fn() }));
@@ -128,6 +128,10 @@ it("a read-only extension cannot publish, sign, decrypt config, or reach the raw
 
 it("read results are snapshots, and agent data and unsupported events stay gated", async () => {
   const { api, client } = await load(["read:channels"]);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  api.registerAgentProfileSection("stake", () => null);
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('without "ui"'));
+  expect(extensionAgentProfileSections()).toEqual([]);
   const snapshot = api.client!.state;
   snapshot.workspace.channels.clear();
   snapshot.workspace.members.clear();
