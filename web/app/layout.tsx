@@ -1,9 +1,8 @@
 import './global.css';
 import { IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google';
 
-// The site's voice is terminal-native (the home pages are all-mono on
-// black). Docs read long, so prose gets a sans — but the same Plex
-// superfamily, so chrome and body are siblings, not strangers.
+// Plex Mono carries the headings and navigation; Plex Sans keeps longer
+// articles readable within the same type family.
 const plexSans = IBM_Plex_Sans({
   subsets: ['latin'],
   weight: ['400', '500', '600'],

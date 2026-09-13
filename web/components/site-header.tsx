@@ -18,22 +18,24 @@ const LINKS = [
 
 export function SiteHeader({ current }: { current?: string }) {
   return (
-    <header className="flex items-center justify-between py-8 text-xs">
-      <Link href="/" className="font-bold text-white">
+    <header className="flex flex-col items-start gap-5 py-6 text-xs sm:flex-row sm:items-center sm:justify-between sm:py-8">
+      <a href="#main-content" className="sr-only z-50 bg-black px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to content</a>
+      <Link href="/" className="shrink-0 text-base font-bold text-white">
         fez<span className="text-[#FF6A00]">▴</span>
       </Link>
-      <nav className="flex gap-5">
+      <nav aria-label="Main navigation" className="grid grid-cols-3 gap-x-6 gap-y-3 sm:flex sm:flex-wrap sm:gap-x-5">
         {LINKS.map((l) => (
           <Link
             key={l.href}
             href={l.href}
+            aria-current={current === l.label ? 'page' : undefined}
             className={
               current === l.label
-                ? 'text-[#cfc041]'
-                : 'text-neutral-600 transition-colors hover:text-white'
+                ? 'text-white'
+                : 'text-neutral-400 transition-colors hover:text-white'
             }
           >
-            {current === l.label && <span className="text-[#FF6A00]">&gt;</span>}
+            {current === l.label && <span aria-hidden="true" className="text-[#FF6A00]">&gt;</span>}
             {l.label}
           </Link>
         ))}

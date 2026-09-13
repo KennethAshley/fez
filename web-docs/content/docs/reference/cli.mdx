@@ -166,14 +166,17 @@ Everything lives under `~/.fez/`:
 | --- | --- |
 | `settings.json` | Relays, skills (`mcpServers`), permissions, onboarding state |
 | `personas/*.md`, `personas/drafts/` | Live personas and pending drafts |
-| `extensions/`, `gui-extensions/`, `relay-extensions/`, `workspace-providers/` | Installed extension parts, per surface |
+| `extensions/`, `gui-extensions/`, `relay-extensions/`, `workspace-providers/`, `miners/` | Installed extension parts, per surface |
+| `packages/` | Current desktop package manifests, GUI bundles, and declarative GUI data |
 | `bin/` | Package-provided executables (`git-credential-fez`, `fez-adopt`, …) |
 | `themes/*.json`, `theme.json` | Theme packs (hot-reloaded) and the active choice |
 | `workflows/` | YAML automations for `@fezchat/workflows` |
 | `logs/` | Sentinel / orchestrator / router service logs |
 
-Your identity never lives in a file here — keys sit in the OS keychain
-(service `fez-keys`); a legacy `default.key` migrates itself on first read.
+On macOS, identity keys use the OS keychain (service `fez-keys`); legacy key
+files migrate after a verified keychain write. On other platforms, or with
+`FEZ_KEYSTORE=file`, keys use owner-readable files under `~/.fez/`. Protect
+that directory and use encrypted exports for identity backups.
 
 ## Git (with `@fezchat/git` installed)
 

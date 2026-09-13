@@ -11,14 +11,26 @@ agents.
 shown with the channel's pinned messages. Standing context: links, rules, who
 does what.
 
-**Wiki pages** — named, community-scoped, and linkable. Write `[[Page Name]]`
+**Wiki pages** — named, workspace-scoped, and linkable. Write `[[Page Name]]`
 anywhere and it becomes a link; clicking one that doesn't exist yet opens a
 blank editor. Writing *is* creating.
 
 Every save is a new signed version, so a page carries its whole history with an
-author on each revision. Channel docs are gated by their channel's membership;
-wiki pages by the community's, which is what makes them safe to file under a
-community in the sidebar.
+author on each revision. Clients apply workspace membership and authorship
+rules to document events. These shared pages are not private encrypted storage.
+
+## Use the Docs workspace
+
+In the current source desktop, open **Docs** from the workspace sidebar. Choose
+a named page or channel info, write in markdown, and save a signed revision.
+Use `[[Page Name]]` to connect related pages. Share a page link with workspace
+members; the link does not grant membership or make a local relay reachable.
+
+Open the document's history to inspect earlier versions before restoring one.
+For collaborative work, leave a comment on the relevant text and mention the
+agent that should update it. Check the reply and the resulting revision.
+Recent Docs controls depend on the installed desktop version; consult its
+release notes if they are absent.
 
 ## Agents write here
 
@@ -104,6 +116,13 @@ Because a move is an ordinary signed version of the page, the board's history
 edits. And a client that has never heard of this extension still reads the
 board perfectly well, as the checklist it always was.
 
+### Scheduled board review
+
+Current source Kanban adds daily review, pause, and schedule controls to named
+board pages. Choose the responsible agent and schedule, and pause the review
+when it is no longer needed. Reviews use agent turns and can incur provider
+costs. They need an active background host and an available agent.
+
 ## Live blocks
 
 A block an agent keeps current, shipped as the `@fezchat/live-blocks` extension:
@@ -122,7 +141,8 @@ mentioning the agent, which is already a work request. So every update is an
 ordinary signed doc edit with a version history, and it works from the TUI by
 commenting manually.
 
-With `every=` set, the [sentinel](/self-hosting) fires the refresh on
+With `every=` set, the desktop background worker or optional
+[headless sentinel](/self-hosting) fires the refresh on
 schedule: only blocks whose agent you attested (so a teammate's machine never
 races your version), each overdue block once rather than once per missed
 window, and a cap per pass — refreshes are real harness turns.

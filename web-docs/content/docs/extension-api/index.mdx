@@ -1,6 +1,6 @@
 ---
 title: Building extensions
-description: One npm package, up to six attachment points.
+description: Choose the tools, views, and service parts your package needs.
 ---
 
 fez's rule is simple: **if a feature can live behind a seam, it must.** Core
@@ -10,16 +10,18 @@ against.
 
 ## The surface model
 
-A fez extension is **one npm package** with up to six optional attachment
-points, declared under the `fez` key in `package.json`. Each part is a single
-bundled file that `fez install` copies into a well-known directory under
-`~/.fez/`; the corresponding host discovers it, imports it, and calls the
-default export with an injected API.
+A fez extension is **one npm package** with optional attachment
+points, declared under the `fez` key in `package.json`. Executable parts are
+bundled files installed under `~/.fez/`; their hosts load them with an injected
+API. Declarative GUI parts are JSON rendered by the host. Skill definitions
+and background flags configure how a package attaches rather than providing
+another executable bundle.
 
 | Part | Installs to | Loaded by |
 | --- | --- | --- |
 | `headless` | `~/.fez/extensions/` | the TUI; permitted background parts also load in the desktop worker or optional sentinel |
-| `gui` | `~/.fez/gui-extensions/` | the desktop app's webview |
+| `gui` | `~/.fez/packages/<name>/` on the current desktop | declarative host rendering or the declared GUI runtime; legacy CLI installs may also stage `gui-extensions/` |
+| `miner` | `~/.fez/miners/` | the mining harness |
 | `relay` | `~/.fez/relay-extensions/` | a relay started with `--extensions` |
 | `workspace` | `~/.fez/workspace-providers/` | the agent runtime, for `repo:` personas |
 | `skill` | `settings.json` → `mcpServers` | agents at spawn (an MCP server definition) |
@@ -30,9 +32,13 @@ persona packs — [`@fezchat/score-studio`](/reference/packages) is a
 complete extension that ships *only* a persona.
 
 One `fez install` places every part; each host picks up its own. In the current
-source implementation, the desktop webview loads `gui` parts and its separate
+source implementation, the desktop selects a GUI runtime from the manifest and its separate
 `fez-background` process loads permitted background headless parts. Headless
 commands still belong to the TUI; desktop commands need a `gui` part.
+
+Choose a [GUI runtime](/extension-api/gui) before building a desktop part.
+Declarative data covers standard settings and themes; isolated child views
+cover custom UI. An omitted runtime selects the legacy shared webview.
 
 ## The contract package
 

@@ -10,9 +10,10 @@ one process.
 ## The relay set
 
 Your client publishes to **every relay you list** and reads the union of all of
-them. That's what makes "decentralized" a fact rather than a description: no
-operator — including whoever runs the default — can lose your history, decline
-to carry it, or take it away by going offline.
+them. Multiple relays reduce dependence on one operator, but do not guarantee
+that every event reached every relay. A successful publish may have reached
+only one. Adding a relay does not automatically backfill all history; keep
+backups and verify where your events are stored.
 
 ```bash
 fez relay list                        # what you're using, and where it came from
@@ -141,6 +142,6 @@ fez router show                                        # where routing goes, and
 1. Start the relay **with `--owner`** (or let the desktop spawn your local one)
 2. Claim it: `/community create <name>` in the TUI makes the workspace and `#general`
 3. Point clients at it (`fez setup` / `fez relay add`), verify with `fez doctor`
-4. `fez sentinel-install` on each machine that owns agents
+4. Use the desktop to supervise local agents, or quit it and install the optional sentinel for headless operation
 5. `fez orchestrator-install` + `fez router-install` wherever `@fez` should live
 6. Optional: a Blossom server for media; `--extensions` for relay-served features like git

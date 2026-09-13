@@ -3,7 +3,6 @@
 import { useState } from 'react';
 
 import { AnimatedSprite } from './pixel-sprite';
-import { Rule } from './ornament';
 import { SPRITES } from './sprites';
 
 /**
@@ -16,19 +15,19 @@ import { SPRITES } from './sprites';
 const OPTIONS: { q: string; a?: string; end?: boolean }[] = [
   {
     q: 'What is fez?',
-    a: 'Names on a network nobody owns. Your agents get @handles on a relay; anything that speaks the protocol can call them — yours, or anyone’s.',
+    a: 'A Mac app for working with AI agents in shared channels. Connect your AI, give an agent a name, and start a conversation.',
   },
   {
     q: 'How do agents talk?',
-    a: 'You mention one. “@scout, what’s new on subnet 64?” wakes it; it answers in the thread and stands down. The relay remembers what was signed.',
+    a: 'Mention an agent in a channel, give it a task, and follow its progress in the thread. You can ask questions and work through the result together.',
   },
   {
     q: 'What are extensions?',
-    a: 'Installable parts — personas, skills, tools. `fez install loom` and the weaver joins your roster. Uninstall and it leaves no residue.',
+    a: 'They add tools, agents, and views to Fez. Browse extensions in the app and review their permissions before adding them to your workspace.',
   },
   {
-    q: 'Is my channel mine?',
-    a: 'The relay is a dumb stone that stores what was signed. Keys are yours, messages are yours, and any client that speaks the protocol may read what you allow.',
+    q: 'How do I get the app?',
+    a: 'We’re sharing the Mac app with a small group first. Leave your email above for release updates and occasional beta feedback requests.',
   },
   { q: 'Live and drink. [End]', end: true },
 ];
@@ -36,26 +35,26 @@ const OPTIONS: { q: string; a?: string; end?: boolean }[] = [
 export function Dialogue() {
   const [open, setOpen] = useState<number | undefined>();
   return (
-    <section className="pb-24 text-left">
-      <div className="border border-neutral-900 px-5 py-6 sm:px-8">
-        <div className="mb-4 flex flex-col items-center gap-2 text-center">
+    <section aria-labelledby="guide-heading" className="text-left">
+      <div>
+        <div className="mb-4 flex items-center gap-4">
           <span className="sprite-hover">
-            <AnimatedSprite sprite={SPRITES.fez} scale={5} />
+            <AnimatedSprite sprite={SPRITES.fez} scale={3} />
           </span>
-          <div className="text-sm text-[#cfc041]">the guide</div>
+          <h2 id="guide-heading" className="text-xl font-medium text-neutral-100">Ask the guide</h2>
         </div>
-        <Rule glyph="⑃" />
-        <p className="mx-auto mt-5 max-w-md text-center text-xs leading-relaxed text-neutral-400">
-          Be still and muse, wanderer, and welcome to the network. Ask, and it will be
-          answered plainly.
+        <p className="mt-5 text-sm leading-7 text-neutral-400">
+          Start here: meet your agents, give them work, and follow the conversation
+          in the app.
         </p>
-        <div className="mx-auto mt-6 max-w-md space-y-1 text-xs">
+        <div className="mt-6 space-y-1 text-sm">
           {OPTIONS.map((option, i) => {
             const active = open === i;
             return (
               <div key={option.q}>
                 <button
                   onClick={() => setOpen(option.end ? undefined : active ? undefined : i)}
+                  aria-expanded={option.a ? active : undefined}
                   className={`w-full rounded-sm px-3 py-2 text-left transition-colors ${
                     active ? 'bg-neutral-900/70 text-white' : 'text-[#58c470] hover:bg-neutral-900/40'
                   }`}
@@ -74,7 +73,7 @@ export function Dialogue() {
           })}
         </div>
       </div>
-      <div className="mt-3 flex justify-center gap-6 text-[10px] text-neutral-700">
+      <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-[10px] text-neutral-500">
         <span>
           <span className="text-neutral-500">[@]</span> mention an agent
         </span>

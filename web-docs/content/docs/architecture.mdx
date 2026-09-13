@@ -54,10 +54,11 @@ withhold events, but it cannot forge them.
 
 Anything that shouldn't be public is ciphertext *before* it reaches the relay:
 
-- DMs — NIP-17 gift wrap, 1:1 and group (the relay can't even see who's talking)
+- DMs — NIP-17 gift wrap, 1:1 and group (content and sender are hidden;
+  each outer wrapper still exposes its recipient tag)
 - Agent observer streams (`/watch`) and the owner's cancel command back —
   where the encryption *is* the authorization
-- Per-turn cost metrics, reminders, moderation reports, agent memory, read
+- Per-turn cost metrics, reminders, moderation reports, private agent memory, read
   state, device pairing — all NIP-44
 
 Keys live in the OS keychain. Desktop boot, messaging, persona invitations,
@@ -65,10 +66,14 @@ and welcome setup use public keys and native signing/crypto. Agent keys are
 created in Rust and only their public keys return to the app.
 
 Onboarding, pairing, restore, and backup still handle private keys in the
-webview. GUI extensions share that webview and its native bridge, including
-key export and process commands: the current desktop is **not a sandbox for
-untrusted extensions**. API grants constrain the supplied adapters; they do
-not authenticate callers of native IPC.
+webview. Legacy GUI extensions without a runtime declaration share that
+webview and its native bridge, including key export and process commands.
+Treat those extensions as trusted code. Current source supports declarative
+GUI data and isolated native child-webview runtimes with scoped host APIs.
+Their permissions, platform limits, and supported operations are documented in
+[GUI runtimes](/extension-api/gui). Do not assume an older desktop release
+honors a new runtime declaration. Headless extensions remain Node modules,
+not sandboxed programs.
 `fez pair` moves your identity to a second device over an encrypted,
 SAS-verified handshake.
 

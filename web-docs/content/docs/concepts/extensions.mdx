@@ -1,6 +1,6 @@
 ---
 title: Extensions
-description: One package, up to six attachment points — relay, headless, workspace, GUI, executables, background.
+description: One package with optional tools, desktop views, background work, and service parts.
 ---
 
 Think about what "the git extension" means in fez. Five different things,
@@ -39,6 +39,7 @@ package's `package.json`:
 - **gui** — panels, cards, thread and page views only the desktop renders,
   each behind a permission the install dialog names (`personas` is the
   sensitive one: it is the power to reprogram agents).
+- **miner** — subnet descriptors consumed by the mining harness.
 - **bin** — npm's own `bin` map, honored: executables land in
   `~/.fez/bin`.
 - **background** — opts the headless part's scheduled tasks into the
@@ -57,6 +58,12 @@ extension that is nothing but one persona file.
 ships only the parts that make sense: `@fezchat/polls` is `headless` +
 `gui` + `skill` sharing one vote-logic module; a theme pack is `gui` only.
 The substance lives outside the gui — `gui` is presentation.
+
+Current source packages choose `fez.guiRuntime`: `declarative` for settings
+and themes, `isolated-settings` for a custom settings panel, `isolated-page`
+for document views, or `isolated` for broader custom views. Without it, the
+legacy shared-webview loader applies. See [GUI runtimes](/extension-api/gui)
+for supported host versions, permissions, and platform limits.
 
 **Building one?** The full contract — every API surface, the manifest,
 permissions, and the dev loop — lives in

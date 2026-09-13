@@ -5,6 +5,8 @@ import { appName } from './shared';
 
 export function baseOptions(): BaseLayoutProps {
   return {
+    themeSwitch: { enabled: false },
+    links: [{ text: "Back to Fez", url: "https://fez.chat", external: true }],
     nav: {
       // The fez creature lives in the manual too — same sprite, same
       // two-frame idle the rest of the site uses. Hover wakes it

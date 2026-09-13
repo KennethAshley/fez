@@ -1,56 +1,65 @@
 ---
-title: Communities & trust
-description: How a dumb relay and client-side rules add up to a trustworthy Slack.
+title: Workspaces & membership
+description: A relay, a pinned owner, and one roster for all its channels.
 ---
 
-The puzzle at the heart of fez: it feels like Slack — communities, channels,
-threads, membership, moderation — but the only server involved is a relay that
-stores signed blobs and understands none of them. Where does the order come from?
+A Fez workspace is a relay with an owner. Channels, threads, members, and
+moderation are derived from signed events. Older commands and package names
+still use “community”; there is no separate community layer inside a workspace.
 
-## The relay judges nothing
+## The owner signs the structure
 
-Clients publish signed events; relays store and forward them. The relay fez ships
-adds hardening (dedup, size caps, drift fences), NIP-50 full-text search, NIP-42
-read auth, and optional operator policy hooks — but a bare third-party relay
-works too. Nothing in the protocol requires a smart server, and events can be
-mirrored across relays; your identity travels with your keys.
+The relay's NIP-11 document names the workspace owner. Clients pin that key on
+first use, or obtain it from a trusted invitation. Later relay metadata must
+match the pin. Without an owner, the workspace is unclaimed.
 
-## The creator signs the structure
+The owner signs channels and one workspace roster. Moderation also recognizes
+authorized roster admins. Membership is **workspace-wide**: being on the roster
+means membership in every channel. Agents can limit which channels they attend
+to and whom they answer; those are agent policies, not private channel boundaries.
 
-A community is brought into being by a **creator key**, which signs the things
-that define it: the channels, the membership rosters, the ban lists. Everyone
-else's standing derives from those signatures:
+The desktop, TUI, and agents use `@fezchat/client` to apply the same trust rules.
+A relay can withhold events, but cannot forge another identity's signature.
 
-- you're a member because a creator-signed roster event says so (latest wins)
-- your message is shown because you were a member when you sent it
-- a deletion holds because it came from the author or a moderator
+## Invite another person
 
-Every client applies these identical rules to the same event stream and arrives
-at the same state. The rules live in one shared package (`@fezchat/client`), so the
-TUI, the desktop app, and every agent literally run the same trust code.
+A current invitation includes the relay and its trusted owner:
 
-The payoff: a relay that lies can *withhold* events, but it can't *forge* any —
-membership, history, and moderation all check out cryptographically at every
-client.
+```text
+fez-join:wss://relay.example.com#owner=<64-hex-owner-pubkey>
+```
 
-## Agents hold their own standing
+Share the invite through a channel the recipient trusts. They join using their
+own identity; the owner must also admit that public key to the roster. In the
+CLI, the owner uses `fez invite <pubkey>`.
 
-Agents appear in rosters like anyone else, and they announce themselves with
-attested announcement events. Before one agent honors a delegation callback from
-another, it verifies the attestation — trust between agents is the same signature
-chain, not an assumption.
+Legacy `#<communityId>` invites and plain relay URLs use trust on first use;
+they do not pin an independently supplied owner. Investigate an owner mismatch
+rather than resetting an existing pin. See [architecture](/architecture).
 
-## Private spaces
+The relay must be reachable from the recipient's machine. A local relay is
+useful for personal work, but a `localhost` invite does not connect two Macs.
+See [self-hosting](/self-hosting) for a shared relay.
 
-DMs are NIP-17 gift-wrapped: the message is sealed, then wrapped, so the relay
-can't read the content *or* see who's talking to whom. Group DMs use
-multi-recipient rumors. Agents receive DMs like humans do — the sentinel wakes
-them.
+## What is private
 
-## Moderation
+Channel events are not end-to-end encrypted. Clients check membership before
+displaying messages; a relay operator can additionally enforce authenticated
+reads and membership at ingest. Those optional policies control relay access,
+not the confidentiality of data already received.
 
-- **Reports** travel encrypted to the moderators.
-- **Ban and mute lists** are creator-signed events; the relay's policy hooks can
-  enforce them at ingest, and clients enforce them regardless.
-- **Deletions** produce tombstones; relays mask the content, clients hide it.
-- Edits and reactions are ordinary event updates, rendered in place.
+DM contents are encrypted with NIP-17 gift wrapping. The wrapper hides the
+sender's identity, but exposes its recipient tag; network and timing metadata
+can also be observed. Encrypted content is not complete anonymity. Agents can
+receive DMs through the desktop runtime or optional sentinel.
+
+## Agents and moderation
+
+Agents have their own keys and roster entries. Owner attestations establish
+which agents belong to the same owner; `respondTo` further restricts whose
+requests an agent honors. See [agents](/concepts/agents) and [trust](/concepts/trust).
+
+Reports are encrypted to moderators. Signed ban and removal events determine
+what compliant clients accept or show, and configured relay policies can mask
+removed content. Removing someone from the roster cannot erase plaintext they
+already received. Keep relay backups and protect the owner's identity backup.

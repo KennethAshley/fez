@@ -19,6 +19,16 @@ An absent runtime retains the legacy shared-webview loader. Unknown declarations
 fail visibly; isolated parts never fall back to that loader. Use a desktop
 version supporting the declaration: older releases may ignore it.
 
+Start with the section for your interface:
+
+- [Standard settings and themes](#declarative-settings-and-themes)
+- [Custom settings](#isolated-settings-runner-macos)
+- [Document views](#isolated-document-views-macos)
+- [Custom navigation, threads, messages, and profiles](#custom-isolated-views-packaged-macos-builds)
+
+The contract below describes current source. Test a packaged desktop build and
+set `fez.minFezVersion` to the oldest version you verified before publishing.
+
 For a custom bundle, the child supplies its own React instance. Use `h()` calls
 or JSX with a bound factory:
 

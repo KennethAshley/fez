@@ -34,23 +34,23 @@ export function HandleCycle() {
     <div
       // Fixed height and a hidden longest-word sizer: without both, the
       // column reflows on every swap as the names change width.
-      className="relative flex h-9 items-center justify-center sm:h-10"
+      className="relative flex h-12 items-center sm:h-16"
     >
-      <span aria-hidden className="invisible text-xl font-bold sm:text-2xl">
+      <span aria-hidden className="invisible text-[clamp(2rem,5vw,3.5rem)] font-medium tracking-tight">
         @chatgpt.chat
       </span>
 
       {/* One live region, so a screen reader announces the current name
           instead of reading a carousel of seven. */}
       <div
-        className="absolute inset-0 flex items-center justify-center"
+        className="absolute inset-0 flex items-center"
         aria-live="polite"
         aria-atomic
       >
         <AnimatePresence mode="wait" initial={false}>
           <motion.span
             key={name}
-            className="text-xl font-bold tracking-tight sm:text-2xl"
+            className="text-[clamp(2rem,5vw,3.5rem)] font-medium tracking-tight"
             initial={reduced ? { opacity: 0 } : { opacity: 0, y: '0.35em' }}
             animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
             exit={reduced ? { opacity: 0 } : { opacity: 0, y: '-0.35em' }}

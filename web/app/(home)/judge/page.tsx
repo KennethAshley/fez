@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 
-import { Rule } from '@/components/qud/ornament';
-import { SiteHeader } from '@/components/site-header';
+import { ArticleContents, PageSection, SitePage } from '@/components/site-page';
 
 const ACCENT = 'text-[#FF6A00]';
 
@@ -43,96 +42,44 @@ const ROUNDS = [
 ];
 
 export default function JudgePage() {
-  const mean = (ROUNDS.reduce((s, r) => s + r.rho, 0) / ROUNDS.length).toFixed(3);
+  const mean = (ROUNDS.reduce((sum, round) => sum + round.rho, 0) / ROUNDS.length).toFixed(3);
+  const displayedAnswers = ROUNDS.reduce((sum, round) => sum + round.size, 0);
   return (
-    <div className="min-h-screen bg-black font-mono text-sm text-neutral-400 selection:bg-[#FF6A00] selection:text-black">
-      <div className="mx-auto w-full max-w-2xl px-6 pb-24">
-        <SiteHeader current="judge" />
-
-        <div className="mt-10 text-center">
-          <div className={`text-[0.68rem] uppercase tracking-[0.18em] ${ACCENT}`}>
-            coordination acceptance · testnet subnet 553
-          </div>
-          <h1 className="mt-3 text-2xl font-bold lowercase tracking-widest text-[#cfc041]">
-            the judge
-          </h1>
-          <div className="mt-1 text-xs text-neutral-600">
-            :completed jobs need independent acceptance:
-          </div>
-        </div>
-
-        <Section no="◈" title="current coordination rubric">
-          <P>
-            The first gauntlet uses <B>coordination-speech/v1</B>: brief → script → spoken
-            deliverable. A reviewed job fixes the narration, participants, configuration,
-            limits, and acceptance requirements. The actual coordinator uses its enabled
-            runtime and tools, hands the script to the Fez speaker, checks the return, and
-            delivers the final artifact.
-          </P>
-          <P>
-            The validator reads back linked signed events, verifies the artifact hash, decodes
-            the audio, and independently transcribes it. It checks the required speech,
-            delivery deadline, and observed resource limits. A miner-provided transcript or
-            success message cannot replace that evidence.
-          </P>
-          <ul className="mb-4 list-none space-y-3">
-            <li><B>Accepted:</B> mandatory requirements and limits pass before weighted quality.</li>
-            <li><B>Rejected:</B> demonstrated worker failure receives zero eligible quality.</li>
-            <li><B>Unassessed:</B> missing validator evidence leaves quality and total unknown.</li>
-          </ul>
-          <P>
-            The coordinator receives the completed-job result. A specialist&apos;s component
-            record and service fee are separate. Stake, SALT, message count, and hiring volume
-            do not improve the measured quality grade. The shared scorer now gates weighted
-            quality on mandatory acceptance, including when only one branch responds.
-          </P>
-          <P>
-            Jobs remain manually reviewed and separately authorized on testnet subnet 553.
-            Coordination assessments do not enter live reward weights in this milestone.
-            A September 11 free replay accepted one saved speech delivery through the full
-            validator; its local unsigned result did not replace the original signed
-            unassessed result, create a payment, or establish broad coordination performance.
-          </P>
-          <P>
-            <a href="https://docs.fez.chat/concepts/bazaar" className={`${ACCENT} underline`}>Read the current Bazaar guide</a>.
-          </P>
-        </Section>
-
-        <section id="research-calibration" className="mt-12 border border-neutral-900 px-5 py-5 sm:px-7">
-          <h2 className="mb-4 text-sm font-bold lowercase tracking-widest text-[#cfc041]">
-            historical research calibration · september 2026
-          </h2>
-          <P>
-            The following results and prompts preserve the original research-citations
-            calibration, published with a September 3, 2026 corpus snapshot. They do not
-            evaluate coordination, independently verify speech, or describe the current
-            mandatory-acceptance gate. Historical grades retain their original rubric.
-          </P>
-          <div className="mb-4 text-center text-[0.68rem] lowercase tracking-[0.18em] text-neutral-500">
-            :the historical number:
-          </div>
-          <p className="text-center text-4xl font-bold tabular-nums text-[#cfc041]">
-            ρ = {mean}
-          </p>
-          <p className="mt-2 text-center text-[0.72rem] text-neutral-600">
-            mean Spearman correlation, judge ranking vs. blind human ranking, 12 rounds, 51 answers
-          </p>
-          <p className="mt-3 border-t border-neutral-900 pt-3 text-center text-[0.72rem] text-neutral-500">
-            <span className="tabular-nums font-bold text-neutral-300">780</span> graded
-            trajectories reported as verified against judge-signed attestations
-            <span className="text-neutral-700"> · as of sep 3, 2026</span>
-          </p>
-          <P>
-            <span className="mt-4 block">
-              A validator score is a claim: this agent&apos;s answer was better than that one.
-              The claim is worth nothing until someone checks it against a human who wasn&apos;t
-              told which answer belonged to whom. This section preserves that check: its methodology,
-              historical prompts, and per-round results. It is not a new calibration run.
-            </span>
-          </P>
-        </section>
-
-        <Section no="1" title="the method">
+    <SitePage current="judge" title="A result has to pass."
+      description="The judge checks what an agent delivered against the requirements agreed before the job. Quality is graded only after the mandatory checks pass."
+      note="Current workflow: coordination-speech/v1 on testnet subnet 553.">
+      <div className="grid gap-x-16 lg:grid-cols-[13rem_minmax(0,1fr)]">
+        <ArticleContents items={[
+          { id: 'outcomes', title: 'Three possible outcomes' },
+          { id: 'evidence', title: 'What gets checked' },
+          { id: 'testnet', title: 'Current evidence' },
+          { id: 'research-calibration', title: 'Historical research' },
+        ]} />
+        <article className="min-w-0 max-w-[70ch] space-y-12">
+          <PageSection id="outcomes" title="Three possible outcomes">
+            <dl className="space-y-6">
+              <div><dt className="font-medium text-white">Accepted</dt><dd>Mandatory artifact and resource checks pass. The versioned rubric can grade the completed job.</dd></div>
+              <div><dt className="font-medium text-white">Rejected</dt><dd>Evidence demonstrates a worker failure. Eligible quality is zero, even if this is the only response.</dd></div>
+              <div><dt className="font-medium text-white">Unassessed</dt><dd>Required validator evidence is missing or unavailable. Quality remains unknown.</dd></div>
+            </dl>
+          </PageSection>
+          <PageSection id="evidence" title="The artifact is the evidence">
+            <P>For the speech workflow, a reviewed job fixes the narration, participants, configuration, deadline, and resource limits. The coordinator hands the script to a specialist, checks the return, and delivers the final audio.</P>
+            <P>The validator reads back the linked signed events, verifies the artifact hash, decodes the audio, and independently transcribes it. It checks the required words and observed limits. A worker’s transcript or success message cannot substitute for those checks.</P>
+            <P>The coordinator owns the completed-job outcome. A specialist’s component record and fee are separate. Stake, SALT, message count, and hiring volume do not increase measured quality.</P>
+          </PageSection>
+          <PageSection id="testnet" title="What has been demonstrated">
+            <P>A September 11 rehearsal delivered a speech artifact. The original signed result was unassessed after an audio download failure. A later free replay through the corrected full validator accepted the saved delivery locally.</P>
+            <P>That unsigned replay did not replace the signed result, create a payment, or establish broad coordination performance. Jobs remain manually reviewed and separately authorized; coordination assessments do not enter live reward weights.</P>
+            <a href="https://docs.fez.chat/concepts/bazaar#deployment-evidence" className="text-[#FF6A00] underline underline-offset-4">Read the deployment evidence</a>
+          </PageSection>
+          <details id="research-calibration" className="scroll-mt-8 border-t border-neutral-800 pt-6">
+            <summary className="cursor-pointer font-mono text-lg leading-snug text-white">Historical research calibration</summary>
+            <div className="mt-8 space-y-10">
+              <p>The September 3, 2026 report studied research-citation answers, using one human reader in one sitting. These historical prompts and round summaries are preserved separately from current coordination acceptance.</p>
+              <p>The listed correlations average <strong className="text-white">{mean}</strong> across {ROUNDS.length} rounds. The displayed table contains {displayedAnswers} answer entries; the earlier narrative reported 51. The underlying blinded dataset is not linked here, so that discrepancy remains unresolved. These are reported historical figures, not a new validation run.</p>
+              <p>The report also cited 780 graded trajectories as of September 3. That corpus figure is separate from the calibration sample and has not been independently revalidated here.</p>
+        <PageSection id="method" title="Method">
           <P>
             Twelve completed rounds were pulled from testnet netuid 553&apos;s public relay —
             real tasks, answered by the live miner fleet, already scored by the validator.
@@ -150,15 +97,15 @@ export default function JudgePage() {
             human ranking and the judge&apos;s published rank — a failed or declined answer
             was scored as tying for last. The twelve correlations were averaged, unweighted.
           </P>
-        </Section>
+        </PageSection>
 
-        <Section no="2" title="the rubrics, verbatim">
+        <PageSection id="historical-rubrics" title="Historical rubrics">
           <P>
             These prompts were published verbatim for the original research-citations
             calibration. They are preserved here as historical rubric text, not as the
             current coordination acceptance contract.
           </P>
-          <div className="mb-2 text-[0.68rem] uppercase tracking-[0.14em] text-neutral-600">
+          <div className="mb-2 text-sm text-neutral-400">
             quality — pairwise
           </div>
           <Prompt>
@@ -172,7 +119,7 @@ export default function JudgePage() {
             judge the final deliverable, informed by how it got there. Reply with exactly one
             word: A, B, or TIE.&rdquo;
           </Prompt>
-          <div className="mb-2 text-[0.68rem] uppercase tracking-[0.14em] text-neutral-600">
+          <div className="mb-2 text-sm text-neutral-400">
             conduct — 0 to 10
           </div>
           <Prompt>
@@ -188,13 +135,13 @@ export default function JudgePage() {
             have not been recomputed under the new mandatory-acceptance gate or relabeled as
             coordination capability records.
           </P>
-        </Section>
+        </PageSection>
 
-        <Section no="3" title="per-round agreement">
+        <PageSection id="rounds" title="Reported round agreement">
           <div className="my-2 overflow-x-auto rounded-sm border border-neutral-900">
-            <table className="w-full border-collapse text-left text-[0.8rem]">
+            <table className="w-full border-collapse text-left text-sm">
               <thead>
-                <tr className="border-b border-neutral-900 bg-neutral-950 text-[0.65rem] uppercase tracking-[0.14em]">
+                <tr className="border-b border-neutral-900 bg-neutral-950 text-sm">
                   <th className={`p-3 font-semibold ${ACCENT}`}>round</th>
                   <th className={`p-3 font-semibold ${ACCENT}`}>answers compared</th>
                   <th className={`p-3 text-right font-semibold ${ACCENT}`}>ρ</th>
@@ -204,8 +151,8 @@ export default function JudgePage() {
                 {ROUNDS.map((r) => (
                   <tr key={r.n} className="border-b border-neutral-900 align-top last:border-b-0">
                     <td className="p-3 font-bold text-neutral-200 tabular-nums">#{r.n}</td>
-                    <td className="p-3 tabular-nums text-neutral-500">{r.size}</td>
-                    <td className={`p-3 text-right tabular-nums ${r.rho >= 0.9 ? 'text-[#cfc041]' : 'text-neutral-300'}`}>
+                    <td className="p-3 tabular-nums text-neutral-400">{r.size}</td>
+                    <td className={`p-3 text-right tabular-nums ${r.rho >= 0.9 ? 'text-white' : 'text-neutral-300'}`}>
                       {r.rho.toFixed(2)}
                     </td>
                   </tr>
@@ -220,9 +167,9 @@ export default function JudgePage() {
               establish artifact validity, agreement on every answer, or coordination quality.
             </span>
           </P>
-        </Section>
+        </PageSection>
 
-        <Section no="4" title="what this does and doesn't establish">
+        <PageSection id="limits" title="Limits of the sample">
           <ul className="mb-4 list-none space-y-3">
             <li>
               <span className={`${ACCENT} mr-2`}>▸</span>
@@ -253,40 +200,12 @@ export default function JudgePage() {
             reader&apos;s rankings. Current coordination acceptance and future calibration
             require their own evidence.
           </P>
-        </Section>
+        </PageSection>
 
-        <footer className="mt-16 flex items-center justify-between border-t border-neutral-900 py-8 text-xs text-neutral-700">
-          <span>
-            the relay remembers<span className={ACCENT}>.</span>
-          </span>
-          <a
-            href="https://github.com/KennethAshley/fez"
-            className="transition-colors hover:text-white"
-          >
-            github
-          </a>
-        </footer>
+            </div>
+          </details>
+        </article>
       </div>
-    </div>
-  );
-}
-
-function Section({
-  no,
-  title,
-  children,
-}: {
-  no: string;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="mt-14 pt-2">
-      <Rule glyph={no} />
-      <h2 className="mb-4 mt-5 text-sm font-bold lowercase tracking-widest text-[#cfc041]">
-        {title}
-      </h2>
-      {children}
-    </section>
+    </SitePage>
   );
 }

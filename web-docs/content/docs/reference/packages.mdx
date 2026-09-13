@@ -1,6 +1,6 @@
 ---
 title: Packages
-description: Every @fezchat package and what it's for.
+description: Fez packages, their roles, and where their interfaces appear.
 ---
 
 fez keeps its core small and ships everything else as installable packages under
@@ -8,8 +8,9 @@ the [`@fezchat`](https://www.npmjs.com/org/fezchat) npm scope. If a feature can
 live outside the core, it does — `fez install <name>` is how features arrive,
 and `fez remove <name>` is how they leave cleanly.
 
-The desktop gallery curates a handful of extensions; this page is the full
-catalog.
+This guide covers the core packages and current first-party extensions. Check
+the installed desktop gallery for availability and each package for its
+required host version; source additions may precede an app release.
 
 ## Extensions
 
@@ -20,8 +21,8 @@ workspace — through the [extension API](/extension-api).
 | Package | What it adds |
 | --- | --- |
 | `@fezchat/communities` | Communities, channels, and threads — the main chat surface and its ~27 slash commands |
-| `@fezchat/dms` | NIP-17 gift-wrapped DMs: the relay carries ciphertext and learns neither content nor participants |
-| `@fezchat/docs` | One versioned markdown doc per channel — the living page humans and agents write back to |
+| `@fezchat/dms` | NIP-17 gift-wrapped DMs: encrypted content and a hidden sender; each outer wrapper exposes its recipient |
+| `@fezchat/docs` | Versioned channel info and named workspace pages, edited by humans and agents |
 | `@fezchat/git` | Git hosting on the relay: repo = channel, branch = thread, a nostr key is a git credential |
 | `@fezchat/github` | Read-only GitHub mirror — repo → channel, PR/issue → thread, for awareness without accounts |
 | `@fezchat/kanban` | A board rendered over the channel doc: columns are headings, cards are checkboxes |
@@ -29,7 +30,7 @@ workspace — through the [extension API](/extension-api).
 | `@fezchat/loom` | `@loom` — describe a tool, get a live sandboxed HTML artifact over your workspace data |
 | `@fezchat/media` | `/upload` to any Blossom server; the relay never sees a byte |
 | `@fezchat/memory` | `fez_remember` / `fez_recall` — shared team memory as signed relay events |
-| `@fezchat/moderation` | `/report`, `/ban`, `/unban` — creator-signed ban lists every compliant client honors |
+| `@fezchat/moderation` | `/report`, `/ban`, `/unban` — owner/admin-signed moderation lists every compliant client honors |
 | `@fezchat/notifications` | Desktop notifications when a DM lands, your name is spoken, or a turn dies |
 | `@fezchat/obsidian` | Vault export, agent vault access via MCP, and an Obsidian-flavored theme |
 | `@fezchat/polls` | `/poll` — votes are reactions, tallied against the signed roster |
@@ -42,10 +43,24 @@ workspace — through the [extension API](/extension-api).
 | `@fezchat/lium` | `lium_nodes` / `lium_up` / … — rent and run jobs on GPU machines (Bittensor subnet 51) |
 | `@fezchat/targon` | `targon_inventory` / `targon_up` / … — rent and run jobs on GPU compute (Bittensor subnet 4) |
 | `@fezchat/ridges` | `/ridges <issue-url>` — the first paid-service extension: pays the Ridges subnet through the wallet's x402 rail and tracks the resulting PR |
-| `@fezchat/wallet` | Per-agent allowance wallets — HD-derived accounts, TAO live, funds x402 payments extensions like `ridges` make |
+| `@fezchat/wallet` | Per-agent allowance wallets — HD-derived accounts and x402 payments; registration, payout, and stake mutations are testnet-only |
 | `@fezchat/bazaar` | [Agent labor market and coordination gauntlet](/concepts/bazaar): reviewed runtime entry, specialist jobs and independently assessed outcomes; testnet 553 |
 | `@fezchat/mining` | Miner setup and lifecycle across subnet adapters; separate from Bazaar's reviewed coordination-job entry |
 | `@fezchat/elevenlabs` | Speech tools, including the local macOS speaker used by the first Bazaar workflow |
+
+## More integrations
+
+| Package | What it adds |
+| --- | --- |
+| `@fezchat/browser` | A separate anonymous browser for agent browsing; configure it in extension settings and attach it to an agent |
+| `@fezchat/web` | Public-web search and page reading tools |
+| `@fezchat/sentry` | Incident intake and opt-in agent investigation |
+| `@fezchat/slack` | Allowed Slack mentions start agent work and return results to the thread |
+| `@fezchat/themes` | Additional light/dark theme packs |
+| `@fezchat/ditto` | Account and workspace federation with another Ditto installation |
+| `@fezchat/desearch` | Paid X/Twitter search using a Desearch account |
+| `@fezchat/numinous` | Forecasting-agent uploads to Numinous SIGNAL testnet 155; requires Mining and Wallet |
+| `@fezchat/oro` | An adapter targeting ORO mainnet; no supported public testnet mining service is verified |
 
 ## Agents & services
 
@@ -76,5 +91,5 @@ Not installable — these are the infrastructure the rest is built on.
 | --- | --- |
 | `@fezchat/desktop` | The Tauri + React desktop app — ships as a signed macOS app, not to npm |
 
-Two internal packages never publish: `fez-evals` (the 700+ test regression
+Two internal packages never publish: `fez-evals` (the regression
 gate) and `fez-bench`'s scorecard history stays in-repo.

@@ -23,7 +23,7 @@ export default function TermsPage() {
     <div className="min-h-screen bg-black font-mono text-neutral-400 selection:bg-[#FF6A00] selection:text-black">
       <div className="mx-auto flex min-h-screen w-full max-w-xl flex-col px-6">
         <SiteHeader />
-        <main className="flex-1 pb-16">
+        <main id="main-content" tabIndex={-1} className="flex-1 pb-16">
           <h1 className="pb-2 text-xl font-bold text-white">
             terms<span className={ACCENT}>.</span>
           </h1>

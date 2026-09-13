@@ -23,6 +23,7 @@ Everything fez needs to know about your package lives under the `fez` key in
       "gui":        "dist/gui.js",
       "relay":      "dist/relay-part.js",
       "workspace":  "dist/workspace-part.js",
+      "miner":      "dist/miner.js",
       "skill":      { "command": "node", "args": ["dist/mcp.js"], "env": { "API_KEY": "" } },
       "background": true
     },
@@ -54,11 +55,33 @@ Field notes:
   both versions — not three layers into someone's afternoon. `fez create`
   stamps the scaffolding fez's own version.
 
+## GUI runtime
+
+The example above shows the legacy GUI shape. Current source also accepts:
+
+| `fez.guiRuntime` | Use |
+| --- | --- |
+| `declarative` | A JSON GUI part for standard settings or themes |
+| `isolated-settings` | A custom settings bundle in a native child webview |
+| `isolated-page` | A document-view bundle with `guiContributions.page` |
+| `isolated` | Custom navigation, settings, thread, message, or profile contributions |
+
+`fez.guiContributions` declares the host-visible entry points without executing
+the custom UI in the main window. `fez.settingsSource` supplies a channel-source
+settings shortcut. See [the GUI contract](/extension-api/gui) for exact shapes.
+
+Declare the oldest **tested** host in `fez.minFezVersion`. The current source
+supports these runtimes, but an older release may ignore a declaration. Test
+the packaged app and selected runtime before distributing an extension.
+
 ## Permissions
 
 Declare what you use. Installing shows the list to the user; the host then
-**narrows the API to the grant** — an undeclared capability is replaced by a
-no-op that logs why, once.
+**narrows the API to the grant**. Denied headless operations throw or reject
+with the extension, operation, and required permission. Registration without
+a grant warns and skips; UI calls outside the TUI remain inert. Handle errors
+rather than treating an empty result as permission to continue. GUI runtimes
+have their own scoped adapters; see each surface's contract.
 
 | Permission | Grants | Sensitive |
 | --- | --- | --- |
@@ -85,10 +108,10 @@ sensitive ones.
 
 The honest framing, straight from the source: this is **not a sandbox**. A
 headless extension is a Node module and can work around anything here; the
-GUI half is tighter (the host controls its scope, network, and sockets) but
-not airtight. The value is informed consent and accident-resistance — at
-install time the claim is "this is what it says it needs", not "this is all
-it can do".
+legacy GUI loader also runs trusted code in the main webview. Current isolated
+GUI runtimes enforce separate host API boundaries, with explicit platform and
+process limitations. Permission declarations do not turn an arbitrary Node
+module or legacy GUI bundle into a sandboxed program.
 
 ## Tools a persona declares
 

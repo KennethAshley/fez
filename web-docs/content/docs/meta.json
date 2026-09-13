@@ -2,6 +2,7 @@
   "pages": [
     "index",
     "getting-started",
+    "troubleshooting",
     "architecture",
     "concepts",
     "extension-api",

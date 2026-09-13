@@ -1,0 +1,74 @@
+---
+title: Troubleshooting
+description: Provider sign-in, silent agents, workspace joins, and background work.
+---
+
+Start with the symptom below. For a source installation, `fez doctor` checks
+identity, relay connectivity, harness authentication, and background services.
+The desktop version is listed in **Settings → About**.
+
+## An agent does not reply
+
+1. **Check the provider connection.** Finishing onboarding with “connect AI
+   later” does not connect a provider. Select a model and connect its provider,
+   or sign in to the CLI harness the agent uses. A chat subscription is not
+   automatically an API account with available credit.
+2. **Check the agent.** Mention its exact name at the start of a message.
+   Confirm it is enabled, attends to that channel, and permits your identity
+   under `respondTo`. A roster entry alone does not mean its runtime is online.
+3. **Wait for waking to finish.** Startup takes time. If the app reports a
+   stalled agent or an authentication error, resolve that error before retrying.
+4. **Apply configuration changes.** Saving a persona preserves an active
+   process. Restart the agent after changing its model, harness, or tools.
+
+For a CLI harness, sign in to the same configuration the agent uses. Claude
+shares the user's login by default; `FEZ_HARNESS_ISOLATE=1` requires a separate
+login. See [harness configuration](/concepts/agents#harness-configuration-and-isolation).
+
+## Another person cannot join
+
+Check that the invite contains a relay reachable from both computers. A
+`localhost` or `127.0.0.1` address points to the recipient's own computer.
+Use a shared relay for two-person testing.
+
+Joining the relay and joining its roster are separate steps. Have the workspace
+owner admit the recipient's public key. In a source installation, the owner
+can run `fez invite <pubkey>`. Both people should use their own identities;
+pairing is for a second device belonging to the same person.
+
+If Fez reports an owner mismatch, compare the invite with the workspace owner
+through a trusted channel. Do not reset identity or discard an owner pin to
+bypass the mismatch. See [workspaces](/concepts/communities).
+
+## Work stops when the app closes
+
+The current source desktop distinguishes closing the window from **Quit**.
+Closing the window leaves local agents and background work running; Quit stops
+them. The Mac must remain awake and connected for local work to continue.
+Check your installed release notes if its behavior differs.
+
+For headless operation, quit the desktop and use the optional sentinel. Avoid
+running multiple hosts for the same local agents. After updating a background
+extension, quit and reopen the desktop to reload the worker.
+
+## An extension does not appear
+
+Check its installation result and required Fez version. Some packages add agent
+tools or relay behavior rather than a desktop panel. A missing permission or
+unsupported GUI runtime should be resolved from the displayed error; installing
+an extension does not grant every capability it could request.
+
+Check **Settings → About** for the app version and extension diagnostics.
+For a source installation, `fez list` shows installed packages. Use the
+[extension guide](/concepts/extensions) to identify which host loads each part.
+
+## Collect a useful report
+
+Record the Fez version, the action you took, what you expected, and the exact
+error. Include the affected agent or extension version and whether the relay
+is local or shared. A small reproduction is more useful than a full chat archive.
+
+Local relay failures are logged in `~/.fez/relay/relay.log`; managed agent
+process logs live under `~/.fez/logs/`. Inspect the relevant excerpt before
+sharing it. Remove private conversation text, credentials, and private keys.
+An identity backup is not a diagnostic attachment.

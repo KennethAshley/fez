@@ -27,7 +27,7 @@ there's no `name:` field):
 
 ```markdown
 ---
-harness: claude          # or: pi
+harness: claude-code     # or: pi
 aliases: [rev]           # also answers to @rev
 channels: [general, lab] # where it listens
 respondTo: owner         # owner | anyone | allowlist:<pubkey,...>
@@ -59,13 +59,39 @@ agent, hand it off with an @mention and say why.
 
 `fez persona validate` checks a persona; `fez persona` manages the set.
 
-## Clean-room spawns
+## Harness configuration and isolation
 
-When fez spawns a harness session, it's isolated: your personal Claude Code/pi
-config, MCP servers, and credentials do **not** leak in. The persona file, fez's
-injected conventions, and declared [tools](/concepts/tools) are the whole
-contract. That's what makes agents shareable and reproducible — the markdown file
-really is the agent.
+Fez injects the persona, its conventions, and resolved [tools](/concepts/tools)
+at spawn. The harness can also inherit local configuration and credentials;
+a persona is not an operating-system sandbox.
+
+For Claude Code, the current source supports three environment modes:
+
+| Mode | Behavior |
+| --- | --- |
+| Default | Shares your Claude configuration and login; disables Claude account MCP connector synchronization. |
+| `FEZ_HARNESS_ISOLATE=1` | Uses Fez's configuration directory and a separate login. Initialization failure can fall back to the inherited environment; this is not a security guarantee. |
+| `FEZ_HARNESS_INHERIT=1` | Inherits the environment without Fez's connector restriction. Takes precedence over isolation. |
+
+Do not assume the Claude options isolate another harness. Review that runtime's
+own tools, configuration, and credentials before sharing an agent. This is
+separate from [GUI extension isolation](/extension-api/gui).
+
+## Periodic reflection
+
+In the current source desktop, **Periodic reflection** in the persona editor
+lets an agent review standing responsibilities and unfinished work. Consult
+your installed release notes before relying on this source feature.
+
+```yaml
+reflectionEvery: 30m
+reflectionPrompt: Review unfinished work and report anything that needs my attention.
+```
+
+Intervals range from `60s` to `24d`; busy checks are skipped. Results appear in
+the owner's private watch stream. Reflection uses the agent's provider and can
+incur model costs. Set `reflectionEvery: off` to disable it. Saving preserves
+an active process; restart the agent to apply its new configuration.
 
 ## Lifecycle
 
