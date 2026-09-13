@@ -26,6 +26,7 @@ Deno.serve(async (request: Request) => {
   // ponytail: catches basic form bots; add a verified challenge if abuse appears.
   if ("website" in body && body.website) return json({ ok: true });
   const email = body.email.trim().toLowerCase();
+  // eslint-disable-next-line no-control-regex -- reject control characters in submitted email addresses.
   if (email.length > 254 || !/^[^\s@\x00-\x1f]+@[^\s@\x00-\x1f]+\.[^\s@\x00-\x1f]+$/.test(email)) {
     return json({ error: "Enter a valid email address." }, 400);
   }

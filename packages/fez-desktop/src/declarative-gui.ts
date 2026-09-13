@@ -37,6 +37,7 @@ function fields(value: unknown, allowed: string[]): asserts value is Record<stri
   if (!record(value) || Object.keys(value).some(key => !allowed.includes(key))) throw Error("Unsupported settings fields");
 }
 function text(value: unknown, max = 2048): asserts value is string {
+  // eslint-disable-next-line no-control-regex -- reject controls while allowing tabs and line breaks in settings text.
   if (typeof value !== "string" || !value.trim() || value.length > max || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value)) throw Error("Invalid settings text");
 }
 function identifier(value: unknown): asserts value is string {

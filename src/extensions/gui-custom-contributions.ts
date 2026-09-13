@@ -28,6 +28,7 @@ const object = (value: unknown, keys: string[]): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 const text = (value: unknown, max = 160): string => {
+  // eslint-disable-next-line no-control-regex -- control characters are invalid in extension labels.
   if (typeof value !== "string" || !value.trim() || value.length > max || /[\u0000-\u001f]/.test(value)) throw Error("Invalid custom GUI contribution text");
   return value;
 };
