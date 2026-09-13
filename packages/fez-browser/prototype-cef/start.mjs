@@ -9,7 +9,7 @@ process.once('SIGTERM', () => runner.kill('SIGTERM'));
 try {
   let ready = false;
   for (let i = 0; i < 150; i++) {
-    try { ready = JSON.parse(await readFile(new URL('./session.json', import.meta.url), 'utf8')).pid === runner.pid; } catch {}
+    try { ready = JSON.parse(await readFile(new URL('./session.json', import.meta.url), 'utf8')).pid === runner.pid; } catch { /* The broker writes its session file when ready. */ }
     if (ready) break;
     if (runner.exitCode !== null) throw new Error('CEF startup failed');
     await delay(200);

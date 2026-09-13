@@ -24,7 +24,7 @@ it.skipIf(!process.env.FEZ_CEF_EXECUTABLE)('maps a bounded agent screenshot to r
   try {
     let session: { endpoint: string; uiToken: string; pid: number } | undefined;
     for (let attempt = 0; attempt < 150; attempt++) {
-      try { session = JSON.parse(await readFile(join(dir, 'session.json'), 'utf8')); break; } catch {}
+      try { session = JSON.parse(await readFile(join(dir, 'session.json'), 'utf8')); break; } catch { /* Wait for the broker's session file. */ }
       if (runner.exitCode !== null) throw new Error('CEF runner exited before startup');
       await delay(100);
     }

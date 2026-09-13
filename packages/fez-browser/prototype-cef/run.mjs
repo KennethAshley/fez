@@ -40,12 +40,13 @@ async function stop() {
   if (stopped) return;
   stopped = true;
   mode = 'stopped';
-  try { await cdp('Browser.close'); } catch {}
+  try { await cdp('Browser.close'); } catch { /* Fall back to terminating the child if CDP cannot close it. */ }
   socket?.close();
-  if (child && child.exitCode === null) {
+  if (child && child.exitCode === null && child.signalCode === null) {
     child.kill('SIGTERM');
-    await Promise.race([new Promise(resolve => child.once('exit', resolve)), delay(3000)]);
-    if (child.exitCode === null) { child.kill('SIGKILL'); await new Promise(resolve => child.once('exit', resolve)); }
+    const force = setTimeout(() => child.kill('SIGKILL'), 3000);
+    await exited;
+    clearTimeout(force);
   }
   await rm(profile, { recursive: true, force: true });
 }
@@ -153,11 +154,12 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const endpoint = `http://127.0.0.1:${server.address().port}`;
 const port = await unusedPort();
 child = spawn(exe, ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, `--url=${endpoint}/fixture`], { stdio: 'ignore' });
+const exited = new Promise(resolve => child.once('exit', resolve));
 child.on('error', error => console.error(error.message));
 try {
   let target;
   for (let attempt = 0; attempt < 100; attempt++) {
-    try { target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(item => item.type === 'page'); } catch {}
+    try { target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(item => item.type === 'page'); } catch { /* CEF may not have started its debug server yet. */ }
     if (target) break;
     if (child.exitCode !== null) throw new Error(`CEF exited: ${child.exitCode}`);
     await delay(200);
