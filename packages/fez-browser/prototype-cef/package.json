@@ -1,0 +1,13 @@
+{
+  "name": "@fezchat/browser-cef-prototype",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway shared CEF browser feasibility probe. Never publish.",
+  "fez": {
+    "type": "extension",
+    "parts": { "gui": "gui.js", "skill": { "command": "node", "args": ["mcp.mjs"] } },
+    "permissions": ["ui", "commands", "network:127.0.0.1"],
+    "minFezVersion": "0.2.0"
+  }
+}

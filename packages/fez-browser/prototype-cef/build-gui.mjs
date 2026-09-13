@@ -1,0 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { build } from 'esbuild';
+const { endpoint, uiToken } = JSON.parse(await readFile(new URL('./session.json', import.meta.url), 'utf8'));
+await build({ entryPoints: [new URL('./gui.ts', import.meta.url).pathname], outfile: new URL('./gui.js', import.meta.url).pathname,
+  bundle: true, format: 'esm', platform: 'browser', define: { SESSION: JSON.stringify({ endpoint, uiToken }) } });
