@@ -34,7 +34,22 @@ FEZ_CEF_EXECUTABLE=/private/tmp/fez-cef-probe/target/bundle/cefsimple.app/Conten
 
 This starts the browser, generates a session-specific GUI bundle, and links the development extension. Restart Fez when no work is running, then enter `/cef` in a chat. The pane has navigation, Take control, Give agent control, and Stop session. Click the browser image before typing; Escape exits its keyboard capture. Rebuild/relink with the command above after restarting the browser because session capabilities rotate.
 
-The MCP server is `browser-cef-prototype`; its tool is `computer_use`. No existing agent is automatically given it. Only a disposable fixture has been tested through MCP, not a model-driven task or signed-in website. The first pass combines the development GUI and tool registration in one private package; production Browser and Computer Use extensions remain a separate integration task.
+The MCP server is `browser-cef-prototype`; its tool is `computer_use`. No existing agent is automatically given it. Testing is limited to the disposable fixture, including the live-model check below. The first pass combines the development GUI and tool registration in one private package; production Browser and Computer Use extensions remain a separate integration task.
+
+### Live-model check (September 13)
+
+The subsequent real Claude ACP session used Fez's `openSession` harness with only this test MCP server configured, a temporary working directory, and no existing persona changes. It saved `Fez live agent verified` using Tab/type/Enter after pointer attempts failed. During the next task, the test controller revoked control after the first completed tool call. The next browser tool failed, the model stopped, and the saved output remained unchanged. The session closed and browser ownership returned to human.
+
+The click-only follow-up **failed**: screenshots are 2400×2558 while the CSS input viewport is 1200×1279. An experimental screenshot-to-CSS mapping was added to the MCP adapter, but the model still failed to focus the input or save. This mapping alone does not establish reliable pointer control; model image resizing, targeting, and native focus need diagnosis. Do not replace Camofox based on these results. Signed-in sites and a standing Nostr channel agent were not tested.
+
+Run explicitly (uses the configured Claude account and makes real model calls):
+
+```sh
+node packages/fez-browser/prototype-cef/live-agent.mjs
+FEZ_CEF_POINTER_ONLY=1 node packages/fez-browser/prototype-cef/live-agent.mjs
+```
+
+Each run writes ignored `live-agent-result.json`, asserts the actual saved page output, and returns control to the human in cleanup. The second command preserves the known failing pointer check.
 
 Run the check against a fresh session (it closes that session):
 
