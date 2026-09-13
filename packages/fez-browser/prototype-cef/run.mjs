@@ -118,7 +118,7 @@ const server = createServer(async (req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const endpoint = `http://127.0.0.1:${server.address().port}`;
 const port = await unusedPort();
-child = spawn(exe, [`--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, `--url=${endpoint}/fixture`], { stdio: 'ignore' });
+child = spawn(exe, ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, `--url=${endpoint}/fixture`], { stdio: 'ignore' });
 child.on('error', error => console.error(error.message));
 try {
   let target;

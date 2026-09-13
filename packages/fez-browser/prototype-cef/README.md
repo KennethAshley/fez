@@ -8,7 +8,9 @@ This probes whether real Chromium can be shared between a human-facing Fez side 
 
 CEF 152 on Apple Silicon exposes usable CDP screenshot, typing, keyboard and navigation commands. The runnable `smoke.mjs` check uses a real CEF page and the real MCP transport: it types and saves text, checks the rendered result, rejects an agent before handoff and after takeover, and verifies Stop removes the temporary profile.
 
-The pane uses JPEG polling, not native NSView embedding. The separate CEF window must currently remain available: hiding the upstream sample window caused screenshot capture to time out. This is a feasibility result, not a production browser implementation. Fez pane interaction must also be checked manually before treating the integration as verified.
+The pane uses JPEG polling, not native NSView embedding. The separate CEF window must currently remain available: hiding the upstream sample window caused screenshot capture to time out. Background-throttling switches keep captures working when Fez covers that window. This is a feasibility result, not a production browser implementation.
+
+September 13 visual check: the pane opened alongside a real Fez channel. Clicking the image and typing with the keyboard saved “human” in the Chromium fixture. The pane's Give agent control button authorized an MCP client to navigate and save “agent handoff verified” in that same browser. Take control then rejected subsequent MCP input. This used the tool transport, not an autonomous model turn. The GUI bundle must use Fez's `__fezExt` IIFE fallback; the ES-module-only bundle did not load in this WKWebView.
 
 ## Build CEF once
 
