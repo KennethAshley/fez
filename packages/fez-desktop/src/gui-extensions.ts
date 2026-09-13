@@ -198,7 +198,7 @@ export interface GuiExtensionApi {
   /** Open the native channel Activity. Absent without `ui`. */
   openChannel?: (id: string) => void;
   /** Replace the side pane; the host owns close, replacement, and unload disposal. */
-  openPanel?: (title: string, render: MountRender) => void;
+  openPanel?: (title: string, render: MountRender, options?: { layout?: "workspace" }) => void;
   /** A palette, or a { light, dark } pair that follows the OS. */
   registerTheme: (name: string, vars: ThemePack) => void;
   /** Decorate chat messages below the body, or replace it with a structured view.
@@ -569,7 +569,7 @@ export function setChannelOpener(open: typeof channelOpener): void {
 export function openChannelAt(id: string): void { channelOpener?.(id); }
 
 // The returned disposer closes only this opening, never a replacement pane.
-let panelOpener: ((title: string, render: MountRender) => Dispose) | undefined;
+let panelOpener: ((title: string, render: MountRender, options?: { layout?: "workspace" }) => Dispose) | undefined;
 export function setPanelOpener(open: typeof panelOpener): void {
   panelOpener = open;
 }
@@ -1259,10 +1259,10 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
         : (refuse("ui", "export a tool package") as never),
       openThread: may("ui") ? (id, rootId) => { if (active) openThreadAt(id, rootId); } : (refuse("ui", "navigate threads") as never),
       openChannel: may("ui") ? (id) => { if (active) channelOpener?.(id); } : undefined,
-      openPanel: may("ui") ? (title, render) => {
+      openPanel: may("ui") ? (title, render, options) => {
         if (!active) return;
         closePanel?.();
-        closePanel = panelOpener?.(title, render);
+        closePanel = options ? panelOpener?.(title, render, options) : panelOpener?.(title, render);
       } : undefined,
       watchAgent: may("read:agents") ? openWatch : (refuse("read:agents", "open the watch pane") as never),
       // Forward surface (guest-threads spec): typed loosely so extensions

@@ -35,6 +35,8 @@ it.skipIf(!process.env.FEZ_CEF_EXECUTABLE)('maps a bounded agent screenshot to r
       expect(response.status).toBe(200);
       return response.json();
     };
+    await owner({ type: 'resize', width: 1000, height: 700 });
+    expect((await owner({ type: 'observe' })).viewport).toMatchObject({ clientWidth: 1000, clientHeight: 700 });
     // Read only this disposable child process's debug port, then inspect the fixture.
     const child = execFileSync('ps', ['-axo', 'ppid=,command='], { encoding: 'utf8' }).split('\n')
       .find(line => Number(line.trim().split(/\s+/)[0]) === pid);
@@ -84,8 +86,18 @@ it.skipIf(!process.env.FEZ_CEF_EXECUTABLE)('maps a bounded agent screenshot to r
       if (point === geometry.input) await tool({ type: 'type', text: 'Pointer saved this' });
     }
     expect(await evaluate("document.querySelector('output').textContent")).toBe('Pointer saved this');
-    await owner({ type: 'mode', value: 'human' });
+    // Resizing invalidates the model's screenshot, so it returns ownership to the human.
+    expect((await owner({ type: 'resize', width: 900, height: 650 })).mode).toBe('human');
     expect((await tool({ type: 'click', x: 1, y: 1 })).isError).toBe(true);
+    await evaluate("document.body.style.height = '3000px'");
+    await owner({ type: 'wheel', x: 300, y: 300, deltaX: 0, deltaY: 400 });
+    for (let attempt = 0; attempt < 20 && Number(await evaluate('scrollY')) === 0; attempt++) await delay(50);
+    expect(Number(await evaluate('scrollY'))).toBeGreaterThan(0);
+    await owner({ type: 'navigate', url: `${endpoint}/fixture#second` });
+    expect((await owner({ type: 'observe' })).navigation.canGoBack).toBe(true);
+    await owner({ type: 'history', delta: -1 });
+    expect((await owner({ type: 'observe' })).url).toBe(`${endpoint}/fixture`);
+    await owner({ type: 'reload' });
   } finally {
     await client.close();
     socket?.close();

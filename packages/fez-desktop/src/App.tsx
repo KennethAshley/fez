@@ -48,6 +48,7 @@ import { GuestThreadView, addGuest, listGuests, removeGuest, useGuestUnreads } f
 import { MountPoint } from "./MountPoint";
 import { matchAction, nextUnreadChannel } from "./keymap";
 import { moveChannel, orderChannels, useChannelOrder } from "./channel-order";
+import { workspacePaneWidth } from "./workspace-pane-width";
 import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
 import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers, gitInstallOffers, GitInstallOffer } from "./InstallOffer";
@@ -121,7 +122,7 @@ type SidePane =
   | { kind: "profile"; pk: string }
   | { kind: "reminders" }
   | { kind: "tool"; artifact: Artifact }
-  | { kind: "extension"; title: string; name: string; render: MountRender }
+  | { kind: "extension"; title: string; name: string; render: MountRender; layout?: "workspace" }
   | undefined;
 
 function useForceRender(): () => void {
@@ -456,8 +457,8 @@ function Shell({
     setWatchOpener((agent) => setPane({ kind: "watch", agent }));
     setToolOpener((artifact) => setPane({ kind: "tool", artifact }));
     let panelId = 0;
-    setPanelOpener((title, render) => {
-      const next: SidePane = { kind: "extension", title, name: `extension-panel-${++panelId}`, render };
+    setPanelOpener((title, render, options) => {
+      const next: SidePane = { kind: "extension", title, name: `extension-panel-${++panelId}`, render, layout: options?.layout };
       setPane(next);
       return () => setPane((current) => current === next ? undefined : current);
     });
@@ -968,13 +969,19 @@ function Shell({
   // rail and before the pane drags them. Clamped so neither can vanish.
   const [railW, setRailW] = useState(() => Number(localStorage.getItem("fez-rail-w")) || 240);
   const [paneW, setPaneW] = useState(() => Number(localStorage.getItem("fez-pane-w")) || 340);
-  const dragRef = useRef<"rail" | "pane" | undefined>(undefined);
+  const [workspaceW, setWorkspaceW] = useState<number>();
+  const [windowW, setWindowW] = useState(window.innerWidth);
+  const workspacePanel = pane?.kind === "extension" && pane.layout === "workspace";
+  const displayedPaneW = workspacePanel ? workspacePaneWidth(windowW, railW, workspaceW) : paneW;
+  const dragRef = useRef<"rail" | "pane" | "workspace" | undefined>(undefined);
   useEffect(() => {
     const move = (e: MouseEvent) => {
       if (dragRef.current === "rail") {
         const w = Math.min(420, Math.max(180, e.clientX));
         setRailW(w);
         localStorage.setItem("fez-rail-w", String(w));
+      } else if (dragRef.current === "workspace") {
+        setWorkspaceW(workspacePaneWidth(window.innerWidth, railW, window.innerWidth - e.clientX));
       } else if (dragRef.current === "pane") {
         const w = Math.min(640, Math.max(260, window.innerWidth - e.clientX));
         setPaneW(w);
@@ -988,11 +995,14 @@ function Shell({
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
+    const resize = () => setWindowW(window.innerWidth);
+    window.addEventListener("resize", resize);
     return () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
+      window.removeEventListener("resize", resize);
     };
-  }, []);
+  }, [railW]);
   /**
    * One channel row, wherever it is listed.
    *
@@ -1126,14 +1136,15 @@ function Shell({
   // Which extension's settings modal is open, by panel name.
   const [extSettings, setExtSettings] = useState<string | undefined>(undefined);
 
-  const startDrag = (which: "rail" | "pane") => {
-    dragRef.current = which;
+  const startDrag = (which: "rail" | "pane", event: React.MouseEvent) => {
+    event.preventDefault();
+    dragRef.current = which === "pane" && workspacePanel ? "workspace" : which;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   };
 
   return (
-    <div className="shell" style={{ "--rail-w": `${railW}px`, "--pane-w": `${paneW}px` } as React.CSSProperties}>
+    <div className="shell" style={{ "--rail-w": `${railW}px`, "--pane-w": `${displayedPaneW}px` } as React.CSSProperties}>
       <BootSplash loading={false} />
       <Toaster />
       <AgentInput client={client} onOpen={request => void openQuestion(request)} />
@@ -1571,7 +1582,7 @@ function Shell({
           </button>
         </div>
       </aside>
-      <div className="rz" onMouseDown={() => startDrag("rail")} />
+      <div className="rz" onMouseDown={event => startDrag("rail", event)} />
 
       {view.kind === "channel" && scope && (
         <ChannelView
@@ -1715,9 +1726,17 @@ function Shell({
         </div>
       )}
 
-      {pane && <div className="rz" onMouseDown={() => startDrag("pane")} />}
+      {pane && <div className="rz" role="separator" aria-label="Resize panel" aria-orientation="vertical" aria-valuenow={displayedPaneW} tabIndex={0}
+        onMouseDown={event => startDrag("pane", event)}
+        onKeyDown={event => {
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+          event.preventDefault();
+          const next = displayedPaneW + (event.key === "ArrowLeft" ? 32 : -32);
+          if (workspacePanel) setWorkspaceW(workspacePaneWidth(windowW, railW, next));
+          else { const width = Math.min(640, Math.max(260, next)); setPaneW(width); localStorage.setItem("fez-pane-w", String(width)); }
+        }} />}
       {pane?.kind === "extension" && (
-        <aside className="pane extension-pane" aria-label={pane.title}>
+        <aside className={`pane extension-pane${workspacePanel ? " pane-workspace" : ""}`} aria-label={pane.title}>
           <header className="pane-head">
             <span>{pane.title}</span>
             <button className="pane-close" aria-label="Close panel" onClick={() => setPane(undefined)}>✕</button>

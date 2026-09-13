@@ -96,6 +96,15 @@ it("forwards navigation at the app boundary and disposes each pane opening on re
   expect(channel).toHaveBeenCalledTimes(1);
 });
 
+it("forwards a workspace layout request so an extension can share the main working area", async () => {
+  const { host, api } = await load();
+  const open = vi.fn();
+  host.setPanelOpener(open);
+  const render = () => "browser";
+  api.openPanel!("Browser", render, { layout: "workspace" });
+  expect(open).toHaveBeenCalledWith("Browser", render, { layout: "workspace" });
+});
+
 it.each(["unload", "reload"])("ignores a delayed thread callback from before extension %s", async (change) => {
   const { host, api } = await load();
   const navigate = vi.fn();

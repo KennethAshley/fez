@@ -2,7 +2,7 @@
 
 Branch: `codex/cef-browser-prototype`. Do not publish this package or replace Camofox yet.
 
-This probes whether real Chromium can be shared between a human-facing Fez side pane and an MCP computer-use tool. It uses the existing `openPanel`/slash-command extension seams. No desktop core changes or new npm dependencies.
+This probes whether real Chromium can be shared between a human-facing Fez side pane and an MCP computer-use tool. It uses the existing `openPanel`/slash-command extension seams, with an optional generic `workspace` layout hint for a wide, resizable split. No new npm dependencies.
 
 ## What this establishes
 
@@ -32,7 +32,11 @@ FEZ_CEF_EXECUTABLE=/private/tmp/fez-cef-probe/target/bundle/cefsimple.app/Conten
   node packages/fez-browser/prototype-cef/start.mjs
 ```
 
-This starts the browser, generates a session-specific GUI bundle, and links the development extension. Restart Fez when no work is running, then enter `/cef` in a chat. The pane has navigation, Take control, Give agent control, and Stop session. Click the browser image before typing; Escape exits its keyboard capture. Rebuild/relink with the command above after restarting the browser because session capabilities rotate.
+This starts the browser, generates a session-specific GUI bundle, and links the development extension. Restart Fez when no work is running, then enter `/cef` in a chat. The pane has back/forward/reload, an address bar, a control toggle, and Stop. Click the browser image before typing; Escape exits its keyboard capture, and Cmd/Ctrl+L focuses the address bar. Rebuild/relink with the command above after restarting the browser because session capabilities rotate.
+
+On the updated desktop host, the browser takes a wide split beside chat. Drag the divider (or focus it and use arrow keys) to resize. The Chromium viewport follows the pane, so text stays at normal scale. Resizing returns control to the human and waits for a fresh frame before accepting input. Take control and Stop remain available if screenshot capture fails. Older desktop hosts can load the toolbar but ignore the width hint.
+
+September 13 layout verification: the updated desktop build displayed the live Bazaar beside chat, with working divider resizing, wheel scrolling, and Back. Direct mouse input saved the local form in the larger viewport. A new live Claude run at the resized dimensions clicked Draft at (128,135), saved `Fez live agent verified` with a click at (199,135), and stopped after takeover. GUI regressions cover fitted-image coordinates, capture failures, and stale frames during queued resizing; the native check also covers viewport dimensions, scrolling, history, and reload.
 
 The MCP server is `browser-cef-prototype`; its tool is `computer_use`. No existing agent is automatically given it. Testing is limited to the disposable fixture, including the live-model check below. The first pass combines the development GUI and tool registration in one private package; production Browser and Computer Use extensions remain a separate integration task.
 
@@ -70,7 +74,7 @@ node packages/fez-browser/prototype-cef/smoke.mjs
 
 - Fresh temporary profile; no cookie import, saved credentials or Fez identity access. Stop closes CEF and deletes that profile. SIGINT/SIGTERM clean up; a machine crash or SIGKILL can leave temporary data.
 - Random bearer capabilities gate the loopback control service. Agent requests cannot grant themselves control. The raw CEF debugging port is also loopback but has no authentication: this prototype assumes trusted local processes and is not an OS security boundary.
-- The screenshot view does not expose a full accessible page tree, browser context menus, downloads, popups, scrolling, clipboard, or complete keyboard shortcuts. Do not ship it as a general-purpose browser.
+- The screenshot view supports wheel scrolling and plain-text paste, but does not expose a full accessible page tree, browser context menus, downloads, popups, copy/selection, or complete keyboard shortcuts. Do not ship it as a general-purpose browser.
 - Production needs native embedding or an offscreen renderer, reliable revocation when the host dies, agent-specific grants, frame/input synchronization, browser update/signing packaging, and complete input/accessibility coverage. The 1024px agent image trades detail for a stable coordinate system; tiny targets will need cropped views or structured element access.
 
 Generated `session.json` and `gui.js` contain local capabilities and are gitignored. Never upload them. Camofox source and configuration are unchanged.

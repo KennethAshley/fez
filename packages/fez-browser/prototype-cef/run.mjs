@@ -75,6 +75,15 @@ const server = createServer(async (req, res) => {
     let result;
     if (action.type === 'stop' && actor === 'human') await stop();
     else if (stopped) throw new Error('Session stopped');
+    else if (action.type === 'resize' && actor === 'human') {
+      const { width, height } = action;
+      if (![width, height].every(n => Number.isInteger(n) && n >= 200 && n <= 4096)) throw new Error('Invalid viewport size');
+      const current = (await cdp('Page.getLayoutMetrics')).cssLayoutViewport;
+      if (current.clientWidth !== width || current.clientHeight !== height) {
+        mode = 'human'; // A model's previous screenshot no longer matches after a layout change.
+        await cdp('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 0, mobile: false });
+      }
+    }
     else if (action.type === 'mode' && actor === 'human') {
       if (!['human', 'agent'].includes(action.value)) throw new Error('Invalid mode');
       mode = action.value;
@@ -82,7 +91,7 @@ const server = createServer(async (req, res) => {
     } else if (action.type === 'observe') {
       if (actor === 'agent' && mode !== 'agent') throw new Error('Owner has not granted agent control');
       const viewport = (await cdp('Page.getLayoutMetrics')).cssLayoutViewport;
-      const snapshot = await cdp('Runtime.evaluate', { expression: '({ text: document.body.innerText.slice(0, 12000), dpr: devicePixelRatio })', returnByValue: true });
+      const snapshot = await cdp('Runtime.evaluate', { expression: '({ text: document.body?.innerText.slice(0, 12000) ?? "", dpr: devicePixelRatio, url: location.href, title: document.title })', returnByValue: true });
       // ponytail: cap agent images at 1024px to avoid model-side resizing; add crops for tiny targets later.
       const clip = actor === 'agent' ? {
         x: viewport.pageX, y: viewport.pageY, width: viewport.clientWidth, height: viewport.clientHeight,
@@ -91,6 +100,12 @@ const server = createServer(async (req, res) => {
       result = await cdp('Page.captureScreenshot', { format: 'jpeg', quality: 65, ...(clip ? { clip } : {}) });
       result.text = snapshot.result.value.text;
       result.viewport = viewport;
+      result.url = snapshot.result.value.url;
+      result.title = snapshot.result.value.title;
+      if (actor === 'human') {
+        const history = await cdp('Page.getNavigationHistory');
+        result.navigation = { canGoBack: history.currentIndex > 0, canGoForward: history.currentIndex < history.entries.length - 1 };
+      }
     } else {
       if (mode !== actor) throw new Error(`Control belongs to ${mode}`);
       switch (action.type) {
@@ -98,6 +113,19 @@ const server = createServer(async (req, res) => {
           const url = new URL(action.url);
           if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Only HTTP(S) navigation is supported');
           result = await cdp('Page.navigate', { url: url.href }); break;
+        }
+        case 'reload': await cdp('Page.reload'); break;
+        case 'history': {
+          if (![-1, 1].includes(action.delta)) throw new Error('Invalid history direction');
+          const history = await cdp('Page.getNavigationHistory');
+          const entry = history.entries[history.currentIndex + action.delta];
+          if (entry) await cdp('Page.navigateToHistoryEntry', { entryId: entry.id });
+          break;
+        }
+        case 'wheel': {
+          const { x, y, deltaX, deltaY } = action;
+          if (![x, y].every(n => Number.isFinite(n) && n >= 0 && n <= 4096) || ![deltaX, deltaY].every(n => Number.isFinite(n) && Math.abs(n) <= 4096)) throw new Error('Invalid scroll');
+          await cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX, deltaY }); break;
         }
         case 'click': {
           const { x, y } = action;

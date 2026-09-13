@@ -300,6 +300,8 @@ body {
 .extension-pane .pane-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .channel-workspace-content { flex: 1; min-height: 0; overflow: auto; padding: 20px; }
 .extension-pane > .pane-body { padding: 16px; }
+.extension-pane.pane-workspace > .pane-body { display: flex; flex-direction: column; min-height: 0; padding: 0; overflow: hidden; }
+.pane-workspace > .pane-head { min-height: 42px; padding: 8px 14px; font-family: var(--font-ui); font-size: 12px; }
 /* Two rows in one block: the channel's name, and the channel's doc
    under it. The border belongs to the block, not to either row. */
 .topbar {
@@ -2670,6 +2672,7 @@ html[data-reduce-motion="true"] .fez-parade { display: none; }
   background: transparent; transition: background 0.15s;
 }
 .rz:hover::after { background: var(--accent); }
+.rz:focus-visible::after { background: var(--accent); }
 
 /* bench proposal diffs */
 .proposal-from { color: var(--red); }

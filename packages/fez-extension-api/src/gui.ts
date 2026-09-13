@@ -232,8 +232,9 @@ export interface GuiExtensionApi {
   openThread(channelId: string, rootId: string): void;
   /** Open the native channel Activity. Absent on older hosts or without `ui`. */
   openChannel?(id: string): void;
-  /** Replace the side pane; the host disposes it on close, replacement, or unload. */
-  openPanel?(title: string, render: MountRender): void;
+  /** Replace the side pane; the host disposes it on close, replacement, or unload.
+   * `workspace` requests a wide split for interactive content. Older hosts may ignore the layout hint. */
+  openPanel?(title: string, render: MountRender, options?: { layout?: "workspace" }): void;
   /**
    * A top-level view in the rail, beside inbox and docs — for a feature
    * that is a PLACE (loom's ▣ tools gallery, a board). The host owns the
