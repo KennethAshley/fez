@@ -81,10 +81,16 @@ const server = createServer(async (req, res) => {
       await cdp('Page.stopLoading');
     } else if (action.type === 'observe') {
       if (actor === 'agent' && mode !== 'agent') throw new Error('Owner has not granted agent control');
-      result = await cdp('Page.captureScreenshot', { format: 'jpeg', quality: 65 });
-      const snapshot = await cdp('Runtime.evaluate', { expression: 'document.body.innerText.slice(0, 12000)', returnByValue: true });
-      result.text = snapshot.result.value;
-      result.viewport = (await cdp('Page.getLayoutMetrics')).cssLayoutViewport;
+      const viewport = (await cdp('Page.getLayoutMetrics')).cssLayoutViewport;
+      const snapshot = await cdp('Runtime.evaluate', { expression: '({ text: document.body.innerText.slice(0, 12000), dpr: devicePixelRatio })', returnByValue: true });
+      // ponytail: cap agent images at 1024px to avoid model-side resizing; add crops for tiny targets later.
+      const clip = actor === 'agent' ? {
+        x: viewport.pageX, y: viewport.pageY, width: viewport.clientWidth, height: viewport.clientHeight,
+        scale: Math.min(1, 1024 / Math.max(viewport.clientWidth, viewport.clientHeight)) / snapshot.result.value.dpr,
+      } : undefined;
+      result = await cdp('Page.captureScreenshot', { format: 'jpeg', quality: 65, ...(clip ? { clip } : {}) });
+      result.text = snapshot.result.value.text;
+      result.viewport = viewport;
     } else {
       if (mode !== actor) throw new Error(`Control belongs to ${mode}`);
       switch (action.type) {

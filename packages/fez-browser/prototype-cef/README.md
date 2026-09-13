@@ -40,7 +40,9 @@ The MCP server is `browser-cef-prototype`; its tool is `computer_use`. No existi
 
 The subsequent real Claude ACP session used Fez's `openSession` harness with only this test MCP server configured, a temporary working directory, and no existing persona changes. It saved `Fez live agent verified` using Tab/type/Enter after pointer attempts failed. During the next task, the test controller revoked control after the first completed tool call. The next browser tool failed, the model stopped, and the saved output remained unchanged. The session closed and browser ownership returned to human.
 
-The click-only follow-up **failed**: screenshots are 2400×2558 while the CSS input viewport is 1200×1279. An experimental screenshot-to-CSS mapping was added to the MCP adapter, but the model still failed to focus the input or save. This mapping alone does not establish reliable pointer control; model image resizing, targeting, and native focus need diagnosis. Do not replace Camofox based on these results. Signed-in sites and a standing Nostr channel agent were not tested.
+The initial click-only follow-up failed: screenshots were 2400×2558 while the CSS input viewport was 1200×1279. Mapping Retina pixels alone was insufficient because the model can also resize oversized images. A subsequent diagnostic recorded the actual DOM mouse events: the old model coordinates hit the page background, while exact screenshot coordinates focused the input and saved successfully even with the CEF window in the background.
+
+The corrected broker now uses Chromium's native screenshot scaling to cap agent images at 1024 pixels per edge; human previews retain full resolution. MCP returns the actual image dimensions and maps each coordinate axis back to CSS pixels. On the same viewport the agent image is 961×1024. A fresh Claude pointer-only run clicked Draft at (142,149), typed `Fez live agent verified`, clicked Save at (219,149), and verified the saved output without Tab/Enter fallback. Mid-task takeover then rejected its next action and preserved the result. This validates the local form, not general browsing: signed-in sites and a standing Nostr channel agent remain untested. Do not replace Camofox based on this probe.
 
 Run explicitly (uses the configured Claude account and makes real model calls):
 
@@ -49,7 +51,14 @@ node packages/fez-browser/prototype-cef/live-agent.mjs
 FEZ_CEF_POINTER_ONLY=1 node packages/fez-browser/prototype-cef/live-agent.mjs
 ```
 
-Each run writes ignored `live-agent-result.json`, asserts the actual saved page output, and returns control to the human in cleanup. The second command preserves the known failing pointer check.
+Each run writes ignored `live-agent-result.json`, asserts the actual saved page output, and returns control to the human in cleanup. The second command requires screenshot-coordinate clicks to focus and save.
+
+The native regression in `packages/fez-evals/tests/cef-pointer.test.ts` starts an isolated broker/profile, checks image dimensions and pointer mapping against real element bounds, and verifies takeover. It skips when `FEZ_CEF_EXECUTABLE` is unset. Run from `packages/fez-evals`:
+
+```sh
+FEZ_CEF_EXECUTABLE=/private/tmp/fez-cef-probe/target/bundle/cefsimple.app/Contents/MacOS/cefsimple \
+  npx vitest --run tests/cef-pointer.test.ts
+```
 
 Run the check against a fresh session (it closes that session):
 
@@ -62,6 +71,6 @@ node packages/fez-browser/prototype-cef/smoke.mjs
 - Fresh temporary profile; no cookie import, saved credentials or Fez identity access. Stop closes CEF and deletes that profile. SIGINT/SIGTERM clean up; a machine crash or SIGKILL can leave temporary data.
 - Random bearer capabilities gate the loopback control service. Agent requests cannot grant themselves control. The raw CEF debugging port is also loopback but has no authentication: this prototype assumes trusted local processes and is not an OS security boundary.
 - The screenshot view does not expose a full accessible page tree, browser context menus, downloads, popups, scrolling, clipboard, or complete keyboard shortcuts. Do not ship it as a general-purpose browser.
-- Production needs native embedding or an offscreen renderer, reliable revocation when the host dies, agent-specific grants, frame/input synchronization, browser update/signing packaging, and complete input/accessibility coverage.
+- Production needs native embedding or an offscreen renderer, reliable revocation when the host dies, agent-specific grants, frame/input synchronization, browser update/signing packaging, and complete input/accessibility coverage. The 1024px agent image trades detail for a stable coordinate system; tiny targets will need cropped views or structured element access.
 
 Generated `session.json` and `gui.js` contain local capabilities and are gitignored. Never upload them. Camofox source and configuration are unchanged.
