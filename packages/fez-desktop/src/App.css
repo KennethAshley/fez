@@ -330,10 +330,11 @@ body {
 }
 /* Keep the scroll area at the pane edge and center the conversation inside it. */
 .chat-main { --chat-width: 800px; --chat-gutter: 26px; }
-.chat-main .timeline {
+.guest-main { --chat-width: 72ch; --chat-gutter: 18px; }
+.chat-main :is(.timeline, .guest-timeline) {
   padding-inline: max(var(--chat-gutter), calc((100% - var(--chat-width)) / 2));
 }
-.chat-main :is(.composer, .typing, .edit-banner, .attach-row, .mention-warn, .history-status) {
+.chat-main :is(.composer, .guest-composer, .typing, .edit-banner, .attach-row, .mention-warn, .history-status) {
   width: 100%; max-width: calc(var(--chat-width) + 2 * var(--chat-gutter));
   margin-inline: auto; padding-inline: var(--chat-gutter);
 }
@@ -949,8 +950,7 @@ select.ob-input:hover { border-color: var(--accent); }
 }
 .home-section::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
 .home-section:first-child { margin-top: 0; }
-.timeline.home { padding: 24px 32px; }
-.home > :is(.home-section, .inbox-row, .pane-empty) { max-width: 900px; }
+.timeline.home { padding: 24px max(32px, calc((100% - 900px) / 2)); }
 /* Ten filled cards at equal weight gave the eye nowhere to land, and a
    rule between every row just traded one grid for another. Nothing
    separates them but air and the creature holding the left column;
@@ -2262,6 +2262,7 @@ html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, ht
   animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition: none !important; scroll-behavior: auto !important;
 }
 html[data-reduce-motion="true"] .fez-parade { display: none; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition: none !important; scroll-behavior: auto !important; }
 }
@@ -2272,6 +2273,7 @@ html[data-reduce-motion="true"] .fez-parade { display: none; }
   .set-row { grid-template-columns: 1fr; }
   .set-control { grid-column: 1; grid-row: auto; justify-self: start; margin-top: 8px; }
 }
+
 @media (width <= 640px) {
   .settings-rail { width: 170px; min-width: 170px; padding-left: 6px; padding-right: 6px; }
   .settings-col { padding: 28px 18px 48px; }
@@ -2281,6 +2283,7 @@ html[data-reduce-motion="true"] .fez-parade { display: none; }
   .appearance-preview { padding-left: 12px; padding-right: 12px; }
   .appearance-reading .seg button { padding: 9px; }
 }
+
 @media (width <= 440px) {
   .settings-screen { flex-direction: column; }
   .settings-rail { width: 100%; min-width: 0; max-height: 220px; border-right: 0; border-bottom: 1px solid var(--hairline); }
@@ -4121,12 +4124,10 @@ button.ob-brain:active { transform: translateY(1px); }
   --measure-scan: 1100px;
 }
 
-/* The column is LEFT-ANCHORED, not centred. The rail is the app's
-   spine; a centred column drifts away from it as the window grows and
-   stops looking attached to anything. Padding is settings' own, so a
-   page's first line sits at the same y whatever its width. */
+/* Center within the main column, which shrinks when a side pane opens. */
 .fez-page {
   max-width: var(--measure-read);
+  margin-inline: auto;
   flex: 1; width: 100%; min-height: 0; overflow-y: auto;
   padding: 36px 40px 64px;
   font-size: 13px;
@@ -4681,7 +4682,7 @@ button.ucard-name:hover { text-decoration: underline; }
   pointer-events: none;
 }
 .guest-composer { padding: 10px 18px 14px; border-top: 1px solid var(--hairline); display: flex; gap: 8px; }
-.guest-composer textarea { flex: 1; min-height: 2.6rem; resize: vertical; }
+.guest-composer textarea { flex: 1; min-width: 0; min-height: 2.6rem; resize: vertical; }
 .guest-empty {
   color: var(--fg-dim);
   font-size: 13px;
