@@ -1,0 +1,27 @@
+{
+  "name": "@fezchat/browser-use",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Observe and control Fez browser panes with shared agent queues and visible cursors.",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "skill": { "command": "node", "args": ["dist/mcp.js"], "env": { "FEZ_BROWSER_USE_SESSION": "" } }
+    },
+    "permissions": ["network:127.0.0.1"],
+    "minFezVersion": "0.2.2"
+  },
+  "scripts": {
+    "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
+    "check": "tsc --noEmit",
+    "test": "npm test --prefix ../fez-evals -- tests/browser-use.test.ts"
+  },
+  "files": ["dist", "README.md"],
+  "dependencies": { "@modelcontextprotocol/sdk": "^1.0.0", "zod": "^3.23.0" },
+  "devDependencies": { "@types/node": "^22.0.0", "esbuild": "^0.21.5", "typescript": "^5.6.0" },
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/KennethAshley/fez.git", "directory": "packages/fez-browser-use" },
+  "homepage": "https://github.com/KennethAshley/fez/tree/main/packages/fez-browser-use#readme"
+}

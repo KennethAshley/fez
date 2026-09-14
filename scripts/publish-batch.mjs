@@ -55,6 +55,7 @@ const EXTENSIONS = [
   "packages/fez-mcp",
   "packages/fez-web",
   "packages/fez-browser",
+  "packages/fez-browser-use",
   "packages/claude-code",
   // fez-bittensor (the chain-direct discovery skill) superseded the old
   // packages/bittensor miner extension on npm as of 0.2.0.

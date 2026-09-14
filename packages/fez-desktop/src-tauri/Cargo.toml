@@ -17,6 +17,17 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# The normal desktop build enables this through scripts/tauri-native.mjs.
+native-browser = []
+# Older development-only probe; shipping builds use the native-browser runtime.
+cef-prototype = ["dep:cef", "dep:objc2-app-kit", "dep:objc2-foundation"]
+
+[[example]]
+name = "cef-native-probe"
+path = "../../fez-browser/prototype-cef/native-probe.rs"
+required-features = ["cef-prototype"]
+
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "macos-private-api", "unstable"] }
 tauri-plugin-opener = "2"
@@ -39,6 +50,9 @@ hex = "0.4.3"
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+cef = { git = "https://github.com/tauri-apps/cef-rs", rev = "207bdd2917c038283635022ffcf7767496bcc7e6", default-features = false, features = ["sandbox"], optional = true }
+objc2-app-kit = { version = "0.3.2", optional = true }
+objc2-foundation = { version = "0.3.2", optional = true }
 # Reuse Tauri's Objective-C runtime for the native Quit callback it does not expose.
 objc2 = "0.6.4"
 # Already used by tauri-plugin-notification; retain its per-banner click result.

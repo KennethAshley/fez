@@ -1,15 +1,22 @@
 # @fezchat/browser
 
-Give Fez agents a real browser for anonymous website reading. Setup, testing,
+Open visible browser panes beside your Fez chat with `/browser [url]`. The native
+desktop build introduced in **Fez 0.4.40** includes CEF; no separate browser download
+is needed for these panes. **New browser** opens another pane (up to four).
+Attach **Browser Use** (`@fezchat/browser-use`) to agents for visible clicking,
+typing, scrolling, per-pane queues, and owner takeover.
+
+This package also gives agents an anonymous browser reading backend through
+Camofox. Setup, testing,
 and agent attachment are available in the desktop GUI. Once set up, the
 browser starts when an agent first opens a page and stops with its connection.
 No login service or terminal command is needed after a reboot.
 
-Settings are declared in `src/gui.json` and rendered by Fez. The GUI ships
-JSON only; its process actions still require the recorded `processes` grant
+Reading-backend settings are declared in `src/gui.json` and rendered by Fez.
+The GUI also mounts native browser panes; its process actions require the recorded `processes` grant
 and run this package's own `fez-browser` binary.
 
-## Use in Fez
+## Set up anonymous reading tools
 
 1. Open **Extensions → Browser → review & install**, then grant the listed permissions.
 2. Open **Settings → extensions → Browser → Set up browser**. The first setup

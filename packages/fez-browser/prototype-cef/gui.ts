@@ -1,10 +1,12 @@
 import type { GuiExtensionApi } from '@fezchat/extension-api/gui';
+import { openNativeBrowser } from '../src/native-gui';
 declare const SESSION: { endpoint: string; uiToken: string };
 declare const STYLES: string;
 
 // The browser still runs in a separate CEF process; this is its shared viewport.
 export function activate(api: GuiExtensionApi) {
-  api.registerGuiCommand('cef', () => {
+  api.registerGuiCommand('cef', async () => {
+    if (api.nativeSurfaces && await api.nativeSurfaces.available()) return openNativeBrowser(api, STYLES);
     if (!api.openPanel) return 'This desktop build does not support browser panels.';
     api.openPanel('Browser', host => {
       if (!host) return;

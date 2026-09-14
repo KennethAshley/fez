@@ -9,6 +9,7 @@ import { createPageHost, type PageOperation } from "./isolated-page-host";
 import { createCustomHost, type CustomOperation } from "./isolated-custom-host";
 import type { CustomSurface } from "../../../src/extensions/gui-custom-contributions";
 import { openChannelAt, openThreadAt, openGuestDm } from "./gui-extensions";
+import { nativeSlotVisible } from "./native-visibility";
 
 type HostOperation =
   | CustomOperation
@@ -94,8 +95,7 @@ export function IsolatedPanelLauncher({ name, client, page, pageView, custom, cu
       const appearance = tokens.map(key => `${key}:${style.getPropertyValue(key)};`).join("") + `color-scheme:${style.colorScheme};`;
       // Native views sit above the DOM. Hide when a host dialog covers the
       // slot, so quit prompts and other overlays stay visible and clickable.
-      const visible = width > 0 && height > 0 && [[x + 1, y + 1], [x + width / 2, y + height / 2], [x + width - 1, y + height - 1]]
-        .every(([left, top]) => element.contains(document.elementFromPoint(left, top)));
+      const visible = nativeSlotVisible(element);
       return { bounds: { x, y, width, height }, appearance, visible };
     };
     const fail = (error: unknown) => {

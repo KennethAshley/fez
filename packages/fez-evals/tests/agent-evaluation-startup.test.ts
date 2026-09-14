@@ -9,7 +9,8 @@ vi.mock("node:os", async original => {
   const actual = await original<typeof import("node:os")>();
   return { ...actual, default: { ...actual, homedir: () => fixture.directory } };
 });
-vi.mock("../../fez-acp/src/mcp-path.js", () => ({
+vi.mock("../../fez-acp/src/mcp-path.js", async original => ({
+  ...await original<typeof import("../../fez-acp/src/mcp-path.js")>(),
   fezMcpLaunch: () => ({ launch: { command: process.execPath, args: ["/installed/fez-mcp.js"] }, tried: [] }),
   resolveNodeCommand: () => process.execPath,
 }));
@@ -24,6 +25,7 @@ vi.mock("@fezchat/protocol", async original => {
       invoke: async (prompt: string, cwd: string, _progress: unknown, tools: { name: string; env: { name: string; value: string }[] }[]) => {
         expect(process.env.FEZ_EVALUATION_ACTIVE).toBe("1");
         expect(tools.every(tool => tool.env.some(entry => entry.name === "FEZ_EVALUATION_ACTIVE" && entry.value === "1"))).toBe(true);
+        expect(tools.every(tool => tool.env.some(entry => entry.name === "FEZ_AGENT_PERSONA" && entry.value === "configured"))).toBe(true);
         fixture.calls.push({ prompt, cwd, tools: tools.map(t => t.name) });
         if (fixture.pi) {
           expect(JSON.parse(fs.readFileSync(path.join(cwd, ".pi/settings.json"), "utf8"))).toMatchObject({ defaultProvider: "owner-provider", defaultModel: "owner-model" });

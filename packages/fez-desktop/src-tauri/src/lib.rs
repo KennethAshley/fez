@@ -2,9 +2,15 @@ use nostr::JsonUtil as _;
 #[cfg(target_os = "macos")]
 mod always_on;
 mod bounded_command;
+mod bundled_extensions;
 mod desktop_runtime;
 mod git_install;
 mod isolated_panel;
+#[cfg(feature = "native-browser")]
+pub mod native_surfaces;
+#[cfg(all(target_os = "macos", feature = "cef-prototype"))]
+#[path = "../../../fez-browser/prototype-cef/native.rs"]
+mod cef_prototype;
 mod managed_agents;
 mod managed_node;
 mod notifications;
@@ -598,7 +604,7 @@ fn update_settings(f: impl FnOnce(&mut serde_json::Value)) -> Result<(), String>
     // Propagate a serialize failure — the old unwrap_or_default() wrote an
     // EMPTY STRING over settings.json, losing every skill and grant.
     let text = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| format!("couldn't write settings.json: {e}"))
+    package_install::write_atomic(&path, text.as_bytes()).map_err(|e| format!("couldn't write settings.json: {e}"))
 }
 
 /// A settings.json member as a mutable object, resetting a wrong-typed
@@ -2213,6 +2219,7 @@ pub(crate) fn spawn_agent_process(
 ) -> Result<u32, String> {
     validate_agent_launch(&persona, repo.as_deref(), base_branch.as_deref())?;
     desktop_runtime::start(owner.clone(), relays.clone())?;
+    managed_node::ensure_for_mcp_servers(&settings_value())?;
     let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     spawn_agent_locked(persona, channels, owner, relays, repo, base_branch, manual)
 }
@@ -2693,9 +2700,20 @@ fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), 
 
 fn app_context<R: tauri::Runtime>() -> tauri::Context<R> { tauri::generate_context!() }
 
+fn command_handler<F>(next: F) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
+where F: Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    let next = isolated_panel::guard(next);
+    #[cfg(feature = "native-browser")]
+    let next = native_surfaces::handler(next);
+    next
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "native-browser")]
+    let builder = native_surfaces::configure(builder, None).expect("configure native browser");
+    let app = builder
         .channel_interceptor(isolated_panel::channel_message)
         .manage(isolated_panel::PanelHost::new(fez_home().expect("Fez home directory")))
         .plugin(tauri_plugin_opener::init())
@@ -2743,9 +2761,22 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            #[cfg(not(feature = "native-browser"))]
             desktop_runtime::claim().map_err(std::io::Error::other)?;
+            #[cfg(feature = "native-browser")]
+            {
+                let source = app.path().resource_dir()?.join("bundled-extensions");
+                bundled_extensions::install_missing(&source, &fez_home().map_err(std::io::Error::other)?,
+                    |name, bytes, version| finish_install(name, bytes, version).map(|_| ()))
+                    .map_err(std::io::Error::other)?;
+                native_surfaces::open_main(app)?;
+            }
+            #[cfg(all(target_os = "macos", feature = "cef-prototype"))]
+            cef_prototype::start(app).map_err(std::io::Error::other)?;
             *APP_HANDLE.lock().unwrap_or_else(|p| p.into_inner()) = Some(app.handle().clone());
-            #[cfg(target_os = "macos")]
+            // CEF forwards native Quit through ExitRequested itself. Only Tao
+            // needs the supplemental delegate method for our confirmation.
+            #[cfg(all(target_os = "macos", not(feature = "native-browser")))]
             desktop_runtime::macos_quit::install().map_err(std::io::Error::other)?;
             // macOS gets the standard "Check for Updates…" in the app menu,
             // right under About — the default menu with one item inserted.
@@ -2852,12 +2883,18 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(isolated_panel::guard(tauri::generate_handler![notifications::notify_with_click, isolated_panel::open_isolated_panel, isolated_panel::update_isolated_panel, isolated_panel::close_isolated_panel, isolated_panel::isolated_panel_request, isolated_panel::isolated_panel_reply, isolated_panel::isolated_panel_host_request, isolated_panel::isolated_panel_validate_request, stage_artifact, release_artifact, get_pubkey, ensure_agent_identity, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, codex_brain_status, ensure_codex_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, workspace_owner_pin, write_media_server, read_media_server, runner_status, connect_service, desktop_runtime::start_desktop_runtime, desktop_runtime::confirm_desktop_quit, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package]))
+        .invoke_handler(command_handler(tauri::generate_handler![notifications::notify_with_click, isolated_panel::open_isolated_panel, isolated_panel::update_isolated_panel, isolated_panel::close_isolated_panel, isolated_panel::isolated_panel_request, isolated_panel::isolated_panel_reply, isolated_panel::isolated_panel_host_request, isolated_panel::isolated_panel_validate_request, stage_artifact, release_artifact, get_pubkey, ensure_agent_identity, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, codex_brain_status, ensure_codex_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, workspace_owner_pin, write_media_server, read_media_server, runner_status, connect_service, desktop_runtime::start_desktop_runtime, desktop_runtime::confirm_desktop_quit, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package]))
         .build(app_context())
-        .expect("error while building tauri application")
-        .run(|app, event| match event {
+        .expect("error while building tauri application");
+    #[cfg(all(target_os = "macos", feature = "cef-prototype"))]
+    cef_prototype::initialize_engine(None).expect("initialize native browser before the event loop");
+    app.run(|app, event| match event {
             tauri::RunEvent::ExitRequested { api, .. } => desktop_runtime::quit_requested(app, &api),
-            tauri::RunEvent::Exit => desktop_runtime::shutdown(),
+            tauri::RunEvent::Exit => {
+                #[cfg(all(target_os = "macos", feature = "cef-prototype"))]
+                cef_prototype::stop();
+                desktop_runtime::shutdown();
+            },
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => desktop_runtime::show(app),
             _ => {},

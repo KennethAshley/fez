@@ -19,3 +19,52 @@ The desktop hosts `gui` extension parts. At launch it loads `~/.fez/gui-extensio
 ```bash
 cd packages/fez-desktop && npm install && npm run tauri dev
 ```
+
+## Native browser builds
+
+On macOS, the normal build includes the native CEF browser:
+
+```bash
+npm run tauri -- build --debug --bundles app
+```
+
+The build script fetches the exact Tauri and plugin revisions in
+[`scripts/native-browser.json`](scripts/native-browser.json), builds their matching
+CLI, and uses [`scripts/native-browser.lock`](scripts/native-browser.lock) with
+`--locked`. Rust 1.95+ is required. The first build downloads and compiles the
+toolchain; subsequent builds reuse `src-tauri/target`. The app is
+`src-tauri/target/debug/bundle/macos/fez.app`. It has the normal `com.fez.desktop`
+identity and embeds CEF, its helper apps, Browser control assets, and the bundled
+agent runtime. Browser and Browser Use ship as ordinary package archives and
+are installed before the GUI starts, using Fez's existing native installer.
+Existing packages, links, settings, and later uninstalls are preserved. Bundled
+extensions are seeded once; update an installed extension explicitly.
+`tauri dev` remains the system-webview frontend development loop.
+
+For an existing checkout, `FEZ_TAURI_CHECKOUT` and `FEZ_TAURI_PLUGINS_CHECKOUT` may
+point at those exact revisions. Modified runtime sources or a different revision
+fail the build. Do not use the installed stable Tauri CLI to package CEF.
+
+The full app uses the OS secret store for Chromium cookies and saved passwords,
+with a cache separate from the disposable lab. Other Chromium web storage is
+not encrypted by this setting. The isolated lab still uses mock storage and
+should only receive disposable sessions; see the
+[`Browser Lab instructions`](../fez-browser/prototype-tauri-cef/README.md).
+
+To build a signed, notarized release without publishing it:
+
+```bash
+bash scripts/build-signed.sh
+```
+
+This requires the Developer ID signing identity, Apple ID notarization
+credentials, and updater signing key in the environment or the `fez-notary`
+keychain. `scripts/setup-signing.sh` configures the Apple credentials; provide
+the existing updater key as `TAURI_SIGNING_PRIVATE_KEY` or `fez-notary/updater-key`.
+Missing credentials
+stop before the build. The pinned bundler signs the nested CEF framework and
+helpers with Chromium's hardened-runtime entitlements. The script then verifies
+the app signature, Gatekeeper assessment, and stapled notarization ticket. Only
+`scripts/release.sh` publishes the result. CEF is experimental upstream code;
+changing the pins requires refreshing the lock and rerunning native and signed
+bundle verification.

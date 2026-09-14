@@ -40,7 +40,7 @@ server.listen(port, '127.0.0.1');
       body: JSON.stringify({ type: 'stop' }), signal: AbortSignal.timeout(2000),
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ mode: 'stopped' });
+    expect(await response.json()).toEqual({ mode: 'stopped', epoch: 1 });
     await expect(access(session.profile)).rejects.toMatchObject({ code: 'ENOENT' });
     const pid = Number(await readFile(join(dir, 'cef.pid'), 'utf8'));
     expect(() => process.kill(pid, 0)).toThrow();

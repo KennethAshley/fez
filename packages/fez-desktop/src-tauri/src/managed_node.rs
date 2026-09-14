@@ -1,4 +1,4 @@
-//! A private Node.js runtime + the Claude ACP adapter, provisioned on
+//! A private Node.js runtime for MCP tools and ACP adapters, provisioned on
 //! demand — Buzz's managed-node decision, fez-shaped.
 //!
 //! The adapter (@agentclientprotocol/claude-agent-acp) cannot be
@@ -58,6 +58,18 @@ pub(crate) fn ensure_for_program(program: &std::path::Path) -> Result<(), String
     if is_node_script(&header[..size]) {
         ensure_node_runtime()?;
     }
+    Ok(())
+}
+
+fn mcp_requires_node(settings: &serde_json::Value) -> bool {
+    settings.get("mcpServers").and_then(serde_json::Value::as_object)
+        .is_some_and(|servers| servers.values().any(|server| server.get("command").and_then(serde_json::Value::as_str) == Some("node")))
+}
+
+/// Bundled brains do not include Node. Provision it before their installed
+/// MCP tools start, outside the agent registry lock; failure must stop launch.
+pub(crate) fn ensure_for_mcp_servers(settings: &serde_json::Value) -> Result<(), String> {
+    if mcp_requires_node(settings) { ensure_node_runtime()?; }
     Ok(())
 }
 
@@ -219,6 +231,22 @@ mod tests {
         assert!(!super::is_node_script(b"#!/bin/sh\necho ready"));
         assert!(!super::is_node_script(b"\x7fELF\x00\x00"));
         assert!(!super::is_node_script(b"#!/usr/bin/env nodejs\n"));
+    }
+
+    #[test]
+    fn installed_node_mcp_tools_require_the_runtime_even_for_a_bundled_brain() {
+        use serde_json::json;
+        assert!(super::mcp_requires_node(&json!({"mcpServers": {
+            "sample": {"command":"node", "args":["/tools/sample/mcp.js"]},
+            "remote": {"url":"https://example.com/mcp"}
+        }})));
+        for settings in [json!({}), json!({"mcpServers": {}}), json!({"mcpServers": {
+            "native": {"command":"/tools/native"},
+            "remote": {"url":"https://example.com/mcp"},
+            "custom-node": {"command":"/custom/node"}
+        }})] {
+            assert!(!super::mcp_requires_node(&settings));
+        }
     }
     use super::parse_claude_auth;
 

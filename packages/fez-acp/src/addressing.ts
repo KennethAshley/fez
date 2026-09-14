@@ -26,16 +26,29 @@ export interface AddressableEvent {
  * SEGMENT-START addressing (v2, earned in the comms battery): the first
  * @name addresses, and so does any @name that OPENS a new segment — a
  * sentence (after . ? !) or a line. "T1: @a X? @b Y? @c Z." fans out
- * to all three; "check it, if good ping @coder" still protects coder
+ * to all three. An unconditional "then @name" also opens an instruction;
+ * "check it, if good then @coder" still protects coder
  * (mid-sentence = downstream handoff, not an addressee).
  */
 export function addressees(content: string): string[] {
   const names: string[] = [];
   for (const { name, index } of proseMentions(content)) {
+    const prefix = content.slice(0, index);
+    const clause = prefix.split(/[.?!\n]/).at(-1) ?? '';
+    const nextInstruction = /\bthen\s*$/i.test(clause) && !/\b(if|unless|when|once)\b/i.test(clause);
     // Look back: only whitespace/quotes/brackets since a sentence end or line start?
-    if (names.length === 0 || /[.?!\n]["')\]]*\s*$/.test(content.slice(0, index))) names.push(name);
+    if (names.length === 0 || nextInstruction || /[.?!\n]["')\]]*\s*$/.test(prefix)) names.push(name);
   }
   return [...new Set(names)];
+}
+
+/** Peers already dispatched by the source message need a reference, not a second task. */
+export function withoutRepeatSummons(reply: string, source: string, self: string): string {
+  const peers = new Set(addressees(source).filter(name => name !== self));
+  for (const mention of proseMentions(reply).reverse()) {
+    if (peers.has(mention.name)) reply = reply.slice(0, mention.index) + reply.slice(mention.index + 1);
+  }
+  return reply;
 }
 
 export function isAddressedTo(

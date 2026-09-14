@@ -1,15 +1,19 @@
-.cef-browser {
+.cef-browser, .cef-browsers {
   display: flex; flex-direction: column; flex: 1; width: 100%; min-width: 0; min-height: 0; height: 100%;
   color: var(--fg, #ebdbb2); background: var(--bg0, #1d2021);
   font: 13px/1.4 var(--font-ui, -apple-system, sans-serif); container-type: inline-size;
 }
+.cef-browsers-toolbar, .cef-pane-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 12px; flex: none; border-bottom: 1px solid var(--hairline, #32302f); }
+.cef-panes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); grid-auto-rows: minmax(360px, 1fr); gap: 8px; padding: 8px; flex: 1; min-height: 0; overflow: auto; }
+.cef-panes > .cef-browser { height: auto; border: 1px solid var(--hairline, #32302f); }
+.cef-pane-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .cef-browser [hidden] { display: none !important; }
 .cef-toolbar { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--hairline, #32302f); background: var(--bg1, #282828); flex: none; }
 .cef-navigation { display: flex; gap: 2px; flex: none; }
-.cef-browser button { display: inline-flex; align-items: center; justify-content: center; flex: none; min-height: 30px; border: 0; border-radius: 6px; color: inherit; background: transparent; font: inherit; cursor: pointer; padding: 4px 9px; }
-.cef-browser button:hover:not(:disabled) { background: var(--bg2, #3c3836); }
-.cef-browser button:disabled { opacity: .3; cursor: default; }
-.cef-browser :is(button, input):focus-visible { outline: 2px solid var(--accent, #83a598); outline-offset: 1px; }
+.cef-browser button, .cef-browsers button { display: inline-flex; align-items: center; justify-content: center; flex: none; min-height: 30px; border: 0; border-radius: 6px; color: inherit; background: transparent; font: inherit; cursor: pointer; padding: 4px 9px; }
+.cef-browser button:hover:not(:disabled), .cef-browsers button:hover:not(:disabled) { background: var(--bg2, #3c3836); }
+.cef-browser button:disabled, .cef-browsers button:disabled { opacity: .3; cursor: default; }
+.cef-browser :is(button, input):focus-visible, .cef-browsers button:focus-visible { outline: 2px solid var(--accent, #83a598); outline-offset: 1px; }
 .cef-navigation button { width: 30px; padding: 0; font-size: 20px; line-height: 1; color: var(--fg-dim, #928374); }
 .cef-address { display: flex; align-items: center; flex: 1; min-width: 100px; height: 32px; padding: 0 3px 0 10px; border: 1px solid var(--hairline, #32302f); border-radius: 7px; background: var(--field, #1d2021); }
 .cef-address:focus-within { border-color: var(--accent, #83a598); }

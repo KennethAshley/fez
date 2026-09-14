@@ -37,7 +37,7 @@ try {
   assert.ok(harness?.openSession, 'Claude harness unavailable');
   agent = await harness.openSession(cwd, [{ name: 'computer-use-prototype', command: process.execPath,
     args: [new URL('./mcp.mjs', import.meta.url).pathname], env: [] }], { idleMs: 90000, maxMs: 180000 },
-  'You are a Fez browser test agent. Use only the computer_use MCP tool. Do not use shell, filesystem, account connectors, web search, or other tools. Operate only the currently open disposable local form. Never navigate to external websites. If browser control is revoked or denied, stop immediately and report it; never attempt another access path.');
+  'You are a Fez browser test agent. Use only the browser_use MCP tool. Do not use shell, filesystem, account connectors, web search, or other tools. Operate only the currently open disposable local form. Never navigate to external websites. If browser control is revoked or denied, stop immediately and report it; never attempt another access path.');
   evidence.completion = await agent.prompt('Observe the browser. Enter exactly "Fez live agent verified" in Draft, activate Save, then observe the result to verify it. Use only the browser tool. Report what the saved output says.' + (pointerOnly ? ' This is a POINTER test: use screenshot-coordinate clicks to focus Draft and activate Save; do not substitute Tab or Enter. Coordinates are pixels in the original returned screenshot; the tool handles Retina scaling.' : ''), undefined, update, AbortSignal.timeout(180000));
   console.log('RESULT', evidence.completion);
   const completed = await owner({ type: 'observe' });

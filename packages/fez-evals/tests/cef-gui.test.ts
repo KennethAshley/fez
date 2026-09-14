@@ -1,10 +1,109 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { activate } from '../../fez-browser/prototype-cef/gui.ts';
 import type { GuiExtensionApi } from '../../fez-extension-api/src/gui.js';
 
 let dispose: (() => void) | undefined;
-afterEach(() => { dispose?.(); dispose = undefined; vi.unstubAllGlobals(); vi.useRealTimers(); document.body.replaceChildren(); });
+// jsdom has no canvas renderer. Color resolution is covered by tauri-cef.test;
+// these tests exercise mounting, bounds and visibility through the real host API.
+beforeEach(() => {
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    fillStyle: '', fillRect: () => {},
+    getImageData: () => ({ data: new Uint8ClampedArray([29,32,33,255]) }),
+  } as CanvasRenderingContext2D);
+});
+afterEach(() => { dispose?.(); dispose = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); document.body.replaceChildren(); Reflect.deleteProperty(document, 'elementFromPoint'); });
+
+it('keeps native content visible beside the overlapping panel resize handle', async () => {
+  const { nativeSlotVisible } = await import('../../fez-desktop/src/native-visibility');
+  const slot = document.createElement('div'), handle = document.createElement('div');
+  document.body.append(handle, slot);
+  slot.getBoundingClientRect = () => new DOMRect(100, 100, 600, 500);
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: (x: number) => x < 103 ? handle : slot });
+  expect(nativeSlotVisible(slot)).toBe(true);
+});
+
+it('corrects native bounds when the extension moves during mounting', async () => {
+  const { nativeSurfaces } = await import('../../fez-desktop/src/native-surfaces');
+  const calls: { command: string; args?: Record<string, unknown> }[] = [];
+  let finish!: (value: object) => void, resize = () => {};
+  vi.stubGlobal('__TAURI_EVENT_PLUGIN_INTERNALS__', { unregisterListener: () => {} });
+  vi.stubGlobal('__TAURI_INTERNALS__', {
+    transformCallback: () => 1,
+    invoke: (command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return command === 'native_surface_open' ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(1);
+    },
+  });
+  vi.stubGlobal('ResizeObserver', class { constructor(callback: () => void) { resize = callback; } observe() { resize(); } disconnect() {} });
+  const slot = document.createElement('div'); document.body.append(slot);
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => slot });
+  let rect = new DOMRect(0, 100, 1000, 600);
+  slot.getBoundingClientRect = () => rect;
+  const mounting = nativeSurfaces.mountBrowser(slot, () => {}, 'https://example.org/');
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  expect(calls.find(call => call.command === 'native_surface_open')?.args?.initialUrl).toBe('https://example.org/');
+  rect = new DOMRect(0, 150, 800, 400);
+  finish({ id: 'native', mode: 'human', url: '', title: '', canGoBack: false, canGoForward: false });
+  const browser = await mounting;
+  try {
+    await vi.waitFor(() => expect(calls).toContainEqual({ command: 'native_surface_action', args: { id: 'native', action: { op: 'bounds', bounds: { x: 0, y: 150, width: 800, height: 400 }, visible: true } } }));
+  } finally { await browser.close(); }
+});
+
+it('hides and revokes a native browser when a host overlay covers it without resizing', async () => {
+  const { nativeSurfaces } = await import('../../fez-desktop/src/native-surfaces');
+  const actions: Record<string, unknown>[] = [];
+  vi.stubGlobal('__TAURI_EVENT_PLUGIN_INTERNALS__', { unregisterListener: () => {} });
+  vi.stubGlobal('__TAURI_INTERNALS__', {
+    transformCallback: () => 1,
+    invoke: async (command: string, args?: { action?: Record<string, unknown> }) => {
+      if (command === 'native_surface_action') actions.push(args!.action!);
+      return command === 'native_surface_open' ? { id: 'native', mode: 'human', url: '', title: '', canGoBack: false, canGoForward: false } : 1;
+    },
+  });
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const slot = document.createElement('div'); document.body.append(slot);
+  slot.getBoundingClientRect = () => new DOMRect(0, 100, 1000, 600);
+  const overlay = document.createElement('dialog');
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => overlay.isConnected ? overlay : slot });
+  const browser = await nativeSurfaces.mountBrowser(slot, () => {});
+  try {
+    document.body.append(overlay);
+    await vi.waitFor(() => expect(actions).toContainEqual({ op: 'bounds', bounds: { x: 0, y: 100, width: 1000, height: 600 }, visible: false }));
+    overlay.remove();
+    await vi.waitFor(() => expect(actions.at(-1)).toMatchObject({ op: 'bounds', visible: true }));
+  } finally { await browser.close(); }
+});
+
+it('uses the native host surface without screenshot polling or an extension-owned grant button', async () => {
+  let run!: () => unknown;
+  const calls: string[] = [];
+  const host = document.createElement('div'); document.body.append(host);
+  vi.stubGlobal('SESSION', { endpoint: 'http://127.0.0.1:1', uiToken: 'test' });
+  vi.stubGlobal('STYLES', '');
+  vi.stubGlobal('fetch', () => { throw new Error('Native browsing must not poll screenshots'); });
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  activate({
+    registerGuiCommand: (_name, fn) => { run = () => fn(''); },
+    openPanel: (_name, render) => { const result = render(host); if (typeof result === 'function') dispose = result; },
+    nativeSurfaces: {
+      available: async () => true,
+      mountBrowser: async (_slot, changed) => {
+        calls.push('mount');
+        changed({ id: 'native', mode: 'human', url: 'https://example.com/', title: 'Native page', canGoBack: false, canGoForward: false });
+        return { navigate: async () => { calls.push('navigate'); }, history: async () => {}, reload: async () => {}, close: async () => { calls.push('close'); } };
+      },
+    },
+  } as GuiExtensionApi);
+  await run();
+  await vi.waitFor(() => expect(calls).toContain('mount'));
+  expect(host.querySelector('img')).toBeNull();
+  expect(host.querySelector('[data-control]')).toBeNull();
+  expect(host.querySelector('input')?.value).toBe('https://example.com/');
+  dispose?.(); dispose = undefined;
+  await vi.waitFor(() => expect(calls).toContain('close'));
+});
 
 async function mountBrowser(reply?: (action: Record<string, unknown>) => object | Promise<object>) {
   const actions: Record<string, unknown>[] = [];

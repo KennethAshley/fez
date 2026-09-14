@@ -8,7 +8,7 @@ process.once('SIGINT', () => runner.kill('SIGINT'));
 process.once('SIGTERM', () => runner.kill('SIGTERM'));
 try {
   let ready = false;
-  for (let i = 0; i < 150; i++) {
+  for (let i = 0; i < (process.env.FEZ_CEF_NATIVE === '1' ? 1500 : 150); i++) {
     try { ready = JSON.parse(await readFile(new URL('./session.json', import.meta.url), 'utf8')).pid === runner.pid; } catch { /* The broker writes its session file when ready. */ }
     if (ready) break;
     if (runner.exitCode !== null) throw new Error('CEF startup failed');
@@ -17,5 +17,6 @@ try {
   if (!ready) throw new Error('CEF startup timed out');
   execFileSync(process.execPath, [new URL('./build-gui.mjs', import.meta.url).pathname], { stdio: 'inherit' });
   execFileSync(process.execPath, [new URL('../../../dist/cli.js', import.meta.url).pathname, 'link', new URL('.', import.meta.url).pathname, '--no-build'], { stdio: 'inherit', cwd: root });
+  execFileSync(process.execPath, [new URL('../../../dist/cli.js', import.meta.url).pathname, 'link', new URL('./computer-use/', import.meta.url).pathname, '--no-build'], { stdio: 'inherit', cwd: root });
   console.log('Restart Fez when safe, then enter /cef in a chat. Ctrl+C ends the temporary browser session.');
 } catch (error) { runner.kill('SIGTERM'); throw error; }

@@ -13,11 +13,12 @@ async function human(action) {
 }
 const client = new Client({ name: 'cef-probe-check', version: '0.0.0' });
 await client.connect(new StdioClientTransport({ command: process.execPath, args: [new URL('./mcp.mjs', import.meta.url).pathname] }));
-const tool = action => client.callTool({ name: 'computer_use', arguments: action });
+const tool = action => client.callTool({ name: 'browser_use', arguments: action });
 try {
   assert.equal((await fetch(`${session.endpoint}/control`, { method: 'POST', body: '{}' })).status, 403);
   assert.equal((await tool({ type: 'type', text: 'not allowed' })).isError, true);
   await human({ type: 'mode', value: 'agent' });
+  assert.notEqual((await tool({ type: 'observe' })).isError, true);
   for (const action of [{ type: 'key', key: 'Tab' }, { type: 'type', text: 'Shared session works' }, { type: 'key', key: 'Tab' }, { type: 'key', key: 'Enter' }]) {
     assert.notEqual((await tool(action)).isError, true);
   }

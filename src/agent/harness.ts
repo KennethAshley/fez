@@ -376,6 +376,13 @@ export function acpSessionMeta(harnessId: string, systemPrompt?: string): Record
   };
 }
 
+/** Claude reserves "computer-use" and silently drops servers with that name. */
+export function harnessMcpServer(harnessId: string, server: McpServer): McpServer {
+  return harnessId === "claude-code" && server.name === "computer-use"
+    ? { ...server, name: "fez-computer-use" }
+    : server;
+}
+
 /**
  * Drive ONE prompt lifecycle on a live ACP session: fire the prompt,
  * consume updates (idle + hard timeouts, abort racing) until "stop",
@@ -798,7 +805,7 @@ async function openAcpSession(
           : ctx.buildSession(cwd);
         // oauth-marked skills get a fresh Bearer here, at spawn — tokens
         // refresh before use, and a dead connection withholds its skill.
-        for (const server of await withFreshOAuth(mcpServers ?? [])) builder = builder.withMcpServer(server);
+        for (const server of await withFreshOAuth(mcpServers ?? [])) builder = builder.withMcpServer(harnessMcpServer(descriptor.id, server));
         const session = await builder.start();
         let pendingSystemPrompt = systemPrompt;
         // Set when a turn exits without its "stop" — the next prompt must
@@ -928,7 +935,7 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
             ? ctx.buildSession({ cwd, mcpServers: [], _meta: sessionMeta } as never)
             : ctx.buildSession(cwd);
           for (const server of await withFreshOAuth(mcpServers ?? [])) {
-            builder = builder.withMcpServer(server);
+            builder = builder.withMcpServer(harnessMcpServer(descriptor.id, server));
           }
           const session = await builder.start();
           return await drivePrompt(session, command, instruction, onProgress, onUpdate, signal, undefined, undefined, bridge.input);

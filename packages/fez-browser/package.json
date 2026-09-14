@@ -2,7 +2,7 @@
   "name": "@fezchat/browser",
   "version": "0.1.1",
   "private": true,
-  "description": "Anonymous browser tools for Fez agents through a local or remote Camofox server.",
+  "description": "Visible native browser panes and anonymous browser reading tools for Fez agents.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/types/index.d.ts",
@@ -25,18 +25,18 @@
           "CAMOFOX_ACCESS_KEY": ""
         }
       },
-      "gui": "dist/gui.json"
+      "gui": "dist/gui.js"
     },
     "permissions": [
       "network:*",
       "ui",
-      "processes"
+      "processes",
+      "commands"
     ],
-    "minFezVersion": "0.2.0",
-    "guiRuntime": "declarative"
+    "minFezVersion": "0.2.0"
   },
   "scripts": {
-    "build": "esbuild src/mcp.ts src/index.ts src/cli.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && cp src/gui.json dist/gui.json && rm -f dist/gui.js && tsc -p tsconfig.types.json",
+    "build": "esbuild src/mcp.ts src/index.ts src/cli.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --loader:.css=text --outfile=dist/gui.js && tsc -p tsconfig.types.json",
     "check": "tsc --noEmit",
     "test": "npm test --prefix ../fez-evals -- tests/browser.test.ts tests/browser-runtime.test.ts tests/browser-gui.test.ts"
   },

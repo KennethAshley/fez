@@ -637,7 +637,7 @@ fn appearance_script(appearance: &str) -> Result<String, String> {
 fn panel_entry<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<tauri::Url, String> {
     let mut entry: tauri::Url = if tauri::is_dev() {
         app.config().build.dev_url.clone().ok_or("missing development URL")?
-    } else if cfg!(any(windows, target_os = "android")) {
+    } else if cfg!(any(windows, target_os = "android", feature = "native-browser")) {
         "http://tauri.localhost".parse().unwrap()
     } else { "tauri://localhost".parse().unwrap() };
     entry.set_path("/isolated-panel.html");

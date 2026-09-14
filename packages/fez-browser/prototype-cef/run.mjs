@@ -9,16 +9,20 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const exe = process.env.FEZ_CEF_EXECUTABLE;
 if (!exe) throw new Error('Set FEZ_CEF_EXECUTABLE to the bundled cefsimple executable.');
-const profile = await mkdtemp(join(tmpdir(), 'fez-cef-prototype-'));
+const native = process.env.FEZ_CEF_NATIVE === '1';
+const profile = await mkdtemp(join(native ? '/private/tmp' : tmpdir(), 'fez-cef-prototype-'));
 const uiToken = randomBytes(24).toString('hex');
 const agentToken = randomBytes(24).toString('hex');
 let mode = 'human';
+let epoch = 0;
 let stopped = false;
 let socket;
 let child;
+let exited;
 let id = 0;
 const pending = new Map();
 const sessionPath = new URL('./session.json', import.meta.url);
+const agentSessionPath = new URL('./agent-session.json', import.meta.url);
 
 async function unusedPort() {
   const server = createServer();
@@ -40,6 +44,8 @@ async function stop() {
   if (stopped) return;
   stopped = true;
   mode = 'stopped';
+  epoch++;
+  await rm(agentSessionPath, { force: true });
   try { await cdp('Browser.close'); } catch { /* Fall back to terminating the child if CDP cannot close it. */ }
   socket?.close();
   if (child && child.exitCode === null && child.signalCode === null) {
@@ -73,6 +79,11 @@ const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) { body += chunk; if (body.length > 16384) throw new Error('Request too large'); }
     const action = JSON.parse(body);
+    const observedEpoch = epoch;
+    const input = (method, params) => {
+      if (actor === 'agent' && (mode !== 'agent' || action.epoch !== epoch)) throw new Error('Control changed; observe the granted surface again');
+      return cdp(method, params);
+    };
     let result;
     if (action.type === 'stop' && actor === 'human') await stop();
     else if (stopped) throw new Error('Session stopped');
@@ -82,12 +93,15 @@ const server = createServer(async (req, res) => {
       const current = (await cdp('Page.getLayoutMetrics')).cssLayoutViewport;
       if (current.clientWidth !== width || current.clientHeight !== height) {
         mode = 'human'; // A model's previous screenshot no longer matches after a layout change.
+        epoch++;
         await cdp('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 0, mobile: false });
       }
     }
     else if (action.type === 'mode' && actor === 'human') {
       if (!['human', 'agent'].includes(action.value)) throw new Error('Invalid mode');
+      if (native && action.value === 'agent') throw new Error('Native embedding is an unfinished rendering probe; agent handoff is not enabled');
       mode = action.value;
+      epoch++;
       await cdp('Page.stopLoading');
     } else if (action.type === 'observe') {
       if (actor === 'agent' && mode !== 'agent') throw new Error('Owner has not granted agent control');
@@ -113,55 +127,60 @@ const server = createServer(async (req, res) => {
         case 'navigate': {
           const url = new URL(action.url);
           if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Only HTTP(S) navigation is supported');
-          result = await cdp('Page.navigate', { url: url.href }); break;
+          result = await input('Page.navigate', { url: url.href }); break;
         }
-        case 'reload': await cdp('Page.reload'); break;
+        case 'reload': await input('Page.reload'); break;
         case 'history': {
           if (![-1, 1].includes(action.delta)) throw new Error('Invalid history direction');
-          const history = await cdp('Page.getNavigationHistory');
+          const history = await input('Page.getNavigationHistory');
           const entry = history.entries[history.currentIndex + action.delta];
-          if (entry) await cdp('Page.navigateToHistoryEntry', { entryId: entry.id });
+          if (entry) await input('Page.navigateToHistoryEntry', { entryId: entry.id });
           break;
         }
         case 'wheel': {
           const { x, y, deltaX, deltaY } = action;
           if (![x, y].every(n => Number.isFinite(n) && n >= 0 && n <= 4096) || ![deltaX, deltaY].every(n => Number.isFinite(n) && Math.abs(n) <= 4096)) throw new Error('Invalid scroll');
-          await cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX, deltaY }); break;
+          await input('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX, deltaY }); break;
         }
         case 'click': {
           const { x, y } = action;
           if (![x, y].every(n => Number.isFinite(n) && n >= 0 && n <= 4096)) throw new Error('Invalid coordinates');
-          await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
-          await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }); break;
+          await input('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+          await input('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }); break;
         }
         case 'type':
           if (typeof action.text !== 'string' || action.text.length > 4096) throw new Error('Invalid text');
-          await cdp('Input.insertText', { text: action.text }); break;
+          await input('Input.insertText', { text: action.text }); break;
         case 'key': {
           const keys = { Enter: 13, Tab: 9, Backspace: 8, Escape: 27, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 };
           if (!Object.hasOwn(keys, action.key)) throw new Error('Unsupported key');
-          await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: action.key, windowsVirtualKeyCode: keys[action.key], ...(action.key === 'Enter' ? { text: '\r' } : {}) });
-          await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: action.key, windowsVirtualKeyCode: keys[action.key] }); break;
+          await input('Input.dispatchKeyEvent', { type: 'keyDown', key: action.key, windowsVirtualKeyCode: keys[action.key], ...(action.key === 'Enter' ? { text: '\r' } : {}) });
+          await input('Input.dispatchKeyEvent', { type: 'keyUp', key: action.key, windowsVirtualKeyCode: keys[action.key] }); break;
         }
         default: throw new Error('Unsupported action');
       }
     }
-    if (actor === 'agent' && mode !== 'agent') throw new Error('Owner revoked agent control');
-    res.end(JSON.stringify({ mode, ...result }));
+    if (actor === 'agent' && (mode !== 'agent' || observedEpoch !== epoch)) throw new Error('Owner revoked agent control');
+    res.end(JSON.stringify({ mode, epoch, ...result }));
   } catch (error) { res.writeHead(400).end(JSON.stringify({ error: error.message, mode })); }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const endpoint = `http://127.0.0.1:${server.address().port}`;
 const port = await unusedPort();
-child = spawn(exe, ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, `--url=${endpoint}/fixture`], { stdio: 'ignore' });
-const exited = new Promise(resolve => child.once('exit', resolve));
-child.on('error', error => console.error(error.message));
+if (native) {
+  await writeFile(new URL('./native-bootstrap.json', import.meta.url), JSON.stringify({ executable: exe, profile, url: `${endpoint}/fixture`, port, socket: join(profile, 'native.sock') }), { mode: 0o600 });
+  console.log('Native broker waiting. Open the Fez build compiled with cef-prototype.');
+} else {
+  child = spawn(exe, ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, `--url=${endpoint}/fixture`], { stdio: 'ignore' });
+  exited = new Promise(resolve => child.once('exit', resolve));
+  child.on('error', error => console.error(error.message));
+}
 try {
   let target;
-  for (let attempt = 0; attempt < 100; attempt++) {
+  for (let attempt = 0; attempt < (native ? 1500 : 100); attempt++) {
     try { target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(item => item.type === 'page'); } catch { /* CEF may not have started its debug server yet. */ }
     if (target) break;
-    if (child.exitCode !== null) throw new Error(`CEF exited: ${child.exitCode}`);
+    if (child && child.exitCode !== null) throw new Error(`CEF exited: ${child.exitCode}`);
     await delay(200);
   }
   if (!target) throw new Error('CEF did not expose a page over CDP');
@@ -175,7 +194,8 @@ try {
     if (message.error) call.reject(new Error(message.error.message)); else call.resolve(message.result);
   });
   await cdp('Page.enable');
-  await writeFile(sessionPath, JSON.stringify({ endpoint, uiToken, agentToken, profile, pid: process.pid }), { mode: 0o600 });
+  await writeFile(agentSessionPath, JSON.stringify({ version: 1, id: randomBytes(16).toString('hex'), kind: 'browser', label: 'Fez shared browser', endpoint, agentToken }), { mode: 0o600 });
+  await writeFile(sessionPath, JSON.stringify({ endpoint, uiToken, agentToken, profile, pid: process.pid, native }), { mode: 0o600 });
   console.log(`CEF ready. Private session file: ${sessionPath.pathname}`);
 } catch (error) { await stop(); server.close(); throw error; }
 async function shutdown() { await stop(); await rm(sessionPath, { force: true }); server.close(); }
