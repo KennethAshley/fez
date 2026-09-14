@@ -161,7 +161,7 @@ it("renders process actions from data and surfaces package-owned background fail
   expect(document.querySelector("style[data-fez-ext='probe']")).toBeNull();
 });
 
-it("loads both shipped JSON GUI parts using their actual manifest runtime declarations", async () => {
+it("loads both shipped GUI parts using their actual manifest runtime declarations", async () => {
   native.grants = {};
   native.files = ["browser", "elevenlabs"].map(name => {
     const directory = resolve(__dirname, `../../fez-${name}`);

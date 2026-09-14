@@ -2,7 +2,7 @@
 
 Branch: `codex/cef-browser-prototype`. Do not publish this package or replace Camofox yet.
 
-This probes whether real Chromium can be shared between a human-facing Fez side pane and an MCP computer-use tool. It uses the existing `openPanel`/slash-command extension seams, with an optional generic `workspace` layout hint for a wide, resizable split. No new npm dependencies.
+This probes whether real Chromium can be shared between a human-facing Fez side pane and an MCP browser-use tool. It uses the existing `openPanel`/slash-command extension seams, with an optional generic `workspace` layout hint for a wide, resizable split. No new npm dependencies.
 
 ## What this establishes
 
@@ -38,7 +38,13 @@ On the updated desktop host, the browser takes a wide split beside chat. Drag th
 
 September 13 layout verification: the updated desktop build displayed the live Bazaar beside chat, with working divider resizing, wheel scrolling, and Back. Direct mouse input saved the local form in the larger viewport. A new live Claude run at the resized dimensions clicked Draft at (128,135), saved `Fez live agent verified` with a click at (199,135), and stopped after takeover. GUI regressions cover fitted-image coordinates, capture failures, and stale frames during queued resizing; the native check also covers viewport dimensions, scrolling, history, and reload.
 
-The MCP server is `browser-cef-prototype`; its tool is `computer_use`. No existing agent is automatically given it. Testing is limited to the disposable fixture, including the live-model check below. The first pass combines the development GUI and tool registration in one private package; production Browser and Computer Use extensions remain a separate integration task.
+The browser GUI and agent tool now link as separate development extensions.
+The MCP server is `computer-use-prototype`; its tool is `browser_use`, implemented
+in `packages/fez-browser-use`. No existing agent is automatically given it.
+The owner grants the same browser through a private `agent-session.json` descriptor
+that excludes the owner token. Previously linked `browser-cef-prototype` MCP
+definitions continue through a compatibility shim. Both paths use one implementation.
+Testing is limited to the disposable fixture, including the live-model check below.
 
 ### Live-model check (September 13)
 
@@ -77,4 +83,65 @@ node packages/fez-browser/prototype-cef/smoke.mjs
 - The screenshot view supports wheel scrolling and plain-text paste, but does not expose a full accessible page tree, browser context menus, downloads, popups, copy/selection, or complete keyboard shortcuts. Do not ship it as a general-purpose browser.
 - Production needs native embedding or an offscreen renderer, reliable revocation when the host dies, agent-specific grants, frame/input synchronization, browser update/signing packaging, and complete input/accessibility coverage. The 1024px agent image trades detail for a stable coordinate system; tiny targets will need cropped views or structured element access.
 
-Generated `session.json` and `gui.js` contain local capabilities and are gitignored. Never upload them. Camofox source and configuration are unchanged.
+Generated `session.json`, `agent-session.json` and `gui.js` contain local capabilities
+and are gitignored, as is the generated `computer-use/` development package.
+Never upload them. Camofox source and configuration are unchanged.
+
+### Native embedding experiment (unfinished)
+
+The optional desktop Cargo feature `cef-prototype` compiles `native.rs` from this
+extension into the Tauri shell. It registers CEF's macOS application protocols,
+loads Chromium from the Fez app bundle, and attaches an NSView child to the main
+Fez window. It does not replace the working JPEG workspace above.
+
+Local probe results, 2026-09-13:
+- An offline HTML page renders inside the existing Fez window; no separate CEF
+  top-level window is created. The temporary view uses fixed 600×600 bounds.
+- The original HTTP stall was a Chromium worker waiting on macOS Keychain.
+  The isolated regression now loads the HTTP fixture and captures its rendered
+  page using upstream CEF's test-only `--use-mock-keychain` flag. Removing the
+  persistent cache setting did not resolve the wait. Real signed-app Keychain
+  setup remains unverified; the test flag is not a release storage policy.
+- Pumping CEF from `AppHandle::run_on_main_thread` deadlocked by re-entering Tao's
+  event-handler mutex. A native NSTimer avoids that deadlock.
+- This probe loaded sandboxed helpers successfully only after copying Chromium's
+  framework/helpers into the host app's `Contents/Frameworks`. Referring to the
+  separate sample bundle caused load errors. Optional runtime distribution is a
+  separate packaging question; this result does not rule it out.
+- Native handoff is disabled: native input ownership, pane bounds/lifecycle,
+  popup handling, and clean browser-only shutdown are not yet connected.
+
+To reproduce on the development checkout, start `start.mjs` with
+`FEZ_CEF_NATIVE=1` and the existing `FEZ_CEF_EXECUTABLE`. Build the desktop with
+`--features cef-prototype`, copy the sample bundle's `Contents/Frameworks` into
+the debug Fez app's `Contents`, then launch that debug app. The broker writes a
+private, ignored `native-bootstrap.json`; do not use this mode for normal browsing.
+The regular build (without the feature) and regular `start.mjs` remain the usable
+preview. No native experiment has been shipped.
+
+`native-probe.rs` is an identity-free Tauri test app using the same `native.rs`.
+It creates only a blank host window and the CEF child: no Fez identity, extensions,
+local relay or agents. Build with `cargo build --example cef-native-probe --features
+cef-prototype` in `packages/fez-desktop/src-tauri` (using the existing `CEF_PATH`).
+Put the example executable in a separate `.app/Contents/MacOS`, with the sample's
+`Contents/Frameworks` and an Info.plist naming `cef-native-probe` as its executable.
+Ad-hoc sign that disposable app with `codesign --force --sign - /path/to/Probe.app`.
+When rebuilding, replace its executable atomically and sign again; overwriting a
+previously signed executable in place caused macOS to kill it before startup.
+Then run from the repository root:
+
+```sh
+FEZ_CEF_NATIVE_PROBE='/path/to/Probe.app/Contents/MacOS/cef-native-probe' \
+  npm test --prefix packages/fez-evals -- tests/cef-native.test.ts
+```
+
+This regression verifies the `Native HTTP works` title and a PNG capture. It
+uses a disposable profile and mock Keychain, never the user's browser credentials.
+On failure it reports the page state, fixture request count and current CEF log
+before cleaning up. Waiting explicitly for `on_context_initialized` and adding
+immediate scheduled-work callbacks did not resolve the original stall; both
+speculative changes were removed. Tauri also has an experimental `feat/cef` runtime with a complete
+external pump (`crates/tauri-runtime-cef/src/external_message_pump`), which is a
+reference for further comparison rather than a dependency adopted by this probe.
+The ordinary eval gate skips this opt-in test. Neither the ordinary suite nor
+this rendering check establishes native takeover, lifecycle or release readiness.

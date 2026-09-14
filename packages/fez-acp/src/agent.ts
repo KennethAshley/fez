@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { ToolContext } from './tool-context.js';
 import {
   RelayConnection,
   CapabilityClient,
@@ -71,7 +72,7 @@ import fs from "node:fs";
 import { execSync, execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { addressees, isAddressedTo } from "./addressing.js";
+import { addressees, isAddressedTo, withoutRepeatSummons } from "./addressing.js";
 import { workHistory } from "./work-history.js";
 import { DurableWork, workDirectory } from "../../../src/shared/durable-work.js";
 import { completeWork, workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
@@ -80,7 +81,7 @@ import { runMeteredHire } from "./hire-usage.js";
 import { deliverHire } from "./hire-delivery.js";
 import { memoryPromptParts, memoryStateFromHeads, type CoreMemoryState } from "./memory-prompt.js";
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
-import { fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
+import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { finalizeEvent } from "nostr-tools/pure";
@@ -312,12 +313,9 @@ async function main() {
     persona.skillSettings
   );
   const skillsSection = skillsPromptSection(attachedSkills);
-  const configuredMcpServers = resolved
-      // Copies, not registry objects — the command rewrite below must not
-      // reach back into the shared registry.
+  const configuredMcpServers = bindMcpPersona(resolved
       .map((r) => findMcpServer(r.key))
-      .filter((s): s is NonNullable<typeof s> => s !== undefined)
-      .map((s) => ({ ...s }));
+      .filter((s): s is NonNullable<typeof s> => s !== undefined), personaId);
   // A readiness check does not refresh credentials or contact tool services.
   const mcpServers = evaluating ? configuredMcpServers : await withFreshOAuth(configuredMcpServers);
 
@@ -732,6 +730,8 @@ async function main() {
     } catch { /* already gone */ }
   };
   process.on("exit", releasePidfile);
+  const toolContext = new ToolContext(os.homedir(), personaId, mcpServers.map(server => server.name));
+  process.on("exit", () => toolContext.close());
 
   const agentKeyHex = loadServiceKey(personaId);
   const client = new CapabilityClient({ relay: relayUrls, privateKey: agentKeyHex });
@@ -1423,7 +1423,16 @@ async function main() {
     onProgress: ((text: string) => void) | undefined,
     onUpdate: (update: HarnessUpdate) => void,
     signal?: AbortSignal,
-    options: { retry?: boolean; allowEmpty?: boolean } = {}
+    options: { retry?: boolean; allowEmpty?: boolean; turn?: { id: string; order: string[] } } = {}
+  ): Promise<string> {
+    const peers = options.turn?.order.filter(name => name !== personaId) ?? [];
+    const prompt = peers.length ? async (fresh: boolean) => `${await buildPrompt(fresh)}\n\nThis request was also delivered to ${peers.map(name => '@' + name).join(', ')}. Complete only your own instruction and finish your turn. Do not send duplicate summons or reassign their existing steps.` : buildPrompt;
+    return toolContext.run(options.turn, () => promptSessionWork(scope, prompt, onProgress, onUpdate, signal, options));
+  }
+  async function promptSessionWork(
+    scope: string, buildPrompt: (fresh: boolean) => Promise<string>,
+    onProgress: ((text: string) => void) | undefined, onUpdate: (update: HarnessUpdate) => void,
+    signal?: AbortSignal, options: { retry?: boolean; allowEmpty?: boolean } = {}
   ): Promise<string> {
     // Turns are text now. Images reach the model only when it calls
     // fez_view_attachment, so nothing rides along with the prompt — see
@@ -1674,6 +1683,7 @@ async function main() {
   const steerMessages: { event: ChEvent; doc?: DocTurn }[] = [];
 
   closeAgent = async () => {
+    toolContext.close();
     cancelRequested = true;
     turnController?.abort();
     clearInterval(recoveryTimer);
@@ -2116,7 +2126,8 @@ async function main() {
           withNotice(buildPrompt, attachmentPrompt(event)),
           publishDraft,
           onUpdate,
-          turnController.signal
+          turnController.signal,
+          { turn: { id: steering.at(-1)?.id ?? event.id, order: [...new Set([...addressees(steering.at(-1)?.content ?? event.content), personaId])] } }
         );
         turnAcceptsSteering = false;
         if (turnController.signal.aborted) throw Object.assign(new Error("turn aborted"), { name: "AbortError" });
@@ -2137,7 +2148,7 @@ async function main() {
         // Never publish an empty message, whatever path produced it.
         if (!rawReply.trim()) throw new Error("harness returned an empty reply");
         const { text: rawText, artifacts } = extractArtifacts(rawReply);
-        const reply = capReply(rawText);
+        const reply = capReply(withoutRepeatSummons(rawText, steering.at(-1)?.content ?? event.content, personaId));
 
         // Whoever the reply names is tagged, on top of whoever triggered
         // it — otherwise an agent handing work to you notifies nobody.
@@ -2423,7 +2434,8 @@ async function main() {
         withNotice(buildPrompt, attachmentPrompt({ content: dm.text, tags: [] })),
         undefined,
         onUpdate,
-        turnController.signal
+        turnController.signal,
+        { turn: { id: dm.id, order: [personaId] } }
       );
       if (!reply.trim()) throw new Error("harness returned an empty reply");
 

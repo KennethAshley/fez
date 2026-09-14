@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isAddressedTo, type AddressableEvent } from "../../fez-acp/src/addressing.js";
+import { isAddressedTo, withoutRepeatSummons, type AddressableEvent } from "../../fez-acp/src/addressing.js";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 
 /**
@@ -87,6 +87,18 @@ describe("p-tag fallback is owner-only (the perpetual-motion bug)", () => {
 });
 
 describe("segment-start fan-out (comms battery: one message, many tasks)", () => {
+  test('an already-addressed peer is not summoned again by the first agent’s reply', () => {
+    const source = '@quill click Learn more, then @drift click Domains';
+    const reply = withoutRepeatSummons('Opened it. @drift your turn. Ask @scout if needed.', source, 'quill');
+    expect(reply).toBe('Opened it. drift your turn. Ask @scout if needed.');
+    expect(isAddressedTo(msg(reply, 'sibling'), 'drift', ME, OWNER)).toBe(false);
+    expect(withoutRepeatSummons('@drift review this', '@quill write it, if good ask @drift', 'quill')).toBe('@drift review this');
+    expect(withoutRepeatSummons('Code: `@drift`', source, 'quill')).toBe('Code: `@drift`');
+  });
+  test("an unconditional then starts the next agent's instruction", () => {
+    expect(isAddressedTo(msg('@quill click Domains, then @drift inspect the page'), 'drift', ME, OWNER)).toBe(true);
+    expect(isAddressedTo(msg('@quill check it, if good then @drift publish'), 'drift', ME, OWNER)).toBe(false);
+  });
   const FAN = "T1: @researcher what year? @reviewer is x == NaN ever true? @pilot compute 17 * 23.";
   test("every segment-opening mention is an addressee", () => {
     expect(isAddressedTo(msg(FAN), "researcher", ME, OWNER)).toBe(true);

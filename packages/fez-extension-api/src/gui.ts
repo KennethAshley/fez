@@ -115,7 +115,25 @@ export type IsolatedPageApi = Omit<IsolatedPanelApi, "registerSettingsPanel" | "
   registerPageView(name: string, match: (content: string) => boolean | "default", render: (props: PageViewProps) => El): void;
 };
 
+export interface NativeSurfaceState {
+  id: string; label?: string; mode: 'human' | 'agent' | 'stopped'; url: string; title: string;
+  canGoBack: boolean; canGoForward: boolean;
+}
+export interface NativeBrowser {
+  navigate(url: string): Promise<void>;
+  history(delta: -1 | 1): Promise<void>;
+  reload(): Promise<void>;
+  close(): Promise<void>;
+}
+export interface NativeSurfaceApi {
+  available(): Promise<boolean>;
+  /** Native handoff controls belong to the host; extensions cannot grant control. */
+  mountBrowser(slot: HTMLElement, changed: (state: NativeSurfaceState) => void, initialUrl?: string): Promise<NativeBrowser>;
+}
 export interface GuiExtensionApi {
+  /** Render validated declarative settings with this extension's permissions and namespace. */
+  renderSettings?: (json: string) => El;
+  nativeSurfaces?: NativeSurfaceApi;
   /** Available for legacy element-returning parts (`() => El`). Mount-model
    *  parts bundle their own React and don't need this. */
   React: {

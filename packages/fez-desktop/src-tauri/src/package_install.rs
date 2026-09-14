@@ -246,6 +246,21 @@ pub(crate) fn has_installable_content(pkg: &serde_json::Value, tar_bytes: &[u8])
     has_code_or_skill_part || has_bin || has_persona || has_skills
 }
 
+/// Resolve a full package identity across legacy install IDs so seeding and
+/// explicit installation agree on which existing data/attachments belong to it.
+pub(crate) fn installed_alias(name: &str, base: &str, home: &Path) -> Option<String> {
+    for entry in std::fs::read_dir(home.join("packages")).ok()?.flatten() {
+        let id = entry.file_name().to_string_lossy().to_string();
+        if id == base { continue; }
+        // CLI install IDs can include dots; the scanned entry bounds the path.
+        let Some(installed) = std::fs::read(entry.path().join("package.json")).ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok()) else { continue };
+        if installed.pointer("/fez/reconstructed").and_then(|v| v.as_bool()) == Some(true) { continue; }
+        if installed.get("name").and_then(|v| v.as_str()) == Some(name) { return Some(id); }
+    }
+    None
+}
+
 /// Place an already-fetched, already-gated npm tarball into
 /// `~/.fez/packages/<base>/` and index it into the flat dirs. Does NOT
 /// touch settings.json — the caller feeds the returned `InstallOutcome`
@@ -268,17 +283,9 @@ pub(crate) fn install_from_tarball(
     }
     // Full manifest identity, never a stripped prefix: two IDs would split
     // this package's data, grants and agent attachments.
-    if let (Some(manifest_name), Ok(entries)) = (pkg.get("name").and_then(|v| v.as_str()), std::fs::read_dir(home.join("packages"))) {
-        for entry in entries.flatten() {
-            let id = entry.file_name().to_string_lossy().to_string();
-            if id == base { continue; }
-            // CLI install IDs can include dots; the scanned entry already bounds the path.
-            let Some(installed) = std::fs::read(entry.path().join("package.json")).ok()
-                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok()) else { continue };
-            if installed.pointer("/fez/reconstructed").and_then(|v| v.as_bool()) == Some(true) { continue; }
-            if installed.get("name").and_then(|v| v.as_str()) == Some(manifest_name) {
-                return Err(format!("{manifest_name} is already installed as {id}; consolidate its data and agent attachments under {base} before installing."));
-            }
+    if let Some(manifest_name) = pkg.get("name").and_then(|v| v.as_str()) {
+        if let Some(id) = installed_alias(manifest_name, &base, home) {
+            return Err(format!("{manifest_name} is already installed as {id}; consolidate its data and agent attachments under {base} before installing."));
         }
     }
     let skill_payload = if let Some(config) = pkg.pointer("/fez/skills") {

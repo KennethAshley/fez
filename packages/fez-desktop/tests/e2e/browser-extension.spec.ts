@@ -28,8 +28,8 @@ test("install Browser, finish GUI setup, give it to Quill, and test again after 
   let setup: Promise<void> | undefined;
   const initialPersona = "---\nharness: pi\nprovider: local\nmodel: test\nmcpServers: [wallet, mining]\n---\nQuill writes clearly.\n";
   let persona = initialPersona;
-  const gui = await fs.readFile(new URL("../../../fez-browser/dist/gui.json", import.meta.url), "utf8");
-  const grants = ["network:*", "ui", "processes"];
+  const gui = await fs.readFile(new URL("../../../fez-browser/dist/gui.js", import.meta.url), "utf8");
+  const grants = ["network:*", "ui", "processes", "commands"];
   const commands = ["install_package", "read_skills", "list_local_extensions", "read_extension_versions", "read_extension_grants", "list_gui_extensions", "run_extension_bin", "spawn_extension_agent", "agent_alive", "read_persona", "update_persona"];
   try {
     await installMockBridge(page, {
@@ -47,7 +47,7 @@ test("install Browser, finish GUI setup, give it to Quill, and test again after 
       if (cmd === "list_local_extensions") return installed ? [["browser", ["gui"]]] : [];
       if (cmd === "read_extension_versions") return JSON.stringify(installed ? { browser: "0.1.0" } : {});
       if (cmd === "read_extension_grants") return JSON.stringify(installed ? { browser: grants } : {});
-      if (cmd === "list_gui_extensions") return installed ? [["browser", gui, "", null, "declarative"]] : [];
+      if (cmd === "list_gui_extensions") return installed ? [["browser", gui, "", null, null]] : [];
       if (cmd === "agent_alive") return args.bin === "fez-browser" && running;
       if (cmd === "read_persona") return persona;
       if (cmd === "update_persona") { expect(args.name).toBe("quill"); persona = String(args.content); return null; }
@@ -75,6 +75,8 @@ test("install Browser, finish GUI setup, give it to Quill, and test again after 
     await page.locator(".self-menu").getByRole("button", { name: /extensions/ }).click();
     const card = page.locator(".gallery-card").filter({ hasText: "Let agents open websites" });
     await card.getByRole("button", { name: /install/i }).click();
+    const consent = page.getByRole("dialog", { name: "Install Browser" });
+    await expect(consent.getByText("add slash commands", { exact: false })).toBeVisible();
     await page.getByRole("button", { name: "install & grant", exact: true }).click();
     await expect.poll(() => installed).toBe(true);
     await page.locator(".self-wrap > button").click();
@@ -99,6 +101,13 @@ test("install Browser, finish GUI setup, give it to Quill, and test again after 
     await page.getByRole("button", { name: "Test browser", exact: true }).click();
     await expect(page.getByText("Browser test passed.", { exact: false })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath("browser-settings.png"), fullPage: true });
+    await page.getByRole("button", { name: "← Back to Fez", exact: true }).click();
+    await page.getByRole("button", { name: "# general", exact: true }).click();
+    const composer = page.locator("main .composer-row textarea");
+    await composer.fill("/browser example.org");
+    await page.getByTitle("send (Enter)").click();
+    await expect(page.locator(".cmd-notice")).toContainText("native browser enabled");
+    await expect(page.locator('aside[aria-label="Browser"]')).toHaveCount(0);
   } finally {
     await setup;
     relay.kill();

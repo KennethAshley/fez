@@ -26,6 +26,19 @@ export interface McpLaunch {
   args: string[];
 }
 
+/** Bind host-owned process identity to stdio tools without mutating the registry. */
+export function bindMcpPersona<T extends object>(servers: readonly T[], personaId: string): T[] {
+  return servers.map(value => {
+    const server = value as T & { command?: unknown; env?: unknown };
+    if (typeof server.command !== "string") return { ...value };
+    const env = Array.isArray(server.env)
+      ? server.env.filter((entry): entry is { name: string; value: string } =>
+          typeof entry === "object" && entry !== null && (entry as { name?: unknown }).name !== "FEZ_AGENT_PERSONA")
+      : [];
+    return { ...value, env: [...env, { name: "FEZ_AGENT_PERSONA", value: personaId }] };
+  });
+}
+
 export function fezMcpLaunch(opts: {
   importMetaUrl: string;
   execPath: string;

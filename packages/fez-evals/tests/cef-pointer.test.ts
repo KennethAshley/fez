@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, readdir, copyFile, readFile, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, copyFile, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -16,6 +16,8 @@ it.skipIf(!process.env.FEZ_CEF_EXECUTABLE)('maps a bounded agent screenshot to r
   for (const file of await readdir(source)) {
     if (file.endsWith('.mjs')) await copyFile(new URL(file, source), join(dir, file));
   }
+  await mkdir(join(dir, 'computer-use'));
+  await copyFile(new URL('../../fez-browser-use/dist/mcp.js', import.meta.url), join(dir, 'computer-use/mcp.js'));
   await symlink(new URL('../../../node_modules', import.meta.url), join(dir, 'node_modules'));
   const runner = spawn(process.execPath, [join(dir, 'run.mjs')], { stdio: 'ignore' });
   const exited = once(runner, 'exit');
@@ -62,9 +64,14 @@ it.skipIf(!process.env.FEZ_CEF_EXECUTABLE)('maps a bounded agent screenshot to r
       const center = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
       return { width: innerWidth, height: innerHeight, input: center('input'), save: center('button') };
     })()`) as { width: number; height: number; input: { x: number; y: number }; save: { x: number; y: number } };
-    await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(dir, 'mcp.mjs')] }));
-    const tool = (action: Record<string, unknown>) => client.callTool({ name: 'computer_use', arguments: action });
-    await owner({ type: 'mode', value: 'agent' });
+    const descriptor = JSON.parse(await readFile(join(dir, 'agent-session.json'), 'utf8'));
+    expect(descriptor).not.toHaveProperty('uiToken');
+    await client.connect(new StdioClientTransport({ command: process.execPath,
+      args: [join(dir, 'mcp.mjs')],
+      env: { FEZ_BROWSER_USE_SESSION: join(dir, 'agent-session.json') },
+    }));
+    const tool = (action: Record<string, unknown>) => client.callTool({ name: 'browser_use', arguments: action });
+    const grant = await owner({ type: 'mode', value: 'agent' });
     expect((await tool({ type: 'click', x: 1, y: 1 })).isError).toBe(true);
     const observed = await tool({ type: 'observe' });
     const image = (observed.content as Array<{ type: string; data?: string }>).find(c => c.type === 'image');
@@ -81,6 +88,7 @@ it.skipIf(!process.env.FEZ_CEF_EXECUTABLE)('maps a bounded agent screenshot to r
     expect(JSON.parse(text!.text!).screenshot).toEqual({ width, height });
     expect((await tool({ type: 'click', x: width, y: 1 })).isError).toBe(true);
     expect((await tool({ type: 'click', x: 1, y: -1 })).isError).toBe(true);
+    await tool({ type: 'observe' });
     for (const point of [geometry.input, geometry.save]) {
       expect((await tool({ type: 'click', x: point.x * width / geometry.width, y: point.y * height / geometry.height })).isError).not.toBe(true);
       if (point === geometry.input) await tool({ type: 'type', text: 'Pointer saved this' });
@@ -89,10 +97,20 @@ it.skipIf(!process.env.FEZ_CEF_EXECUTABLE)('maps a bounded agent screenshot to r
     // Resizing invalidates the model's screenshot, so it returns ownership to the human.
     expect((await owner({ type: 'resize', width: 900, height: 650 })).mode).toBe('human');
     expect((await tool({ type: 'click', x: 1, y: 1 })).isError).toBe(true);
+    // A new grant does not make a previous observation/input request valid again.
+    await owner({ type: 'mode', value: 'agent' });
+    const stale = await fetch(`${endpoint}/control`, { method: 'POST', headers: { Authorization: `Bearer ${descriptor.agentToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'type', text: 'stale must not type', epoch: grant.epoch }),
+    });
+    expect(stale.status).toBe(400);
+    await owner({ type: 'mode', value: 'human' });
     await evaluate("document.body.style.height = '3000px'");
-    await owner({ type: 'wheel', x: 300, y: 300, deltaX: 0, deltaY: 400 });
+    await owner({ type: 'mode', value: 'agent' });
+    await tool({ type: 'observe' });
+    expect((await tool({ type: 'scroll', x: 100, y: 100, deltaY: 400 })).isError).not.toBe(true);
     for (let attempt = 0; attempt < 20 && Number(await evaluate('scrollY')) === 0; attempt++) await delay(50);
     expect(Number(await evaluate('scrollY'))).toBeGreaterThan(0);
+    await owner({ type: 'mode', value: 'human' });
     await owner({ type: 'navigate', url: `${endpoint}/fixture#second` });
     expect((await owner({ type: 'observe' })).navigation.canGoBack).toBe(true);
     await owner({ type: 'history', delta: -1 });

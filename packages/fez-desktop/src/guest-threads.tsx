@@ -609,7 +609,7 @@ function GuestConversation({ wire, selfPk, guest, client }: GuestThreadProps) {
   }, []);
 
   return (
-    <main className="main">
+    <main className="main chat-main guest-main">
       {/* The stall's awning — the same ember-and-bone stripes the bazaar
           scene paints, telling you where this conversation lives. */}
       <div className="guest-awning" aria-hidden />

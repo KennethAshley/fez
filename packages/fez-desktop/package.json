@@ -1,16 +1,17 @@
 {
   "name": "@fezchat/desktop",
   "private": true,
-  "version": "0.4.39",
+  "version": "0.4.40",
   "type": "module",
   "scripts": {
     "dev": "npm run build:css && vite",
     "build": "npm run build:css && tsc && vite build",
     "build:css": "tailwindcss -c tailwind.config.js -o src/fez-utilities.css --minify",
     "prepare-pi-agent": "node scripts/prepare-pi-agent.mjs",
+    "prepare-bundled-extensions": "node scripts/prepare-bundled-extensions.mjs",
     "check": "tsc --noEmit",
     "preview": "vite preview",
-    "tauri": "tauri",
+    "tauri": "node scripts/tauri-native.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {

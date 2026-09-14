@@ -18,6 +18,7 @@ PKG="$(dirname "$HERE")"
 # VERSION=none agent-less build without a single error.
 export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$PATH"
 export REQUIRE_PI_AGENT=1
+export CARGO_TARGET_DIR="$PKG/src-tauri/target"
 
 # Credentials: environment first (CI provides secrets), keychain second
 # (Ken's machine, service fez-notary from setup-signing.sh).
@@ -29,7 +30,14 @@ export APPLE_TEAM_ID="${APPLE_TEAM_ID:-$(kc team-id)}"
 # Updater artifact signing (minisign).
 export TAURI_SIGNING_PRIVATE_KEY="${TAURI_SIGNING_PRIVATE_KEY:-$(kc updater-key)}"
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
-[[ -n "$APPLE_SIGNING_IDENTITY" ]] || { echo "✗ no signing identity (env or keychain)"; exit 1; }
+missing=()
+for name in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY; do
+  [[ -n "${!name}" ]] || missing+=("$name")
+done
+if (( ${#missing[@]} )); then
+  echo "Missing release credentials: ${missing[*]} (environment or fez-notary keychain)" >&2
+  exit 1
+fi
 echo "▸ signing as: $APPLE_SIGNING_IDENTITY"
 
 echo "▸ preparing bundled agent (bun: $(bun --version))"
@@ -45,6 +53,8 @@ for bin in "$PKG"/src-tauri/pi-agent/*; do
   echo "  ✓ $(basename "$bin")"
 done
 
+# The wrapper prepares again; FORCE must not replace binaries after signing.
+unset FORCE FORCE_ALL
 echo "▸ tauri build (sign → notarize → staple; notarization takes minutes)"
 cd "$PKG"
 npm run tauri build

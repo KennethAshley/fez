@@ -86,12 +86,16 @@ describe("managed browser lifecycle", () => {
       parent.kill("SIGKILL");
       await exit;
       let stopped = false;
+      let remaining: string[] = [];
       for (let i = 0; i < 40; i++) {
-        try { await fetch(url + "/health"); } catch { stopped = true; break; }
+        try { await fetch(url + "/health"); } catch { stopped = true; }
+        // The socket can close before the subprocess's exit hook removes its profile.
+        remaining = await fs.readdir(path.join(root, "sessions"));
+        if (stopped && remaining.length === 0) break;
         await delay(50);
       }
       expect(stopped).toBe(true);
-      expect(await fs.readdir(path.join(root, "sessions"))).toEqual([]);
+      expect(remaining).toEqual([]);
     } finally { parent.kill("SIGKILL"); await exit; }
   });
 });

@@ -1,5 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { fezMcpLaunch, resolveNodeCommand } from "../../fez-acp/src/mcp-path.js";
+import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "../../fez-acp/src/mcp-path.js";
+
+describe("bindMcpPersona", () => {
+  it("replaces a registry-authored persona on cloned stdio configs", () => {
+    const authored = { name: "computer-use", command: "node", args: ["mcp.js"], env: [
+      { name: "TOKEN", value: "secret" }, { name: "FEZ_AGENT_PERSONA", value: "spoofed" },
+    ] };
+    const [bound] = bindMcpPersona([authored], "researcher");
+
+    expect(bound).toEqual({ ...authored, env: [
+      { name: "TOKEN", value: "secret" }, { name: "FEZ_AGENT_PERSONA", value: "researcher" },
+    ] });
+    expect(bound).not.toBe(authored);
+    expect(authored.env[1].value).toBe("spoofed");
+  });
+
+  it("leaves HTTP configs unchanged", () => {
+    const http = { name: "remote", type: "http", url: "https://example.test/mcp", headers: [] };
+    const [bound] = bindMcpPersona([http], "researcher");
+    expect(bound).toEqual(http);
+    expect(bound).not.toBe(http);
+  });
+});
 
 /**
  * Why this exists: EVERY desktop-spawned agent was running without fez_*

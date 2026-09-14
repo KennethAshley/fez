@@ -3,6 +3,7 @@ import React from "react";
 import { IsolatedPanelLauncher } from "./IsolatedPanelLauncher";
 import { registerIsolatedContributions } from "./IsolatedContributions";
 import { invoke } from "@tauri-apps/api/core";
+import { nativeSurfaces, type NativeSurfaceApi } from "./native-surfaces";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Artifact, FezClient } from "@fezchat/client";
@@ -70,6 +71,9 @@ function relayHostnames(): string[] {
  */
 
 export interface GuiExtensionApi {
+  /** Render validated declarative settings with this extension's permissions and namespace. */
+  renderSettings?: (json: string) => React.ReactNode;
+  nativeSurfaces?: NativeSurfaceApi;
   /** Host-owned confirmation; cancellation never authorizes the action. */
   confirm?: (details: { title: string; body?: string; context?: string }) => Promise<boolean>;
   React: typeof React;
@@ -1010,6 +1014,25 @@ export function loadGuiExtensions(client: FezClient): Promise<string[]> {
   return loading;
 }
 
+function settingsView(name: string, permissions: string[], client: FezClient, sections: NonNullable<ReturnType<typeof parseDeclarativeGui>["settings"]>) {
+  const require = (permission: string) => requireGuiPermission(name, permissions, "settings", permission);
+  const host: SettingsHost = {
+    permissions,
+    run: (bin, args) => { require("processes"); return invoke("run_extension_bin", { extension: name, bin, args }); },
+    spawn: (bin, job, env) => { require("processes"); return invoke("spawn_extension_agent", { extension: name, bin, name: job, env: Object.entries(env) }); },
+    isRunning: (bin, job) => { require("processes"); return invoke("agent_alive", { persona: job, bin }); },
+    agents: () => { require("ui"); require("read:agents"); return [...client.agents()]; },
+    readPreference: async key => { require("ui"); const state = JSON.parse(await invoke<string>("extension_storage_read", { name })); return state.prefs?.[key]; },
+    writePreference: (key, value) => { require("ui"); return invoke("extension_storage_write", { name, key, value: JSON.stringify(value) }); },
+    allowPreview: url => {
+      require("ui");
+      const hosts = permissions.filter(value => value.startsWith("network:")).map(value => value.slice(8));
+      if (!networkAllowed(hosts, url)) throw Error("The preview's network permission has not been granted. Reinstall the extension and grant it to continue.");
+    },
+  };
+  return React.createElement(DeclarativeSettings, { sections, host });
+}
+
 async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
   baseline ??= snapshotRegistrations();
   restoreBaseline();
@@ -1056,23 +1079,7 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
         if (!grants[name]?.includes("ui")) throw Error("Declarative GUI requires a recorded ui grant");
         const data = parseDeclarativeGui(code);
         if (data.settings) {
-          const permissions = grants[name];
-          const require = (permission: string) => requireGuiPermission(name, permissions, "settings", permission);
-          const host: SettingsHost = {
-            permissions,
-            run: (bin, args) => { require("processes"); return invoke("run_extension_bin", { extension: name, bin, args }); },
-            spawn: (bin, job, env) => { require("processes"); return invoke("spawn_extension_agent", { extension: name, bin, name: job, env: Object.entries(env) }); },
-            isRunning: (bin, job) => { require("processes"); return invoke("agent_alive", { persona: job, bin }); },
-            agents: () => { require("ui"); require("read:agents"); return [...client.agents()]; },
-            readPreference: async key => { require("ui"); const state = JSON.parse(await invoke<string>("extension_storage_read", { name })); return state.prefs?.[key]; },
-            writePreference: (key, value) => { require("ui"); return invoke("extension_storage_write", { name, key, value: JSON.stringify(value) }); },
-            allowPreview: url => {
-              require("ui");
-              const hosts = permissions.filter(value => value.startsWith("network:")).map(value => value.slice(8));
-              if (!networkAllowed(hosts, url)) throw Error("The preview's network permission has not been granted. Reinstall the extension and grant it to continue.");
-            },
-          };
-          registerSettingsPanel(name, () => React.createElement(DeclarativeSettings, { sections: data.settings!, host }), { source: settingsSource ?? undefined });
+          registerSettingsPanel(name, () => settingsView(name, grants[name], client, data.settings!), { source: settingsSource ?? undefined });
         }
         for (const [theme, pack] of Object.entries(data.themes ?? {})) registerTheme(theme, pack);
         loaded.push(name);
@@ -1114,6 +1121,11 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
     let closePanel: Dispose | undefined;
     const disposeUi = () => { active = false; closePanel?.(); };
     const api: GuiExtensionApi = {
+      renderSettings: may("ui") ? raw => {
+        const sections = parseDeclarativeGui(raw).settings;
+        if (!sections) throw Error("No settings sections provided");
+        return settingsView(name, granted, client, sections);
+      } : undefined,
       React,
       fetch: gatedFetch(name, hosts),
       // Parse a natural-language query into the shape client.runQuery wants
@@ -1264,6 +1276,7 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
         closePanel?.();
         closePanel = options ? panelOpener?.(title, render, options) : panelOpener?.(title, render);
       } : undefined,
+      nativeSurfaces: may("ui") ? nativeSurfaces : undefined,
       watchAgent: may("read:agents") ? openWatch : (refuse("read:agents", "open the watch pane") as never),
       // Forward surface (guest-threads spec): typed loosely so extensions
       // built against an older api still load; the host validates the pk.

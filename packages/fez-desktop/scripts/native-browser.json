@@ -1,0 +1,10 @@
+{
+  "tauri": {
+    "url": "https://github.com/tauri-apps/tauri.git",
+    "revision": "c8c75b1f7f43e7cb1e7d773ed2f6f96fad2fe975"
+  },
+  "plugins": {
+    "url": "https://github.com/tauri-apps/plugins-workspace.git",
+    "revision": "1423992771e0b57582ca3b06a6adc46ec26aa784"
+  }
+}

@@ -3,6 +3,8 @@ import { finalizeEvent, generateSecretKey } from "nostr-tools/pure";
 import type { Event } from "nostr-tools";
 import { RelayConnection } from "@fezchat/protocol";
 import { MiniRelay, waitFor } from "./mini-relay.js";
+import { createServer } from "node:net";
+import { once } from "node:events";
 
 /**
  * The decentralization gate.
@@ -17,6 +19,9 @@ import { MiniRelay, waitFor } from "./mini-relay.js";
 const A = new MiniRelay();
 const B = new MiniRelay();
 const C = new MiniRelay();
+// Own a rejecting endpoint: a fixed "unused" port can be another test's relay.
+const refused = createServer(socket => socket.destroy());
+let refusedUrl: string;
 const sk = generateSecretKey();
 let seq = 0;
 
@@ -35,9 +40,15 @@ async function plant(relay: MiniRelay, content: string): Promise<Event> {
 
 beforeAll(async () => {
   await Promise.all([A.start(), B.start(), C.start()]);
+  refused.listen(0, "127.0.0.1");
+  await once(refused, "listening");
+  const address = refused.address();
+  if (!address || typeof address === "string") throw new Error("Missing refused connection port");
+  refusedUrl = `ws://127.0.0.1:${address.port}`;
 });
 afterAll(async () => {
   await Promise.all([A.stop(), B.stop(), C.stop()]);
+  await new Promise<void>(resolve => refused.close(() => resolve()));
 });
 
 describe("publishing to a relay set", () => {
@@ -53,7 +64,7 @@ describe("publishing to a relay set", () => {
   });
 
   test("succeeds when one relay is down — the whole point of a set", async () => {
-    const conn = new RelayConnection({ urls: [A.url, "ws://127.0.0.1:7899", B.url], watchdogMs: 50 });
+    const conn = new RelayConnection({ urls: [A.url, refusedUrl, B.url], watchdogMs: 50 });
     await conn.connect();
     const e = event("one down");
     await expect(conn.publish(e)).resolves.toBeUndefined();
@@ -219,20 +230,21 @@ describe("keeping the set a set", () => {
  */
 describe("publishing into the void", () => {
   for (const [label, url] of [
-    ["a refused port", "ws://127.0.0.1:7898"],
-    ["a TLS port with nothing behind it", "wss://127.0.0.1:7898"],
-    ["a host that does not resolve", "wss://nope.invalid.example"],
+    ["a refused WebSocket connection", () => refusedUrl],
+    ["a refused TLS connection", () => refusedUrl.replace("ws:", "wss:")],
+    ["a host that does not resolve", () => "wss://nope.invalid.example"],
   ] as const) {
     test(`throws for ${label}`, async () => {
-      const conn = new RelayConnection({ url, watchdogMs: 50_000 });
-      await conn.connect();
-      await expect(conn.publish(event(`into the void: ${label}`))).rejects.toThrow(/publish failed/);
-      conn.disconnect();
+      const conn = new RelayConnection({ url: url(), watchdogMs: 50_000 });
+      try {
+        await conn.connect();
+        await expect(conn.publish(event(`into the void: ${label}`))).rejects.toThrow(/publish failed/);
+      } finally { conn.disconnect(); }
     }, 30_000);
   }
 
   test("one reachable relay in a set is still a real success", async () => {
-    const conn = new RelayConnection({ urls: [A.url, "ws://127.0.0.1:7898"], watchdogMs: 50_000 });
+    const conn = new RelayConnection({ urls: [A.url, refusedUrl], watchdogMs: 50_000 });
     await conn.connect();
     const e = event("half the set is dead");
     await expect(conn.publish(e)).resolves.toBeUndefined();
