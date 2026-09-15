@@ -217,15 +217,15 @@ program
   .command("create <name>")
   .description("Scaffold a new fez extension package (headless + gui by default), typed against @fezchat/extension-api")
   .option("--headless", "Include a headless part (slash commands, scheduled tasks — TUI + sentinel)")
-  .option("--gui", "Include a gui part (settings panel, composer command — desktop)")
+  .option("--gui", "Include a desktop GUI part (alone: isolated React navigation view)")
   .option("--relay", "Include a relay part (HTTP + NIP-11, loaded by a --extensions relay)")
   .option("--workspace", "Include a workspace provider (gives a repo: persona a checkout)")
   .option("-d, --dir <path>", "Output directory (default ./<name>)")
   .action(async (name: string, options) => {
     const picked = (["headless", "gui", "relay", "workspace"] as const).filter((s) => options[s]);
     // A GUI-only request ("fez create <name> --gui", nothing else) gets the
-    // on-brand @fezchat/ui recipe from Task 7's scaffold — mount model,
-    // fez-* utilities, capability guards — instead of the older multi-part
+    // isolated @fezchat/ui recipe — mount model and fez-* utilities —
+    // instead of the older multi-part
     // scaffolder's raw h()-factory gui starter. Any other combination
     // (default headless+gui, or a relay/workspace part) still goes through
     // the general multi-surface scaffolder below; those parts have no
@@ -236,12 +236,14 @@ program
       // dir when given, else `./<name>` — never a parent to append <name> to.
       const dir = options.dir ?? path.join(process.cwd(), name);
       await scaffoldGui(name, dir);
-      console.log(chalk.green(`✅ ${name} — gui (built from @fezchat/ui)`));
+      console.log(chalk.green(`✅ ${name} — isolated gui (built from @fezchat/ui)`));
       console.log(chalk.dim(`   ${path.relative(process.cwd(), dir) || "."}/`));
       console.log();
       console.log(chalk.bold("Next:"));
       console.log(`  cd ${path.relative(process.cwd(), dir) || "."}`);
-      console.log(`  bun install && fez pack`);
+      console.log(`  npm install && npm run check && npm run build`);
+      console.log(`  npx fez link .`);
+      console.log(chalk.dim("  Quit and reopen the packaged macOS Fez app to load the view."));
       return;
     }
     const { scaffold, baseName } = await import("../extensions/scaffold.js");

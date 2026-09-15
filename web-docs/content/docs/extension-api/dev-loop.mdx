@@ -7,31 +7,40 @@ description: Scaffold, link, iterate, publish.
 
 For a desktop UI, start with the [GUI runtime guide](/extension-api/gui).
 Use declarative settings or themes when they cover the interface; choose an
-isolated runtime for custom views. The scaffold below generates the legacy
-GUI bundle shape, so add the appropriate runtime and contributions before
-shipping an isolated extension. Record the packaged host version you tested
-and set `fez.minFezVersion` accordingly.
+isolated runtime for custom views. `fez create my-extension --gui` generates
+an isolated React navigation view with its manifest contributions and only
+the `ui` permission. It requires a packaged macOS app with isolated
+custom-view support; `tauri dev` does not support this runtime.
 
 ## Scaffold
 
 ```sh
-fez create my-extension            # default: headless + gui
-fez create my-extension --relay --workspace
+fez create my-extension --gui
 cd my-extension
-npm install && npm run build
+npm install
+npm run check
+npm run build
 ```
 
-`fez create` writes a typed skeleton against `@fezchat/extension-api` — a
-`src/` file per surface, the esbuild invocations that produce correct
-bundles (ESM for node surfaces, IIFE with `--global-name=__fezExt` and the
-`h` JSX factory for gui), `tsc --noEmit` as `check`, and a starter
-permission list. The generated permissions are a floor, not a ceiling —
-trim what you don't use.
+Edit `src/view.tsx`. The starter bundles its own React and uses
+`@fezchat/ui`; `npm run build` runs the included CLI's `fez pack` and emits
+`dist/view.js`. No global CLI is needed after creation. The name passed to
+`registerNavView` must match `fez.guiContributions.nav` in `package.json`.
+
+Other surface combinations use the multi-part template:
+
+```sh
+fez create my-extension            # headless + legacy gui
+fez create my-extension --relay --workspace
+```
+
+That template emits a file per surface, ESM bundles for Node surfaces, and a
+legacy `h()` GUI bundle. GUI-only `--gui` is the isolated React starter.
 
 ## Link
 
 ```sh
-fez link .
+npx fez link .
 ```
 
 In order: it reads your manifest, prints the **permission grants** your
@@ -40,22 +49,30 @@ The headless bundle is staged and **smoke-imported** first — a build that
 fails to import is deleted, not installed, so a broken build can never
 clobber a working extension. `--no-build` skips the build step.
 
-*(0.2.0)* `fez link . --watch` stays resident: it rebuilds on save (300 ms
+`npx fez link . --watch` stays resident: it rebuilds on save (300 ms
 debounce) and re-copies parts, keeping the smoke-import guarantee.
 
-**There is no hot reload for headless parts.** The TUI, desktop background
+**Restart after linking.** The TUI, desktop background
 worker, and sentinel load extensions once at startup — the loop is
 *save → restart the host*. For desktop background work, quit and reopen the
 app; merely closing its window keeps the worker alive. Gui
-parts are the exception: the desktop reloads them live on install/update
+parts also need a restart after CLI linking. The desktop reloads them on install/update
 from its own gallery.
 
-One naming rule worth knowing: `fez link` installs under your package
-**directory's** basename, while `fez install` uses the de-scoped npm name
-(`@fezchat/polls` → `polls`). Keep the directory named like the de-scoped
-package and the two paths agree.
+Both `fez link` and `fez install` derive the installation name from the npm
+package, independent of your source directory. The `@fezchat/` scope is
+omitted; other scopes become a prefix (`@you/my-extension` → `you-my-extension`).
 
 ## Test
+
+Run `npm run check` and `npm run build`. In the packaged macOS app, select
+your extension in the navigation rail: it should show its title, **ready**,
+and **Nothing here yet.** Switch away and reopen it, and check its colors
+when changing themes. After editing, link again and restart the app.
+
+Record the desktop release tested in your README. `fez.minFezVersion` is
+the protocol host version, not the desktop release number; the starter sets
+it to the generating CLI's host version.
 
 The repo's conformance evals are the pattern to copy: if you mirror API
 types instead of importing `@fezchat/extension-api`, a type-check against
@@ -66,7 +83,12 @@ agent tool, so all three hosts count votes identically.
 
 ## Publish
 
+Set a scoped name such as `@you/my-extension` and remove `"private": true`
+from the generated `package.json` before publishing.
+
 ```sh
+npm run check && npm run build
+npm pack --dry-run
 npm publish --access public
 ```
 

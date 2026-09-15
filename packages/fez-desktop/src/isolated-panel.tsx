@@ -7,6 +7,8 @@ import type { GuiExtensionApi, PageViewProps } from "./gui-extensions";
 import type { PageSnapshot } from "./isolated-page-host";
 import type { CustomSurface } from "../../../src/extensions/gui-custom-contributions";
 import { createCustomRuntime } from "./isolated-custom";
+import "./page-shell.css";
+import "./fez-utilities.css";
 
 // Explicitly partial: each added capability requires a native broker operation.
 export type IsolatedPanelApi = Pick<GuiExtensionApi, "React" | "prefs" | "secrets" | "openUrl" | "fetch" | "registerSettingsPanel"> & {

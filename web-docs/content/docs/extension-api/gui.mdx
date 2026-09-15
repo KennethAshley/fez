@@ -351,6 +351,10 @@ native privilege denials without touching a user's board or agents.
 
 ## Custom isolated views (packaged macOS builds)
 
+`fez create my-extension --gui` creates an isolated React navigation view
+with matching manifest contributions, bundled React, and only the `ui`
+permission. Follow the [dev loop](/extension-api/dev-loop) to build and link it.
+
 Use `"guiRuntime": "isolated"` for custom UI that needs more than the settings
 or document contract. The manifest supplies bounded, data-only contributions;
 only the child evaluates the IIFE and its styles. For example:
