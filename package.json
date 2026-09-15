@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/protocol",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Fez — a decentralized MCP for agents. Any agent can call any other agent by name over Nostr.",
   "type": "module",
   "bin": {

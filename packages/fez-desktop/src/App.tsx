@@ -75,6 +75,7 @@ import { norm } from "./extensions-catalog";
 import { EMOJI, searchEmoji } from "./emoji";
 import HireProposalCard from "./HireProposalCard";
 import "./App.css";
+import "./page-shell.css";
 import "./fez-utilities.css";
 
 /**

@@ -10,8 +10,8 @@
  */
 
 /** The ONE place fez states its own version — cli.ts --version reads it too. */
-// 0.2.2 adds complete bridge history reads and the saved-artifact client seam.
-export const FEZ_VERSION = "0.2.2";
+// 0.2.3 adds the isolated GUI starter and its shared desktop styles.
+export const FEZ_VERSION = "0.2.3";
 
 /** Numeric x.y.z compare; missing parts are zero. NaN parts poison to NaN via the caller's guard. */
 export function compareSemver(a: string, b: string): number {

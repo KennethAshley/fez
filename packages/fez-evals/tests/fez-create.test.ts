@@ -1,11 +1,16 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { mkdtempSync, mkdirSync, symlinkSync, readFileSync, existsSync } from "node:fs";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { JSDOM } from "jsdom";
+import { mkdtempSync, mkdirSync, symlinkSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scaffold } from "../../../src/cli/scaffold.js";
 import { packExtension } from "../../../src/cli/pack.js";
 import { isGuiOnlyCreate } from "../../../src/cli/cmd-extensions.js";
+import * as React from "../../fez-desktop/node_modules/react/index.js";
+import { createRoot } from "../../fez-desktop/node_modules/react-dom/client.js";
+import { parseCustomGuiContributions } from "../../../src/extensions/gui-custom-contributions.js";
+import { createCustomRuntime } from "../../fez-desktop/src/isolated-custom";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "../../..");
@@ -17,6 +22,7 @@ beforeAll(async () => {
   dir = join(mkdtempSync(join(tmpdir(), "fez-create-")), "my-tool");
   await scaffold("my-tool", dir);
 });
+afterAll(() => rmSync(dirname(dir), { recursive: true, force: true }));
 
 describe("fez create", () => {
   it("emits a package with a gui part, tsconfig, a TSX view and a README", () => {
@@ -29,16 +35,11 @@ describe("fez create", () => {
     expect(existsSync(join(dir, "README.md"))).toBe(true);
   });
 
-  it("the stub view is on-brand and guards its capabilities", () => {
-    const view = readFileSync(join(dir, "src/view.tsx"), "utf8");
-    expect(view).toContain("@fezchat/ui");     // built from the kit
-    expect(view).toContain("createRoot");        // owns its React root
-    expect(view).toMatch(/registerNavView/);     // mounts a place
-    expect(view).toMatch(/api\.client\s*\?|if\s*\(!?\s*api\.client/); // guards, doesn't assert
-    expect(view).not.toMatch(/#[0-9a-fA-F]{6}/);  // no bare hex — fez-* utilities only
-  });
-
-  it("the stub builds via fez pack", async () => {
+  it("packs and mounts its declared isolated navigation view with only UI permission", async () => {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+    expect(pkg.fez.guiRuntime).toBe("isolated");
+    expect(pkg.fez.permissions).toEqual(["ui"]);
+    const [nav] = parseCustomGuiContributions(pkg.fez.guiContributions).nav;
     // esbuild bundle:true must RESOLVE @fezchat/ui/react/react-dom, which a
     // freshly-scaffolded package's isolated temp dir has no node_modules
     // for. Rather than a networked `bun install`, symlink the three deps
@@ -53,6 +54,46 @@ describe("fez create", () => {
 
     const out = await packExtension(dir);
     expect(existsSync(out.js)).toBe(true);
+
+    // Only IPC is replaced; the generated bundle and child mount adapter run.
+    // Create the DOM after packing: esbuild needs Node's Uint8Array realm.
+    const dom = new JSDOM("<!doctype html><html><body></body></html>");
+    for (const key of ["window", "document", "Element", "HTMLElement"] as const) vi.stubGlobal(key, dom.window[key]);
+    Object.assign(dom.window, { __TAURI_INTERNALS__: { invoke: async () => ({
+      surface: { kind: "nav", name: nav.name }, grants: pkg.fez.permissions,
+      pubkey: "a".repeat(64), owner: "a".repeat(64), channels: [], workspaces: [],
+      names: [], pubkeysByName: [], agents: null, reactions: [], receipts: [],
+    }) } });
+    const runtime = await createCustomRuntime({
+      React, prefs: { get: async () => undefined, set: async () => {} },
+      secrets: { has: async () => false, set: async () => {} },
+      fetch: globalThis.fetch, openUrl: async () => {}, showDetails: async () => {},
+      confirm: async () => false, registerSettingsPanel: () => {},
+    }, { kind: "nav", name: nav.name });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    try {
+      const extension = new Function(`${readFileSync(out.js, "utf8")}\nreturn __fezExt;`)() as {
+        activate(api: Pick<typeof runtime.api, "registerNavView">): void;
+      };
+      extension.activate(runtime.api);
+      root.render(React.createElement(runtime.View));
+      await vi.waitFor(() => {
+        expect(host.querySelector("h1")?.textContent).toBe("my-tool");
+        expect(host.textContent).toContain("ready");
+        expect(host.textContent).toContain("Nothing here yet.");
+      });
+    } finally {
+      root.unmount();
+      await Promise.resolve(); // the adapter disposes the extension's root in a microtask
+      expect(host.textContent).toBe("");
+      runtime.dispose();
+      await new Promise(resolve => setImmediate(resolve)); // drain both React schedulers before removing window
+      host.remove();
+      dom.window.close();
+      vi.unstubAllGlobals();
+    }
   });
 });
 
