@@ -19,7 +19,7 @@
     ]
   },
   "scripts": {
-    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/cli.ts --bundle --format=esm --platform=node --outfile=dist/cli.js",
+    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/cli.ts --bundle --format=esm --platform=node --outfile=dist/cli.js && esbuild src/typesafe-cli.ts --bundle --format=esm --platform=node --outfile=dist/typesafe-cli.js",
     "bench": "node dist/cli.js",
     "check": "tsc --noEmit"
   },

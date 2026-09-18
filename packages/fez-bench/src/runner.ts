@@ -52,7 +52,6 @@ export async function runBench(
   const model = await resolveModel(base);
   if (!model) throw new Error(`no router at ${base} — set FEZ_ORCHESTRATOR_URL to any OpenAI-compatible endpoint`);
   const tools = [...roster.map(agentTool), noneTool()];
-  const names = roster.map((agent) => agent.name);
   // Same shape the runtime sends, or the bench measures a router nobody
   // ships. It also pins temperature: llama.cpp defaults to 0.8, which
   // moved scores ±4 points between identical runs until this landed.
@@ -60,6 +59,30 @@ export async function runBench(
     (process.env.FEZ_ORCHESTRATOR_PROFILE as RouterProfile | undefined) || detectProfile(model);
   const hash = hashInputs([...tools, { profile }], model);
 
+  const results = await runCases(roster, cases, async (message) => {
+    const res = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...routerAuthHeaders() },
+      body: JSON.stringify(routerBody(profile, model, message, tools)),
+    });
+    if (!res.ok) throw new Error(`Router HTTP ${res.status}`);
+    const body = (await res.json()) as {
+      choices?: { message?: { tool_calls?: { function?: { name?: string } }[] } }[];
+    };
+    const picked = body.choices?.[0]?.message?.tool_calls?.[0]?.function?.name ?? "none";
+    return picked === "nobody" ? "none" : picked;
+  }, onProgress);
+  return { results, model, hash };
+}
+
+/** Both providers must see the same deterministic prelayers and scrubbed input. */
+export async function runCases(
+  roster: RosterAgent[],
+  cases: BenchCase[],
+  select: (message: string) => Promise<string>,
+  onProgress?: (done: number, total: number) => void,
+): Promise<CaseResult[]> {
+  const names = roster.map((agent) => agent.name);
   const results: CaseResult[] = [];
   for (const bench of cases) {
     const started = Date.now();
@@ -72,19 +95,10 @@ export async function runBench(
     } else if ((got = explicitActor(bench.q, names) ?? "none") !== "none") {
       layer = "actor";
     } else {
-      const res = await fetch(`${base}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...routerAuthHeaders() },
-        body: JSON.stringify(routerBody(profile, model, scrubNames(bench.q, names), tools)),
-      });
-      const body = (await res.json()) as {
-        choices?: { message?: { tool_calls?: { function?: { name?: string } }[] } }[];
-      };
-      const picked = body.choices?.[0]?.message?.tool_calls?.[0]?.function?.name ?? "none";
-      got = picked === "nobody" ? "none" : picked;
+      got = await select(scrubNames(bench.q, names));
     }
     results.push({ bench, got, pass: bench.expect.includes(got), layer, ms: Date.now() - started });
     onProgress?.(results.length, cases.length);
   }
-  return { results, model, hash };
+  return results;
 }
