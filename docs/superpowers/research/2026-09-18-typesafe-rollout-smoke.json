@@ -1,0 +1,66 @@
+{
+  "verifiedAt": "2026-09-18T22:31:20.413Z",
+  "endpoint": "https://137-184-135-188.sslip.io",
+  "authenticationRequired": true,
+  "modelAlias": "fez-router",
+  "health": {
+    "ok": true,
+    "upstream": "http://127.0.0.1:8080",
+    "primary": "typesafe",
+    "model": "jev-1.13.0"
+  },
+  "results": [
+    {
+      "message": "dig up recent papers on gossip protocols",
+      "expected": "researcher",
+      "selected": "researcher",
+      "backend": "typesafe",
+      "model": "jev-1.13.0",
+      "ms": 393,
+      "usage": {
+        "prompt_tokens": 531,
+        "completion_tokens": 54,
+        "total_tokens": 585
+      }
+    },
+    {
+      "message": "review this pull request",
+      "expected": "reviewer",
+      "selected": "reviewer",
+      "backend": "typesafe",
+      "model": "jev-1.13.0",
+      "ms": 197,
+      "usage": {
+        "prompt_tokens": 528,
+        "completion_tokens": 54,
+        "total_tokens": 582
+      }
+    },
+    {
+      "message": "ship this build to production",
+      "expected": "deployer",
+      "selected": "deployer",
+      "backend": "typesafe",
+      "model": "jev-1.13.0",
+      "ms": 267,
+      "usage": {
+        "prompt_tokens": 529,
+        "completion_tokens": 54,
+        "total_tokens": 583
+      }
+    },
+    {
+      "message": "write me a haiku about the ocean",
+      "expected": "nobody",
+      "selected": "nobody",
+      "backend": "typesafe",
+      "model": "jev-1.13.0",
+      "ms": 188,
+      "usage": {
+        "prompt_tokens": 532,
+        "completion_tokens": 53,
+        "total_tokens": 585
+      }
+    }
+  ]
+}

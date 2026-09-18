@@ -16,22 +16,35 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 echo "── smoke test (locally, before it can break anything)"
-node --check deploy/router/gateway.mjs
-echo "   gateway parses"
+gateway_bundle="$(mktemp "${TMPDIR:-/tmp}/fez-router.XXXXXX")"
+trap 'rm -f "$gateway_bundle"' EXIT
+npx --no-install esbuild deploy/router/gateway.mjs --bundle --format=esm --platform=node --outfile="$gateway_bundle"
+node --check --input-type=module < "$gateway_bundle"
+echo "   bundled gateway parses"
 
 echo "── shipping to $TARGET"
-scp -q deploy/router/gateway.mjs "$TARGET:/opt/fez-router/gateway.mjs.new"
+scp -q "$gateway_bundle" "$TARGET:/opt/fez-router/gateway.mjs.new"
 scp -q deploy/router/fez-router.service "$TARGET:/etc/systemd/system/fez-router.service"
 scp -q deploy/router/fez-router-gateway.service "$TARGET:/etc/systemd/system/fez-router-gateway.service"
 
 ssh "$TARGET" bash -euo pipefail <<'REMOTE'
+  rollback() {
+    local status=$?
+    [ "$status" -eq 0 ] && return
+    echo "   deployment failed; restoring previous gateway"
+    if [ -f /opt/fez-router/gateway.mjs.prev ]; then
+      cp /opt/fez-router/gateway.mjs.prev /opt/fez-router/gateway.mjs
+      systemctl restart fez-router-gateway
+    fi
+  }
   [ -f /opt/fez-router/gateway.mjs ] && cp /opt/fez-router/gateway.mjs /opt/fez-router/gateway.mjs.prev
+  trap rollback EXIT
   mv /opt/fez-router/gateway.mjs.new /opt/fez-router/gateway.mjs
   chown fezrouter:fezrouter /opt/fez-router/gateway.mjs
 
   systemctl daemon-reload
   systemctl enable fez-router fez-router-gateway >/dev/null 2>&1 || true
-  systemctl restart fez-router
+  systemctl start fez-router
   systemctl restart fez-router-gateway
 
   for unit in fez-router fez-router-gateway; do
@@ -41,43 +54,53 @@ ssh "$TARGET" bash -euo pipefail <<'REMOTE'
   done
   echo "   both units active"
 
-  # "active" only means systemd started the process. llama-server accepts
-  # connections while it is still mapping 400 MB of weights and answers
-  # 503 "Loading model" until it isn't — so wait for the model to be
-  # LISTED, not for a fixed number of seconds. Sleeping and hoping is how
-  # a deploy reports success against a router that can't route yet.
-  echo "── waiting for the model to load"
-  for i in $(seq 1 60); do
-    if curl -sf http://127.0.0.1:8081/v1/models 2>/dev/null | grep -q '"id"'; then
-      echo "   model ready after ${i}s"
-      break
-    fi
-    [ "$i" = "60" ] && { echo "   MODEL NEVER LOADED"; journalctl -u fez-router -n 25 --no-pager; exit 1; }
-    sleep 1
-  done
+  # Verify the local fallback is ready separately: /models on a TypeSafe
+  # gateway deliberately does not depend on the local model being up.
+  node --input-type=module <<'NODE'
+import { setTimeout as sleep } from "node:timers/promises";
+try { process.loadEnvFile("/etc/fez-router.env"); } catch (e) { if (e.code !== "ENOENT") throw e; }
+let ready = false;
+for (let i = 0; i < 30; i++) {
+  try {
+    const r = await fetch("http://127.0.0.1:8080/v1/models", { signal: AbortSignal.timeout(1000) });
+    if (r.ok && (await r.json()).data?.[0]?.id) { ready = true; break; }
+  } catch { /* loading */ }
+  await sleep(1000);
+}
+if (!ready) throw new Error("Local fallback model did not become ready");
+// systemd reports the gateway unit "active" as soon as the process is
+// spawned, not once it's bound its port — restart + is-active can race
+// ahead of the gateway's own startup. Poll /health instead of assuming.
+let gatewayReady = false;
+for (let i = 0; i < 15; i++) {
+  try {
+    const r = await fetch("http://127.0.0.1:8081/health", { signal: AbortSignal.timeout(1000) });
+    if (r.ok) { gatewayReady = true; break; }
+  } catch { /* starting */ }
+  await sleep(500);
+}
+if (!gatewayReady) throw new Error("Gateway did not become ready on :8081");
+const headers = { "Content-Type": "application/json",
+  ...(process.env.ROUTER_API_KEY ? { Authorization: `Bearer ${process.env.ROUTER_API_KEY}` } : {}) };
+const tools = [
+  { name: "reviewer", description: "review code, critique pull requests, give feedback on changes" },
+  { name: "deployer", description: "deploy, ship, release, roll out builds to production" },
+].map(f => ({ type: "function", function: { ...f, parameters: { type: "object", properties: {} } } }));
+const r = await fetch("http://127.0.0.1:8081/v1/chat/completions", {
+  method: "POST", headers, signal: AbortSignal.timeout(35000),
+  body: JSON.stringify({ model: "fez-router", tool_choice: "required",
+    messages: [{ role: "user", content: "can you take a look at my pull request" }], tools }),
+});
+if (!r.ok) throw new Error(`Routing self-test HTTP ${r.status}`);
+const body = await r.json();
+if (body.choices?.[0]?.message?.tool_calls?.[0]?.function?.name !== "reviewer") {
+  throw new Error("Routing self-test did not select reviewer");
+}
+const backend = r.headers.get("x-fez-router-backend");
+if (process.env.TYPESAFE_API_KEY && backend !== "typesafe") throw new Error("TypeSafe self-test fell back to local model");
+console.log(`   routed correctly via ${backend ?? "local"}`);
+NODE
 
-  # An active unit is not a working router. Ask it to route something and
-  # require a tool call back — this is the check that catches a bad model
-  # file, a template that doesn't do tool calling, and a gateway clamp
-  # that rejects its own traffic.
-  echo "── routing self-test"
-  model=$(curl -sf http://127.0.0.1:8081/v1/models | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).data[0].id)}catch{console.log("")}})')
-  [ -n "$model" ] || { echo "   NO MODEL LISTED"; exit 1; }
-  echo "   model: $model"
-
-  picked=$(curl -sf http://127.0.0.1:8081/v1/chat/completions \
-    -H 'Content-Type: application/json' \
-    -d "{\"model\":\"$model\",\"tool_choice\":\"required\",\"temperature\":0,
-         \"messages\":[
-           {\"role\":\"system\",\"content\":\"You are a router. Call exactly one function to pick who should handle the user's request. Do not write any prose. Do not answer the request yourself. If no function fits, call nobody.\"},
-           {\"role\":\"user\",\"content\":\"can you take a look at my pull request\"}],
-         \"tools\":[
-           {\"type\":\"function\",\"function\":{\"name\":\"reviewer\",\"description\":\"review code, critique pull requests, give feedback on changes\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}},
-           {\"type\":\"function\",\"function\":{\"name\":\"deployer\",\"description\":\"deploy, ship, release, roll out builds to production\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}}]}" \
-    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).choices[0].message.tool_calls[0].function.name)}catch{console.log("")}})')
-
-  [ "$picked" = "reviewer" ] || { echo "   SELF-TEST FAILED — expected reviewer, got '${picked:-<nothing>}'"; exit 1; }
-  echo "   routed correctly → $picked"
 REMOTE
 
 echo "── done"

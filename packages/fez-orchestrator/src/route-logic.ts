@@ -73,7 +73,7 @@ export function fleetQuestion(text: string, agentNames: string[]): FleetQuestion
  * (researcher/reviewer route 6/6; opaque names like scout/critic
  * misroute), descriptions are supporting verb-phrase detail.
  */
-export function agentTool(agent: RoutableAgent): object {
+export function agentTool(agent: RoutableAgent) {
   const description =
     [agent.about, agent.skills?.length ? `skills: ${agent.skills.join(", ")}` : undefined]
       .filter(Boolean)
@@ -109,7 +109,7 @@ export function agentTool(agent: RoutableAgent): object {
  * orchestrator filters it out of picks, landing in the existing
  * "not sure who's best" fallback.
  */
-export function noneTool(): object {
+export function noneTool() {
   return {
     type: "function",
     function: {

@@ -14,12 +14,31 @@ README is emphatic that memory, not disk, is its constraint. A 400 MB
 model next to it trades "routing is slow" for "the community is gone".
 They share nothing but a region.
 
-## Why not cactus + needle
+## Primary model and fallback
+
+TypeSafe is the live default as of September 18, 2026.
+With `TYPESAFE_API_KEY` configured, the gateway calls TypeSafe’s hosted
+`jev-1.13.0` model for every ordinary Fez routing request. The model runs at
+TypeSafe, not on this droplet. The gateway returns the same OpenAI tool-call
+response, so clients keep their existing URL, model alias, and gateway key.
+
+An API error, invalid response, or two-second timeout falls back to local
+Qwen3-0.6B under llama.cpp. A valid `nobody` decision is final. Requests with
+conversation history, custom system instructions, or richer tool arguments
+also use Qwen because the TypeSafe adapter only selects an agent. Existing
+roster permissions and deterministic routing rules remain in the client.
+
+The [September 18 comparison](../../docs/superpowers/research/2026-09-18-typesafe-routing-results.md)
+scored TypeSafe 96/97 versus Qwen 92/97, with model-call medians of 184 ms
+and 2,808 ms. This was one pass with three agents, not a universal guarantee.
+The droplet still costs $18/month; TypeSafe API usage is additional.
+
+## Local fallback history: cactus + needle
 
 You can't run it here. cactus ships wheels for macOS-arm64 and
 linux-aarch64 only, its kernels are ARM NEON, and DigitalOcean has no
 ARM droplets. That isn't awkward, it's impossible — which is why the
-hosted router runs Qwen3-0.6B under llama.cpp instead.
+local fallback runs Qwen3-0.6B under llama.cpp instead.
 
 The swap is not a downgrade: measured on the 97-case battery, needle
 scores 71% and Qwen3-0.6B with the right request shape scores 90%. See
@@ -37,21 +56,26 @@ deploy/router/deploy-router.sh root@<ip>
 `provision-router.sh` does system setup — swap, a prebuilt llama.cpp
 (nothing is compiled on the box), the model, Caddy, ufw — and is
 idempotent. `deploy-router.sh` ships only the gateway and the units, so
-a policy change can never break the machine.
+gateway updates do not reprovision the machine. It bundles the shared TypeSafe
+client locally with esbuild, stages one dependency-free file, and verifies an
+authenticated routing request after restarting the gateway. A failed check
+restores the previous gateway. Qwen is not restarted during a gateway update.
 
 ## The shape of it
 
 ```
-internet ──443──> caddy ──> gateway :8081 ──> llama-server :8080
-                            (policy)          (loopback only)
+internet ──443──> caddy ──> gateway :8081 ──HTTPS──> TypeSafe API
+                                  └──fallback──> llama-server :8080
+                                                    (loopback only)
 ```
 
 `llama-server` never faces the internet. The gateway is the only public
-surface, and it exists for the three things llama-server won't do:
+surface. It authenticates and rate-limits calls to either model; token and
+sampling limits apply to local inference:
 
 | policy | why |
 | --- | --- |
-| `RATE_PER_MIN=20` per IP | the endpoint answers unauthenticated strangers by design; a tiny model is cheap but not free |
+| `RATE_PER_MIN=20` per IP | bounds client load; a tiny model is cheap but not free |
 | `RATE_BURST=2` | one model slot — concurrency just makes everyone wait for the same cores |
 | `MAX_TOKENS=96` | a 4096-token request is a 90-second CPU hold. Measured: 96 scores the same as 512 |
 | `temperature: 0` | pinned server-side, so two identical mentions can't route differently |
@@ -60,24 +84,41 @@ Only `/v1/models` and `/v1/chat/completions` are routed. `/slots`, the
 web UI and `/completion` return 404 — this is a routing appliance, not a
 public playground.
 
-**It is currently open** (no `ROUTER_API_KEY`), because a token shipped
-to every user is not a secret and zero-install is the whole point. To
-close it:
+**The live deployment requires authentication** (verified September 18, 2026).
+`ROUTER_API_KEY` is configured in `/etc/fez-router.env`, which the gateway service
+loads. Clients and benchmarks must supply the matching `FEZ_ORCHESTRATOR_KEY`;
+SSH access alone does not authenticate a separate HTTP request.
 
-```bash
-ssh root@<ip> 'echo ROUTER_API_KEY=<token> > /etc/fez-router.env && systemctl restart fez-router-gateway'
-```
+The gateway code permits an open deployment when `ROUTER_API_KEY` is unset, but
+that default does not describe the current server. Update the key in the existing
+environment file and restart `fez-router-gateway` when rotating it; do not remove
+authentication to run a benchmark. Pace benchmark calls within the configured
+rate limit.
 
-Clients then set `FEZ_ORCHESTRATOR_KEY`.
+## Server credentials
+
+Keep `/etc/fez-router.env` owned by root with mode `0600`. Preserve the existing
+`ROUTER_API_KEY`; add `TYPESAFE_API_KEY` there using the server's secret-management
+workflow. Optional settings are `TYPESAFE_MODEL=jev-1.13.0` and
+`TYPESAFE_TIMEOUT_MS=2000`. Restart `fez-router-gateway` after changing them.
+The TypeSafe key never goes to Fez clients. Removing it and restarting restores
+Qwen as the primary model without changing client configuration.
+
+`/health` reports the configured primary model, not a provider availability probe.
+Authenticated completions include `X-Fez-Router-Backend: typesafe` or `local` to
+show which backend actually answered. `/v1/models` keeps the stable `fez-router`
+alias and remains available during a local-model outage when TypeSafe is enabled.
 
 ## Operating it
 
 ```bash
-systemctl status fez-router          # the model
-systemctl status fez-router-gateway  # the policy layer
+systemctl status fez-router          # the local fallback
+systemctl status fez-router-gateway  # TypeSafe integration + policy
 journalctl -u fez-router -f
 curl https://137-184-135-188.sslip.io/health
 ```
+
+The following sizing notes concern only the local Qwen fallback.
 
 **Context size is a memory decision.** Qwen3-0.6B costs ~114 KB of KV
 cache per token, so `-c 8192` allocates ~940 MB — more than the model.

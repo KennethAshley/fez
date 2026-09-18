@@ -22,9 +22,8 @@ Environment=RATE_PER_MIN=20
 Environment=RATE_BURST=2
 Environment=MAX_TOKENS=96
 Environment=MAX_BODY_BYTES=65536
-# Set ROUTER_API_KEY here to close the endpoint. Left unset the router
-# answers anyone, which is the entire point of a zero-install default —
-# revisit if the rate limit stops being enough.
+# Root-owned mode 0600: ROUTER_API_KEY authenticates clients;
+# TYPESAFE_API_KEY authenticates the gateway to the hosted model.
 EnvironmentFile=-/etc/fez-router.env
 
 ExecStart=/usr/bin/node /opt/fez-router/gateway.mjs
