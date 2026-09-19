@@ -119,6 +119,12 @@ export interface NativeSurfaceState {
   id: string; label?: string; mode: 'human' | 'agent' | 'stopped'; url: string; title: string;
   canGoBack: boolean; canGoForward: boolean;
 }
+export interface ExtensionModelProvider {
+  id: string;
+  label: string;
+  listModels(): Promise<Array<{ id: string; label: string; status: "ready" | "offline" | "busy"; detail?: string }>>;
+  prepare(persona: string, model: string): Promise<void>;
+}
 export interface NativeBrowser {
   navigate(url: string): Promise<void>;
   history(delta: -1 | 1): Promise<void>;
@@ -196,6 +202,8 @@ export interface GuiExtensionApi {
    * (see `MountRender`).
    */
   registerSettingsPanel(name: string, render: MountRender, opts?: { source?: string }): void;
+  /** Optional for compatibility with older desktop hosts. Requires ui. */
+  registerModelProvider?(provider: ExtensionModelProvider): void;
   /** Extra facts in agent reputation views. `persona` is only supplied for
    * local agents; a foreign agent's display name is never a wallet identity.
    * Requires ui. Supports both element and mount/dispose render forms. */

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { ToolContext } from './tool-context.js';
+import { activateModelProfile } from './model-profile.js';
 import {
   RelayConnection,
   CapabilityClient,
@@ -76,6 +77,7 @@ import { addressees, isAddressedTo, withoutRepeatSummons } from "./addressing.js
 import { workHistory } from "./work-history.js";
 import { DurableWork, workDirectory } from "../../../src/shared/durable-work.js";
 import { completeWork, workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
+import { agentMessageTags, HANDOFF_BRIEF_LIMIT, resolveAgentName, agentProfiles } from "../../fez-client/src/agent-mentions.js";
 import { EvaluationError, evaluationExecutableAvailable, evaluationReady, evaluationRuntime, assertEvaluationToolsUnchanged, readEvaluationRequest, runEvaluation } from "./evaluation.js";
 import { runMeteredHire } from "./hire-usage.js";
 import { deliverHire } from "./hire-delivery.js";
@@ -230,6 +232,7 @@ async function main() {
   // run before it, so the narrowing does not reach them. Capturing it
   // once here is the fix; a `!` at each use would only hide the question.
   const activePersona = persona;
+  const modelProfileActive = activateModelProfile(persona, os.homedir(), process.env);
   const harness = findHarness(persona.harness);
   if (!harness || !(evaluating ? evaluationExecutableAvailable(harness.command) : await harness.detect())) {
     if (evaluating) throw new EvaluationError("The persona's selected harness is unavailable");
@@ -570,12 +573,15 @@ async function main() {
     fs.writeFileSync(path.join(piDir, "settings.json"), JSON.stringify(piSettings, null, 1) + "\n");
     let removeTrust: (() => void) | undefined;
     try {
-      const trustFile = path.join(os.homedir(), ".pi", "agent", "trust.json");
+      const piAgentDir = process.env.PI_CODING_AGENT_DIR?.replace(/^~(?=\/)/, os.homedir()) || path.join(os.homedir(), ".pi", "agent");
+      const trustFile = path.join(piAgentDir, "trust.json");
       let trust: Record<string, boolean> = {};
       try {
         trust = JSON.parse(fs.readFileSync(trustFile, "utf-8"));
       } catch { /* first pi use — file created below */ }
-      const trustPath = transient || persona.extra.workdir ? workDir : path.join(os.homedir(), ".fez", "agents", "work");
+      // pi canonicalizes cwd before checking trust (e.g. /var → /private/var on macOS).
+      // A lexical alias silently discards this persona's provider/model settings.
+      const trustPath = fs.realpathSync(transient || persona.extra.workdir ? workDir : path.join(os.homedir(), ".fez", "agents", "work"));
       if (trust[trustPath] !== true) {
         trust[trustPath] = true;
         fs.mkdirSync(path.dirname(trustFile), { recursive: true });
@@ -937,9 +943,14 @@ async function main() {
   async function checkedAuthorAllowed(pubkey: string): Promise<boolean> {
     if (authorPolicyAdmits(pubkey, false)) return true;
     if (!owner) return false;
+    return authorPolicyAdmits(pubkey, await checkedSibling(pubkey));
+  }
+
+  async function checkedSibling(pubkey: string): Promise<boolean> {
+    if (!owner) return false;
     const lookup = await relay.queryWithStatus([{ kinds: [KIND_AGENT_ATTESTATION], authors: [owner], "#p": [pubkey] }]);
     if (lookup.failures.length) throw new Error("Work authorization lookup incomplete; keeping pending work");
-    return authorPolicyAdmits(pubkey, lookup.events.length > 0);
+    return lookup.events.some(e => e.pubkey === owner && e.tags.some(t => t[0] === "p" && t[1] === pubkey));
   }
 
   const authorPolicyAdmits = (pubkey: string, sibling: boolean): boolean =>
@@ -1423,7 +1434,7 @@ async function main() {
     onProgress: ((text: string) => void) | undefined,
     onUpdate: (update: HarnessUpdate) => void,
     signal?: AbortSignal,
-    options: { retry?: boolean; allowEmpty?: boolean; turn?: { id: string; order: string[] } } = {}
+    options: { retry?: boolean | (() => Promise<boolean>); allowEmpty?: boolean; turn?: { id: string; order: string[] } } = {}
   ): Promise<string> {
     const peers = options.turn?.order.filter(name => name !== personaId) ?? [];
     const prompt = peers.length ? async (fresh: boolean) => `${await buildPrompt(fresh)}\n\nThis request was also delivered to ${peers.map(name => '@' + name).join(', ')}. Complete only your own instruction and finish your turn. Do not send duplicate summons or reassign their existing steps.` : buildPrompt;
@@ -1432,7 +1443,7 @@ async function main() {
   async function promptSessionWork(
     scope: string, buildPrompt: (fresh: boolean) => Promise<string>,
     onProgress: ((text: string) => void) | undefined, onUpdate: (update: HarnessUpdate) => void,
-    signal?: AbortSignal, options: { retry?: boolean; allowEmpty?: boolean } = {}
+    signal?: AbortSignal, options: { retry?: boolean | (() => Promise<boolean>); allowEmpty?: boolean } = {}
   ): Promise<string> {
     // Turns are text now. Images reach the model only when it calls
     // fez_view_attachment, so nothing rides along with the prompt — see
@@ -1440,7 +1451,7 @@ async function main() {
     // images (PromptInput, and the retry that drops them when a model
     // refuses); fez-acp simply no longer sends any.
     if (!harness!.openSession) {
-      return invokeWithRetry(harness!, await buildPrompt(true), workDir, onProgress, mcpServers, onUpdate, signal, options.retry === false ? 1 : 3, onInput);
+      return invokeWithRetry(harness!, await buildPrompt(true), workDir, onProgress, mcpServers, onUpdate, signal, modelProfileActive || options.retry === false || typeof options.retry === "function" ? 1 : 3, onInput);
     }
     let pooled = await getSession(scope);
     try {
@@ -1463,7 +1474,7 @@ async function main() {
       const kind = classifyTurnError(err);
       dropSession(scope); // failed or aborted mid-prompt — never reuse
       signal?.throwIfAborted();
-      if (kind !== "transient" || options.retry === false) throw err;
+      if (kind !== "transient" || modelProfileActive || options.retry === false || typeof options.retry === "function" && !(await options.retry())) throw err;
       console.log(`↻ transient harness error — recycling session, replaying once: ${err instanceof Error ? err.message : err}`);
       pooled = await getSession(scope);
       try {
@@ -1714,11 +1725,111 @@ async function main() {
     if (request && workResultForAgent(event, request)) return request;
   }
 
+  // Follow only signed thread references to recover our parent assignment after
+  // a child callback or restart. Never paste the intervening conversation.
+  async function parentAssignment(request: ChEvent): Promise<ChEvent | undefined> {
+    const channel = request.tags.find(t => t[0] === "h")?.[1];
+    const root = parseThreadRef(request.tags).rootId ?? request.id;
+    let current = request;
+    for (let hop = 0; hop < MAX_CHAIN_DEPTH * 2; hop++) {
+      const id = parseThreadRef(current.tags).parentId;
+      if (!id) return;
+      const result = await relay.queryWithStatus([{ kinds: [KIND_CHANNEL_MESSAGE], ids: [id] }]);
+      if (result.failures.length) throw new Error("Parent assignment lookup incomplete; retry result recovery");
+      const parent = result.events.find(e => e.id === id);
+      if (!parent) throw new Error("Parent message unavailable; keeping the result pending");
+      if (!parent.tags.some(t => t[0] === "h" && t[1] === channel) ||
+          (parseThreadRef(parent.tags).rootId ?? parent.id) !== root || !workspace.isMember(parent.pubkey)) return;
+      if (parent.pubkey !== myPubkey && parent.tags.some(t => t[0] === "task" && t[1] === myPubkey) &&
+          !parent.tags.some(t => t[0] === "result") && await checkedAuthorAllowed(parent.pubkey)) return parent;
+      current = parent;
+    }
+  }
+
+  async function checkedWorkEvents(filters: Parameters<typeof relay.queryWithStatus>[0]) {
+    const result = await relay.queryWithStatus(filters);
+    if (result.failures.length) throw new Error("Work delivery history unavailable; keeping pending work");
+    return result.events;
+  }
+
+  async function assignedParent(event: ChEvent): Promise<ChEvent | undefined> {
+    if (event.tags.some(t => t[0] === "result")) {
+      const request = await completionRequest(event);
+      if (!request) throw new Error("Original assignment unavailable; keeping the result pending");
+      return parentAssignment(request);
+    }
+    return event.tags.some(t => t[0] === "task" && t[1] === myPubkey) ? event : undefined;
+  }
+
+  // Reconcile both MCP and normal replies before a retry or an automatic error.
+  // A terminal parent result takes precedence; otherwise finish dispatching its children.
+  async function reconcileDelivery(event: ChEvent, assigned?: ChEvent, waitForChildren = false): Promise<ChEvent | undefined> {
+    const target = assigned ?? event;
+    const channel = event.tags.find(t => t[0] === "h")?.[1];
+    const children = workInbox.pendingHandoffs().filter(child => parseThreadRef(child.tags).parentId === event.id);
+    const own = await checkedWorkEvents([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], "#e": [...new Set([event.id, target.id])] }]);
+    const terminal = assigned && own.find(reply => workResult(reply, assigned));
+    const saved = workInbox.delivery(target.id);
+    if (terminal || saved) {
+      const delivery = terminal || saved!;
+      if (delivery.pubkey !== myPubkey || !delivery.tags.some(t => t[0] === "h" && t[1] === channel) ||
+          (assigned ? !workResult(delivery, assigned) : parseThreadRef(delivery.tags).parentId !== event.id)) {
+        throw new Error("Saved delivery does not match pending work");
+      }
+      if (!own.some(reply => reply.id === delivery.id)) await relay.publish(delivery);
+      for (const child of children) workInbox.handoffSent(child);
+      return delivery;
+    }
+    for (const child of children) {
+      const workers = child.tags.filter(t => t[0] === "task").map(t => t[1]);
+      if (child.pubkey !== myPubkey || child.kind !== KIND_CHANNEL_MESSAGE || !workers.length ||
+          child.content.length > HANDOFF_BRIEF_LIMIT ||
+          !child.tags.some(t => t[0] === "h" && t[1] === channel) ||
+          Number(child.tags.find(t => t[0] === "depth")?.[1] ?? 0) >= MAX_CHAIN_DEPTH) throw new Error("Invalid saved handoff");
+      for (const worker of workers) {
+        if (!workspace.isMember(worker) || !(await checkedSibling(worker))) {
+          const summary = "Handoff blocked: the assigned worker is no longer authorized. Review any completed actions before assigning another worker.";
+          const blocked = workInbox.delivery(target.id, () => client.signEvent(assigned
+            ? completeWork(assigned, myPubkey, { status: "error", summary, capability: "handoff", artifacts: [] })
+            : { kind: KIND_CHANNEL_MESSAGE, content: summary, tags: [["h", channel!], ["e", parseThreadRef(event.tags).rootId ?? event.id, "", "root"], ["e", event.id, "", "reply"], ["p", event.pubkey]] }));
+          await relay.publish(blocked);
+          for (const pending of children) workInbox.handoffSent(pending);
+          return blocked;
+        }
+      }
+      if (!own.some(reply => reply.id === child.id)) await relay.publish(child);
+      workInbox.handoffSent(child);
+    }
+    const sent = children.at(-1) ?? own.find(reply => parseThreadRef(reply.tags).parentId === event.id &&
+      reply.tags.some(t => t[0] === "h" && t[1] === channel) &&
+      (!assigned || reply.tags.some(t => t[0] === "task") && !reply.tags.some(t => t[0] === "result")));
+    return sent ?? (waitForChildren && assigned ? await outstandingChild(assigned) : undefined);
+  }
+
+  async function outstandingChild(parent: ChEvent): Promise<ChEvent | undefined> {
+    const requests: ChEvent[] = [];
+    await workHistory(relay.queryWithStatus.bind(relay), {
+      kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey],
+      "#h": [parent.tags.find(t => t[0] === "h")![1]],
+      "#e": [parseThreadRef(parent.tags).rootId ?? parent.id], since: 0, until: Math.floor(Date.now() / 1000),
+    }, async request => {
+      if (request.tags.some(t => t[0] === "task") && !request.tags.some(t => t[0] === "result" || t[0] === "result-handler" && t[1] === "external") &&
+          (await parentAssignment(request))?.id === parent.id) requests.push(request);
+    });
+    for (const request of requests) {
+      const results = await checkedWorkEvents([{ kinds: [KIND_CHANNEL_MESSAGE], "#result": [request.id] }]);
+      for (const worker of new Set(request.tags.filter(t => t[0] === "task").map(t => t[1]))) {
+        if (workspace.isMember(worker) && await checkedSibling(worker) &&
+            !results.some(result => result.pubkey === worker && workResult(result, request))) return request;
+      }
+    }
+  }
+
   const handleChannelMessage = async (
     event: ChEvent,
     { redispatch = false, attempts = 0, doc, steering = [], scope: queuedScope }: ChannelTurnOptions = {}
   ): Promise<void> => {
-      if (agentStopping || unreconciledAtBoot.has(event.id)) return;
+      if (agentStopping || unreconciledAtBoot.has(event.id) || workInbox.get(event.id)?.state === "finished") return;
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
       if (!channelId || event.pubkey === myPubkey) return;
       if (!redispatch && seenEventIds.has(event.id)) return;
@@ -1739,7 +1850,11 @@ async function main() {
 
       const isResult = event.tags.some(t => t[0] === "result");
       let completedRequest: ChEvent | undefined;
-      try { completedRequest = !doc && isResult ? await completionRequest(event) : undefined; }
+      let assignedRequest: ChEvent | undefined = !doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey) ? event : undefined;
+      try {
+        completedRequest = !doc && isResult ? await completionRequest(event) : undefined;
+        if (completedRequest) assignedRequest = await parentAssignment(completedRequest);
+      }
       catch (error) {
         if (workInbox.get(event.id)?.state === "queued") workInbox.queued(event.id, attempts, Date.now() + 30_000);
         scheduleDrain(30_000);
@@ -1774,7 +1889,7 @@ async function main() {
       // respondTo=anyone agents naming each other would ping-pong
       // harness turns forever.
       const triggerDepth = Number(event.tags.find((t) => t[0] === "depth")?.[1] ?? 0);
-      if (triggerDepth >= MAX_CHAIN_DEPTH) {
+      if (!completedRequest && triggerDepth >= MAX_CHAIN_DEPTH) {
         console.log(`⛔ Chain depth ${triggerDepth} ≥ ${MAX_CHAIN_DEPTH} — not responding (loop guard)`);
         return;
       }
@@ -1789,6 +1904,21 @@ async function main() {
           return;
         }
         workInbox.accept(event);
+      }
+      if (!doc && (completedRequest && assignedRequest || workInbox.delivery(assignedRequest?.id ?? event.id))) {
+        try {
+          if (await reconcileDelivery(event, assignedRequest)) {
+            if (!workInbox.get(event.id)) workInbox.accept(event);
+            workInbox.finish(event.id);
+            return;
+          }
+        } catch (error) {
+          if (!workInbox.get(event.id)) workInbox.accept(event);
+          workInbox.queued(event.id, attempts, Date.now() + 30_000);
+          scheduleDrain(30_000);
+          console.error("Prior delivery lookup pending:", error);
+          return;
+        }
       }
       const deferDurable = () => {
         if (durable) {
@@ -1982,11 +2112,12 @@ async function main() {
         const buildPrompt = async (fresh: boolean): Promise<string> => {
           const memory = memoryPromptParts(await coreMemoryState());
           const sourceNotice = `Current source message ID: ${event.id}; channel: ${untrustedValue(channelId)}; author: ${event.pubkey}${event.pubkey === owner ? " (your owner)" : ""}.`;
-          const workNotice = completedRequest
+          const workNotice = (completedRequest
             ? `Delegated result ${event.id} for request ${completedRequest.id}: ${workResult(event, completedRequest)}. Check the deliverable against the original request: ${untrustedValue(completedRequest.content)}. If it meets the request, call fez_accept_work with resultId=${event.id} and a note naming what you actually checked. Then deliver the outcome to the original user. Submission alone is not acceptance. Do not @mention the worker to acknowledge it.`
             : !doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey)
               ? `Assigned work requestId=${event.id}. When finished, call fez_complete_work with this requestId, status success or error, summary, capability, and artifact URLs/event ids. The summary is the actual reply delivered to the requester: include your full answer or deliverable and useful details, not a report about answering them (say "Hello!" rather than "Greeted the user"). This publishes your result automatically; do not put the answer in a separate message after the tool, or send a separate callback or acceptance. Report blockers as error, never as success.`
-              : undefined;
+              : "") + (completedRequest && assignedRequest
+                ? `\nYour parent assignment is requestId=${assignedRequest.id}. Its brief: ${untrustedValue(assignedRequest.content, HANDOFF_BRIEF_LIMIT)}. After reviewing the child result, finish YOUR assignment with fez_complete_work using that parent requestId. A child result is not your completed delivery. If other children still owe results, wait for them before completing your assignment. If more specialist work is needed, send a fresh self-contained brief and wait for its result.` : "");
           if (!fresh) {
             return [
               sourceNotice,
@@ -2035,7 +2166,7 @@ async function main() {
               ? [`- MCP tools: your attached tools (${mcpServers.map((m) => m.name).join(", ")}) live behind the \`mcp\` proxy, not as direct functions. To use one, first call mcp({ search: "<capability>" }) to find the exact tool name (search by what you want to DO — "search", "fetch", "pay" — not by your query text), then call it. Don't reach for shell curl/wget when a tool exists; discover it through mcp first.`]
               : []),
             `- Names: everyone in a channel appears by their name, not a key. An @mention only reaches someone if you use that NAME — writing @ followed by a hex id reaches nobody, notifies nobody, and merely looks like it worked. If all you can see for someone is a short hex id they have no name published; refer to them without an @.`,
-            `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this ONLY when you need that agent to act ("if X, ping @coder" → "@coder please …" with the context they need). Referring to an agent without needing action? Write the name WITHOUT the @ ("reviewer already confirmed this") — an @ is a summons, not a courtesy. If the task's handoff condition is NOT met, mention nobody and state the outcome. If a task is complete and needs no one, reply briefly and mention nobody — do not thank, acknowledge, or wrap up with another @.`,
+            `- Handoffs: address @name only when that agent must act. Write a fresh self-contained brief: task, relevant facts, constraints, expected result, and message/document/artifact references. Keep it under ${HANDOFF_BRIEF_LIMIT} characters. Never copy transcripts, private memory, or nested briefs. Use fez_read_message with an exact ID to fetch only needed excerpts; documents have their own read tools. Your normal reply creates the handoff; if using fez_send_message, supply replyTo with the current source message ID. Send once, then wait for the signed result. References to teammates, thanks, and acknowledgments use names WITHOUT @. Conditional downstream handoffs wait until their condition is met.`,
             ...(shareLevel
               ? [
                   [
@@ -2127,23 +2258,18 @@ async function main() {
           publishDraft,
           onUpdate,
           turnController.signal,
-          { turn: { id: steering.at(-1)?.id ?? event.id, order: [...new Set([...addressees(steering.at(-1)?.content ?? event.content), personaId])] } }
+          { retry: durable ? false : doc ? true : async () => !(await reconcileDelivery(event)), turn: { id: steering.at(-1)?.id ?? event.id, order: [...new Set([...addressees(steering.at(-1)?.content ?? event.content), personaId])] } }
         );
         turnAcceptsSteering = false;
         if (turnController.signal.aborted) throw Object.assign(new Error("turn aborted"), { name: "AbortError" });
-        // The completion tool already posted the signed, threaded result.
-        // Do not post the model's tool acknowledgment as a second delivery.
-        if (!doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey)) {
-          const submitted = await relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], "#result": [event.id] }]);
-          const result = submitted.find(r => workResult(r, event));
-          if (result) {
-            if (durable) workInbox.finish(event.id);
-            recent.add(scope, result.id, `${who(result.pubkey)}: ${result.content}`);
-            publishObserver({ type: "turn", status: "done" });
-            publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, result.content.length, event.id);
-            consecutiveFailures = 0;
-            return;
-          }
+        const delivered = !doc && await reconcileDelivery(event, assignedRequest, true);
+        if (delivered) {
+          if (durable) workInbox.finish(event.id);
+          recent.add(scope, delivered.id, `${who(delivered.pubkey)}: ${delivered.content}`);
+          publishObserver({ type: "turn", status: "done" });
+          publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, delivered.content.length, event.id);
+          consecutiveFailures = 0;
+          return;
         }
         // Never publish an empty message, whatever path produced it.
         if (!rawReply.trim()) throw new Error("harness returned an empty reply");
@@ -2152,24 +2278,40 @@ async function main() {
 
         // Whoever the reply names is tagged, on top of whoever triggered
         // it — otherwise an agent handing work to you notifies nobody.
-        const mentioned = await mentionTags(reply, pubkeyForName, [
+        const mentioned = doc ? await mentionTags(reply, pubkeyForName, [
           myPubkey,
           ...replyTags.filter((tag) => tag[0] === "p").map((tag) => tag[1]),
-        ]).catch(() => []);
-        const assignments: string[][] = [];
-        if (!doc) {
-          for (const name of addressees(reply)) {
-            const pk = await pubkeyForName(name);
-            // A callback to the caller is not a new assignment.
-            if (pk && pk !== myPubkey && pk !== owner && pk !== event.pubkey && await isSibling(pk)) assignments.push(["task", pk]);
-          }
+        ]).catch(() => []) : [];
+        const profiles = !doc && addressees(reply).length ? await agentProfiles(
+          [...workspace.workspace.members.keys()].filter(pk => workspace.isMember(pk)), checkedWorkEvents,
+        ) : [];
+        const outgoingTags = doc ? [...replyTags, ...mentioned] : await agentMessageTags(reply, {
+          channel: channelId, sender: myPubkey, owner, source: event,
+          resolve: async name => resolveAgentName(name, profiles), isWorker: checkedSibling,
+        });
+        const handingOff = outgoingTags.some(t => t[0] === "task");
+        if (handingOff && triggerDepth + 1 >= MAX_CHAIN_DEPTH) throw new Error("Handoff reached the agent chain limit; no further worker was summoned.");
+        if (assignedRequest && !handingOff) {
+          const summary = `No terminal result was submitted with fez_complete_work. The last reply is unverified:\n${rawReply}`.slice(0, 8000);
+          const result = workInbox.delivery(assignedRequest.id, () => client.signEvent(completeWork(assignedRequest!, myPubkey,
+            { status: "error", summary, capability: "handoff", artifacts: [] })));
+          await relay.publish(result);
+          if (durable) workInbox.finish(event.id);
+          recent.add(scope, result.id, `${who(result.pubkey)}: ${result.content}`);
+          publishObserver({ type: "turn", status: "failed" });
+          publishTurnMetric(`ch:${channelId}`, "failed", turnStartedAt, summary.length, event.id);
+          recordFailure();
+          return;
         }
         const replyEvent = client.signEvent({
           kind: replyKind,
-          tags: [...replyTags, ...mentioned, ...assignments],
+          tags: outgoingTags,
           content: reply || `📦 ${artifacts[0]?.title ?? artifacts[0]?.type ?? "artifact"}`,
         });
-        await relay.publish(durable ? workInbox.delivery(event.id, () => replyEvent) : replyEvent);
+        const outgoing = handingOff ? workInbox.handoff(replyEvent, () => replyEvent)
+          : durable ? workInbox.delivery(event.id, () => replyEvent) : replyEvent;
+        await relay.publish(outgoing);
+        if (handingOff) workInbox.handoffSent(outgoing);
         if (durable) workInbox.finish(event.id);
         recent.add(scope, replyEvent.id, `${who(replyEvent.pubkey)}: ${replyEvent.content}`);
         // Tag the artifact with the conversation's thread root, so a
@@ -2198,14 +2340,37 @@ async function main() {
         // Opening/replaying a session may fail without observing cancellation.
         // Steering still owns that exit; retrying first would discard its follow-ups.
         const err = turnController?.signal.aborted ? turnController.signal.reason : caughtError;
-        if (durable) {
+        if (!doc && !cancelRequested) {
+          try {
+            if (await reconcileDelivery(event, assignedRequest, true)) {
+              if (workInbox.get(event.id)) workInbox.finish(event.id);
+              publishObserver({ type: "turn", status: "done" });
+              return;
+            }
+          } catch (deliveryError) {
+            // Delivery is uncertain. Reconcile later without repeating model/tool actions.
+            if (!workInbox.get(event.id)) workInbox.accept(event);
+            workInbox.running(event.id);
+            interruptedAtBoot.add(event.id);
+            console.error("Handoff reconciliation pending:", deliveryError);
+            return;
+          }
+        }
+        if (durable || (!doc && cancelRequested)) {
           if (!cancelRequested) recordFailure();
           const summary = cancelRequested ? "Work stopped by my owner; actions may be partially completed." :
             `Work interrupted: ${err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200)}. Review any completed actions before assigning it again.`;
           try {
-            const delivery = workInbox.delivery(event.id, () => client.signEvent(completedRequest
-              ? { kind: KIND_CHANNEL_MESSAGE, tags: replyTags, content: summary }
-              : completeWork(event, myPubkey, { status: "error", summary, capability: "recovery", artifacts: [] })));
+            const delivery = workInbox.delivery(assignedRequest?.id ?? event.id, () => client.signEvent(assignedRequest
+              ? completeWork(assignedRequest, myPubkey, { status: "error", summary, capability: "recovery", artifacts: [] })
+              : { kind: KIND_CHANNEL_MESSAGE, tags: replyTags, content: summary }));
+            // The saved cancellation wins recovery even if the process dies
+            // before recording the inbox item or settling all child dispatches.
+            if (!workInbox.get(event.id)) workInbox.accept(event);
+            if (cancelRequested) {
+              workInbox.running(event.id);
+              for (const child of workInbox.pendingHandoffs().filter(child => parseThreadRef(child.tags).parentId === event.id)) workInbox.handoffSent(child);
+            }
             await relay.publish(delivery);
             workInbox.finish(event.id);
           } catch (deliveryError) {
@@ -2226,7 +2391,7 @@ async function main() {
           publishObserver({ type: "turn", status: "steered" });
           publishTurnMetric(`ch:${channelId}`, "steered", turnStartedAt, 0, event.id);
           console.log(`🔀 Turn cancelled for steering — re-dispatching merged prompt`);
-        } else if (!durable && classifyTurnError(err) === "transient" && attempts < RETRY_DELAYS_MS.length) {
+        } else if (!durable && !modelProfileActive && classifyTurnError(err) === "transient" && attempts < RETRY_DELAYS_MS.length) {
           // Retry ladder (Buzz's requeue-with-backoff): a relay blip or
           // harness hiccup gets 3 spaced retries before dead-lettering.
           // No breaker count, no failure notice — this is recovery, not
@@ -2456,7 +2621,7 @@ async function main() {
         void sendDmReply(replyTargets, "⏹ stopped by my owner mid-turn.", dm.depth + 1).catch(() => {});
         return;
       }
-      if (classifyTurnError(err) === "transient" && attempts < RETRY_DELAYS_MS.length) {
+      if (!modelProfileActive && classifyTurnError(err) === "transient" && attempts < RETRY_DELAYS_MS.length) {
         publishObserver({ type: "turn", status: "retrying" });
         const delay = RETRY_DELAYS_MS[attempts];
         console.warn(`↻ transient DM turn failure — retry ${attempts + 1}/${RETRY_DELAYS_MS.length} in ${delay / 1000}s`);
@@ -2588,11 +2753,22 @@ async function main() {
     if (recoveringWork || agentStopping || !workspace.isMember(myPubkey)) return;
     recoveringWork = true;
     try {
-      const checkedQuery = async (filters: Parameters<typeof relay.queryWithStatus>[0]) => {
-        const result = await relay.queryWithStatus(filters);
-        if (result.failures.length) throw new Error("Work recovery history unavailable; keeping pending work");
-        return result.events;
-      };
+      const checkedQuery = checkedWorkEvents;
+      // MCP writes only the separate outbox. Recover its source even when the
+      // runtime crashed before recording that ordinary user message in its inbox.
+      for (const child of workInbox.pendingHandoffs()) {
+        const sourceId = parseThreadRef(child.tags).parentId;
+        if (!sourceId || sourceId === activeDurableWork || inputOrigin?.messageId === sourceId) continue;
+        const [source] = await checkedQuery([{ kinds: [KIND_CHANNEL_MESSAGE], ids: [sourceId] }]);
+        if (!source || !channels.includes(source.tags.find(t => t[0] === "h")?.[1] ?? "") ||
+            !workspace.isMember(source.pubkey) || !(await checkedAuthorAllowed(source.pubkey))) continue;
+        const assigned = await assignedParent(source);
+        if (await reconcileDelivery(source, assigned)) {
+          if (!workInbox.get(source.id)) workInbox.accept(source);
+          workInbox.finish(source.id);
+          interruptedAtBoot.delete(source.id);
+        }
+      }
       // Reconciliation precedes replay. A crash after publish but before the
       // local finish write must not execute the same assignment again.
       for (const item of workInbox.pending()) {
@@ -2604,25 +2780,19 @@ async function main() {
           continue;
         }
         if (item.state === "running" && !interruptedAtBoot.has(event.id) && activeDurableWork === event.id) continue;
-        const own = await checkedQuery([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], "#e": [event.id] }]);
-        const replied = own.some(reply => reply.tags.some(t => t[0] === "e" && t[1] === event.id && t[3] === "reply") &&
-          reply.tags.some(t => t[0] === "h" && t[1] === event.tags.find(t => t[0] === "h")?.[1]));
-        if (replied) { workInbox.finish(event.id); interruptedAtBoot.delete(event.id); continue; }
-        const saved = workInbox.delivery(event.id);
-        if (saved) {
-          if (saved.pubkey !== myPubkey || !saved.tags.some(t => t[0] === "e" && t[1] === event.id && t[3] === "reply") ||
-              !saved.tags.some(t => t[0] === "h" && t[1] === event.tags.find(t => t[0] === "h")?.[1])) throw new Error("Saved delivery does not match pending work");
-          await relay.publish(saved); workInbox.finish(event.id); interruptedAtBoot.delete(event.id); continue;
+        const assigned = await assignedParent(event);
+        if (await reconcileDelivery(event, assigned, item.state === "running")) {
+          workInbox.finish(event.id); interruptedAtBoot.delete(event.id); continue;
         }
         if (interruptedAtBoot.has(event.id)) {
           const summary = "Work interrupted by an agent restart. Actions may be partially completed; review them before assigning this work again.";
           const root = parseThreadRef(event.tags).rootId ?? event.id;
-          const template = event.tags.some(t => t[0] === "task" && t[1] === myPubkey)
-            ? completeWork(event, myPubkey, { status: "error", summary, capability: "recovery", artifacts: [] })
+          const template = assigned
+            ? completeWork(assigned, myPubkey, { status: "error", summary, capability: "recovery", artifacts: [] })
             : { kind: KIND_CHANNEL_MESSAGE, content: summary, tags: [["h", event.tags.find(t => t[0] === "h")![1]],
                 ["e", root, "", "root"], ["e", event.id, "", "reply"], ["p", event.pubkey],
                 ["depth", String(Number(event.tags.find(t => t[0] === "depth")?.[1] ?? 0) + 1)]] };
-          await relay.publish(workInbox.delivery(event.id, () => client.signEvent(template)));
+          await relay.publish(workInbox.delivery(assigned?.id ?? event.id, () => client.signEvent(template)));
           workInbox.finish(event.id); interruptedAtBoot.delete(event.id);
         }
         // Only a checked reconciliation may release a disk-loaded queued item.
@@ -2641,7 +2811,7 @@ async function main() {
             since: result ? workInbox.cursor(key, 0) : Math.min(workInbox.cursor(key, until - WORK_LOOKBACK_S), until - WORK_LOOKBACK_S), until,
           }, async event => {
             if (event.pubkey === myPubkey || !workspace.isMember(event.pubkey) || !(await checkedAuthorAllowed(event.pubkey))) return;
-            if (Number(event.tags.find(t => t[0] === "depth")?.[1] ?? 0) >= MAX_CHAIN_DEPTH) return;
+            if (!result && Number(event.tags.find(t => t[0] === "depth")?.[1] ?? 0) >= MAX_CHAIN_DEPTH) return;
             if (!result && event.tags.some(t => t[0] === "result")) return;
             const request = result ? await completionRequest(event) : undefined;
             if (result && !request) return;

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { localAgents, useHarnesses } from "./harnesses";
 import { providerId } from "./providers";
+import { listModelProviders } from "./model-providers";
 
 /**
  * Pick an agent's BRAIN — Buzz's agent-pane pattern. Users think about one
@@ -32,6 +33,7 @@ export interface BrainSelection {
   harness: string;
   provider: string;
   model: string;
+  modelProfile?: string;
 }
 
 export function ModelPicker({ value, onChange }: { value: BrainSelection; onChange: (s: BrainSelection) => void }) {
@@ -40,6 +42,15 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
   const [wiredModels, setWiredModels] = useState<Record<string, string[]>>({});
   const [wireError, setWireError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const [extensions, setExtensions] = useState<Awaited<ReturnType<typeof listModelProviders>>>([]);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => { void listModelProviders().then((items) => { if (active) setExtensions(items); }); };
+    refresh();
+    window.addEventListener("fez-gui-extensions-changed", refresh);
+    return () => { active = false; window.removeEventListener("fez-gui-extensions-changed", refresh); };
+  }, []);
 
   useEffect(() => {
     // Wire each key-bearing provider + list its models for the dropdown. No
@@ -68,8 +79,12 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
   // editor doesn't read as unconfigured.
   const effectiveProvider = providerId(value.provider);
   const selectedWired = WIRED.find((w) => w.local === effectiveProvider);
+  const selectedExtension = extensions.find(({ provider }) => provider.id === value.modelProfile);
+  const selectedModel = selectedExtension?.models.find((model) => model.id === value.model);
+  const extValue = value.modelProfile ? `${value.modelProfile}:${value.model}` : "";
   const current =
-    localAgents.some((a) => a.id === value.harness)
+    value.modelProfile ? extValue
+      : localAgents.some((a) => a.id === value.harness)
       ? value.harness
       : value.harness === "pi" && selectedWired && value.model
         ? `${selectedWired.id}:${value.model}`
@@ -84,12 +99,14 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
     if (v.startsWith("locked:")) { setLockedPick(v.slice("locked:".length)); return; }
     setLockedPick(undefined);
     const wired = WIRED.find((w) => v.startsWith(`${w.id}:`));
-    if (localAgents.some((a) => a.id === v)) onChange({ harness: v, provider: "", model: "" });
-    else if (wired) onChange({ harness: "pi", provider: wired.local, model: v.slice(wired.id.length + 1) });
-    else onChange({ harness: "pi", provider: "", model: "" }); // not configured — built-in runtime, no model yet
+    const extension = extensions.find(({ provider }) => v.startsWith(`${provider.id}:`));
+    if (extension) onChange({ harness: "pi", provider: extension.provider.id, model: v.slice(extension.provider.id.length + 1), modelProfile: extension.provider.id });
+    else if (localAgents.some((a) => a.id === v)) onChange({ harness: v, provider: "", model: "", modelProfile: "" });
+    else if (wired) onChange({ harness: "pi", provider: wired.local, model: v.slice(wired.id.length + 1), modelProfile: "" });
+    else onChange({ harness: "pi", provider: "", model: "", modelProfile: "" }); // not configured
   };
 
-  const hasOptions = installedAgents.length > 0 || WIRED.some((w) => (wiredModels[w.id] ?? []).length > 0);
+  const hasOptions = installedAgents.length > 0 || WIRED.some((w) => (wiredModels[w.id] ?? []).length > 0) || extensions.some((entry) => entry.models.length > 0);
   const lockedEntry = WIRED.find((w) => w.id === lockedPick);
 
   return (
@@ -113,6 +130,21 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
               </optgroup>
             );
           })}
+          {/* A model that is ready needs no adjective — the name alone is the
+              option. Only a shelf you cannot use right now says so, and it
+              says it in words rather than as a third dot-joined fragment. */}
+          {extensions.map(({ provider, models }) => (
+            <optgroup key={provider.id} label={provider.label}>
+              {models.map((model) => (
+                <option key={model.id} value={`${provider.id}:${model.id}`}>
+                  {model.status === "ready" ? model.label : `${model.label} (${model.status})`}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+          {value.modelProfile && !selectedModel && (
+            <option value={extValue}>{value.model} · unavailable</option>
+          )}
           {installedAgents.length > 0 && (
             <optgroup label="On this machine">
               {installedAgents.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
@@ -126,6 +158,17 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
       )}
       {selectedWired && current.startsWith(`${selectedWired.id}:`) && !lockedPick && (
         <div className="settings-hint">{selectedWired.hint}</div>
+      )}
+      {/* One fact per line. Run together, the provider name, the model's own
+          detail sentence and a failure all read as a single paragraph, and
+          the failure — the only line you must act on — disappears into it. */}
+      {value.modelProfile && !lockedPick && (
+        <div className="settings-hint">
+          <p>{selectedExtension?.provider.label ?? value.modelProfile}</p>
+          {selectedModel?.detail && <p>{selectedModel.detail}</p>}
+          {selectedExtension?.error && <p>⚠ {selectedExtension.error}</p>}
+          {!selectedExtension && <p>Restore this extension before saving.</p>}
+        </div>
       )}
       {lockedEntry && (
         <div className="settings-hint">

@@ -11,7 +11,8 @@ import HoverCard from "./HoverCard";
 import PersonaEditor from "./PersonaEditor";
 import AgentProfile from "./AgentProfile";
 import BenchProposals from "./BenchProposals";
-import { ModelPicker } from "./ModelPicker";
+import { ModelPicker, type BrainSelection } from "./ModelPicker";
+import { prepareAgentModel } from "./model-providers";
 import { useConfig } from "./config-store";
 import { agentSkillHealth, type InstalledSkillMd } from "./agent-skill-health";
 
@@ -907,7 +908,7 @@ conversation. Summarize, attribute your uncertainty, stop.`;
 
 function CreateAgentForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
-  const [brain, setBrain] = useState({ harness: "pi", provider: "", model: "" });
+  const [brain, setBrain] = useState<BrainSelection>({ harness: "pi", provider: "", model: "" });
   const [description, setDescription] = useState("");
   const [prompt, setPrompt] = useState("");
   const [state, setState] = useState<"idle" | "saving" | "done" | string>("idle");
@@ -932,6 +933,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
       `harness: ${brain.harness}`,
       ...(brain.provider ? [`provider: ${brain.provider}`] : []),
       ...(brain.model ? [`model: ${brain.model}`] : []),
+      ...(brain.modelProfile ? [`modelProfile: ${brain.modelProfile}`] : []),
       ...(description.trim() ? [`description: ${description.trim().replace(/\n/g, " ")}`] : []),
       ...(template === "bridge"
         ? [
@@ -945,6 +947,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
       "",
     ].join("\n");
     try {
+      await prepareAgentModel(brain, name.trim());
       await invoke<string>("write_persona", { name: name.trim(), content: front + (prompt.trim() || `You are ${name.trim()}.`) + "\n" });
       setState("done");
     } catch (err) {

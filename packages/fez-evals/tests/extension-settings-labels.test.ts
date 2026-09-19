@@ -23,13 +23,13 @@ afterEach(async () => {
 });
 
 it("shows friendly settings labels while selecting the original registered panel", async () => {
-  const names = ["wallet", "fez-github", "fez-browser"];
+  const names = ["wallet", "fez-github", "fez-browser", "mesh"];
   const renders = names.map(name => vi.fn(() => React.createElement("div", { "data-panel": name }, `${name} controls`)));
-  names.forEach((name, i) => registerSettingsPanel(name, renders[i]));
+  names.forEach((name, i) => registerSettingsPanel(name, renders[i], name === "mesh" ? { label: "Shared Models" } : undefined));
 
   await act(async () => root.render(React.createElement(SettingsPane, { client, wire: {} as BrowserWire, onClose: () => {} })));
   const nav = [...document.querySelectorAll<HTMLButtonElement>(".settings-nav-item")];
-  expect(nav.slice(-3).map(button => button.textContent)).toEqual(["wallet", "github", "browser"]);
+  expect(nav.slice(-4).map(button => button.textContent)).toEqual(["wallet", "github", "browser", "Shared Models"]);
   expect(extensionSettingsPanels().map(panel => panel.name)).toEqual(names);
 
   await act(async () => nav.find(button => button.textContent === "github")!.click());
@@ -39,4 +39,9 @@ it("shows friendly settings labels while selecting the original registered panel
   expect(renders[1]).toHaveBeenCalled();
   expect(renders[0]).not.toHaveBeenCalled();
   expect(renders[2]).not.toHaveBeenCalled();
+
+  await act(async () => nav.find(button => button.textContent === "Shared Models")!.click());
+  expect(document.querySelector(".set-title")?.textContent).toBe("Shared Models");
+  expect(document.querySelector("[data-panel]")?.getAttribute("data-panel")).toBe("mesh");
+  expect(document.querySelector(".settings-nav-item.active")?.getAttribute("title")).toBe("mesh");
 });

@@ -9,6 +9,11 @@ export function workDirectory(pubkey: string, relays: string[]): string {
   return path.join(os.homedir(), ".fez", "agents", "inbox", scope);
 }
 
+/** Nonterminal handoffs must not occupy the parent request's terminal-result slot. */
+export function handoffDeliveryId(message: { content: string; tags: string[][] }): string {
+  return createHash("sha256").update(JSON.stringify(["handoff", message.tags, message.content])).digest("hex");
+}
+
 function signed(value: unknown): Event {
   // Strip nostr-tools' cached verification symbol before crossing the disk boundary.
   const event = JSON.parse(JSON.stringify(value));
@@ -80,6 +85,20 @@ export class DurableWork {
   }
   checkpoint(channel: string, time: number): void {
     this.save({ ...this.data, cursors: { ...this.data.cursors, [channel]: time } });
+  }
+  /** A separate immutable outbox keeps child assignments out of the parent's result slot. */
+  handoff(message: { content: string; tags: string[][] }, create: () => Event): Event {
+    return new DurableWork(path.join(this.directory, "handoffs")).delivery(handoffDeliveryId(message), create);
+  }
+  handoffSent(event: Event): void {
+    atomic(path.join(this.directory, "handoffs", "outbox", `${handoffDeliveryId(event)}.sent`), {});
+  }
+  pendingHandoffs(): Event[] {
+    const directory = path.join(this.directory, "handoffs", "outbox");
+    if (!fs.existsSync(directory)) return [];
+    const names = new Set(fs.readdirSync(directory));
+    return [...names].filter(name => /^[a-f0-9]{64}\.json$/.test(name) && !names.has(name.replace(/\.json$/, ".sent")))
+      .map(name => signed(JSON.parse(fs.readFileSync(path.join(directory, name), "utf8"))));
   }
   /** First signed reply wins even across simultaneous MCP sessions. */
   delivery(id: string, create: () => Event): Event;

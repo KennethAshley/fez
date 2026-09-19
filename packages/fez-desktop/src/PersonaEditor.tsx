@@ -6,6 +6,7 @@ import type { FezClient } from "@fezchat/client";
 import { parseSkillEntries, formatSkillEntries, parseSkillDecls, formatSkillDecls, safeSkillEntries, nearestKnownKey } from "@fezchat/client";
 import { DEFAULT_REFLECTION_PROMPT, reflectionConfig, reflectionEnabled } from "@fezchat/client";
 import { ModelPicker } from "./ModelPicker";
+import { prepareAgentModel } from "./model-providers";
 import { accessRows } from "./access-rows";
 import { listGuests } from "./guest-threads";
 import SkillPicker from "./SkillPicker";
@@ -86,7 +87,7 @@ export default function PersonaEditor({
 
   // Launch configuration changes apply on an explicit restart; saving
   // must not interrupt the work already running with the old configuration.
-  const SPAWN_KEYS = ["mcpServers", "skills", "harness", "provider", "model", "effort", "repo", "scope", "reflectionEvery", "reflectionPrompt"];
+  const SPAWN_KEYS = ["mcpServers", "skills", "harness", "provider", "model", "modelProfile", "effort", "repo", "scope", "reflectionEvery", "reflectionPrompt"];
 
   const supportsReflection = getField(front, "harness") !== "router";
   let draftFront = front;
@@ -115,6 +116,7 @@ export default function PersonaEditor({
     const savedFront = (saved?.front ?? "").split("\n");
     const spawnChanged = SPAWN_KEYS.some((k) => getField(savedFront, k) !== getField(draftFront, k));
     try {
+      await prepareAgentModel({ harness: getField(draftFront, "harness"), provider: getField(draftFront, "provider"), modelProfile: getField(draftFront, "modelProfile"), model: getField(draftFront, "model") }, name);
       await invoke("update_persona", { name, content });
       if (spawnChanged) {
         const alive = await invoke<boolean>("agent_alive", { persona: name, bin: "fez-agent" }).catch(() => false);
@@ -147,8 +149,8 @@ export default function PersonaEditor({
   // The brain is one control (model). It writes harness/provider/model at
   // once — pi is invisible plumbing, so it's set here without ever being
   // named in the UI.
-  const setBrain = (s: { harness: string; provider: string; model: string }) =>
-    setFront(setField(setField(setField(front, "harness", s.harness), "provider", s.provider), "model", s.model));
+  const setBrain = (s: { harness: string; provider: string; model: string; modelProfile?: string }) =>
+    setFront(setField(setField(setField(setField(front, "harness", s.harness), "provider", s.provider), "model", s.model), "modelProfile", s.modelProfile ?? ""));
 
   const dirty = !saved || saved.front !== draftFront.join("\n") || saved.body !== body;
   const skillNames = parseSkillEntries(splitList(field("mcpServers"))).names;
@@ -203,7 +205,7 @@ export default function PersonaEditor({
         </div>
         {field("harness") !== "router" && (
           <ModelPicker
-            value={{ harness: field("harness"), provider: field("provider"), model: field("model") }}
+            value={{ harness: field("harness"), provider: field("provider"), model: field("model"), modelProfile: field("modelProfile") }}
             onChange={setBrain}
           />
         )}

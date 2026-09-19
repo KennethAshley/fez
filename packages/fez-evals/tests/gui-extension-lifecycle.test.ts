@@ -1,14 +1,21 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 import type { FezClient } from "../../fez-client/src/index.js";
 
 const native = vi.hoisted(() => ({ files: [] as [string, string, string][] }));
 vi.mock("../../fez-desktop/node_modules/@tauri-apps/api/core.js", () => ({
-  invoke: async (command: string) => {
+  invoke: async (command: string, args?: { extension?: string; bin?: string; args?: string[] }) => {
     if (command === "list_gui_extensions") return native.files;
     if (command === "read_extension_grants") return JSON.stringify(
-      Object.fromEntries(native.files.map(([name]) => [name, ["ui", "commands"]])),
+      Object.fromEntries(native.files.map(([name]) => [name, ["ui", "commands", "processes"]])),
     );
+    if (command === "run_extension_bin") {
+      if (args?.extension !== "mesh" || args.bin !== "fez-mesh" || args.args?.join(" ") !== "state --json") throw Error("Unexpected mesh command");
+      return { code: 0, stdout: JSON.stringify({ configured: true, provider: "ext-mesh-mini", model: "fez-mini-qwen3-4b", label: "Mac mini", machine: "mini.local", status: "offline", callersVerified: true, callers: [] }), stderr: "" };
+    }
     throw new Error(`Unexpected native call: ${command}`);
   },
 }));
@@ -67,6 +74,45 @@ it("loads agent profile sections and removes them on extension unload", async ()
   native.files = [];
   await host.reloadGuiExtensions({} as FezClient);
   expect(host.extensionAgentProfileSections()).toEqual([]);
+});
+
+it("loads a source-owned model provider and removes it on extension unload", async () => {
+  native.files = [["mesh", "var __fezExt = { default: function(api) { api.registerModelProvider({ id: 'ext-mesh-mini', label: 'Mini', listModels: async function() { return [{ id: 'local/llama', label: 'Llama', status: 'offline' }]; }, prepare: async function() {} }); } };", ""]];
+  const host = await import("../../fez-desktop/src/gui-extensions.js");
+  const models = await import("../../fez-desktop/src/model-providers.js");
+  expect(await host.reloadGuiExtensions({} as FezClient)).toEqual(["mesh"]);
+  expect((await models.listModelProviders())[0].models).toEqual([{ id: "local/llama", label: "Llama", status: "offline" }]);
+  native.files = [];
+  await host.reloadGuiExtensions({} as FezClient);
+  expect(await models.listModelProviders()).toEqual([]);
+});
+
+it("loads the compiled mesh GUI with the installed name and keeps its display label", async () => {
+  const pkg = JSON.parse(readFileSync(resolve(__dirname, "../../fez-mesh/package.json"), "utf8")) as { name: string; fez: { parts: { gui: string } } };
+  const installedName = pkg.name.split("/").at(-1)!;
+  expect(installedName).toBe("mesh");
+  expect(pkg.fez.parts.gui).toBe("dist/gui.js");
+  const compiled = execFileSync(resolve(__dirname, "../node_modules/esbuild/bin/esbuild"), [resolve(__dirname, "../../fez-mesh/src/gui.ts"), "--bundle", "--platform=browser", "--format=iife", "--global-name=__fezExt"], { encoding: "utf8" });
+  native.files = [[installedName, compiled, ""]];
+  const host = await import("../../fez-desktop/src/gui-extensions.js");
+  const models = await import("../../fez-desktop/src/model-providers.js");
+  expect(await host.reloadGuiExtensions({} as FezClient)).toEqual(["mesh"]);
+  expect(host.guiExtensionStatus()).toEqual([{ name: "mesh", ok: true }]);
+  expect(host.extensionSettingsPanels().map(p => ({ name: p.name, label: p.label }))).toEqual([{ name: "mesh", label: "Shared Models" }]);
+  expect((await models.listModelProviders())[0].models).toEqual([{
+    id: "fez-mini-qwen3-4b", label: "Qwen3 4B · Mac mini", status: "offline",
+    detail: expect.stringMatching(/Tools run on this Mac.*Saving grants this agent access/),
+  }]);
+});
+
+it("rejects a provider claiming another extension's prefix and rolls back earlier registrations", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  native.files = [["mesh", "var __fezExt = { default: function(api) { api.registerModelProvider({ id: 'ext-mesh-mini', label: 'Mini', listModels: async function() { return []; }, prepare: async function() {} }); api.registerModelProvider({ id: 'ext-other-mini', label: 'Other', listModels: async function() { return []; }, prepare: async function() {} }); } };", ""]];
+  const host = await import("../../fez-desktop/src/gui-extensions.js");
+  const models = await import("../../fez-desktop/src/model-providers.js");
+  expect(await host.reloadGuiExtensions({} as FezClient)).toEqual([]);
+  expect(await models.listModelProviders()).toEqual([]);
+  expect(host.guiExtensionStatus()[0].error).toMatch(/provider.*extension|extension.*provider/i);
 });
 
 it("rolls back registrations added or replaced by a failed asynchronous activation", async () => {
