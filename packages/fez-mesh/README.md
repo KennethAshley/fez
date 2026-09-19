@@ -54,7 +54,9 @@ cost; a reported zero does not establish that running the model is free.
   Neither private key is copied to the Mini.
 - Mini configuration, runtime, model, persisted relay and service definitions:
   `~/.fez/mesh/mini/`. Its configuration pins the workspace owner's public key.
-- The pi provider registry gains `fez-mesh-mini`; existing providers and defaults
+- The pilot gets a private model profile under `~/.fez/model-profiles/fez-mesh-mini/`
+  (the layout fez-acp's `activateModelProfile` requires) and `modelProfile: fez-mesh-mini`
+  in its persona; pi's global registry is not touched. Existing providers and defaults
   are preserved for the original CLI pilot.
 - GUI-selected agents use provider `ext-mesh-mini` and a separate private profile
   at `~/.fez/model-profiles/ext-mesh-mini/<agent>/`. The profile binds the agent,

@@ -1,3 +1,6 @@
+/** The pilot persona's pi provider id — also its modelProfile. */
+export const PILOT_PROVIDER = "fez-mesh-mini";
+
 export interface GatewayConfig {
   role: "gateway"; ssh: string; remoteNode: string; remoteCli: string; remoteConfig: string;
   hostPort: number; relayPort: number; port: number; persona: string; model: string;
@@ -28,37 +31,35 @@ export function validateGateway(config: GatewayConfig): void {
 
 export async function configureClient(config: GatewayConfig, home: string): Promise<void> {
   validateGateway(config);
-  const file = join(home, ".pi", "agent", "models.json");
-  let document: Record<string, unknown> = {};
-  try { document = JSON.parse(await readFile(file, "utf8")); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  if (!document || Array.isArray(document) || typeof document !== "object" ||
-    (document.providers !== undefined && (!document.providers || typeof document.providers !== "object" || Array.isArray(document.providers)))) throw new Error("Invalid pi model configuration; left untouched");
-  const providers = (document.providers ?? {}) as Record<string, unknown>;
   const provider = { baseUrl: `http://127.0.0.1:${config.port}/v1`, api: "openai-completions", apiKey: config.token,
     models: [{ id: config.model, name: "Mac mini", reasoning: false, input: ["text"], contextWindow: config.contextWindow,
       maxTokens: config.maxTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] };
+  // The pilot is a private model profile — the same layout fez-acp's
+  // activateModelProfile gates on at agent start — so it can never fall
+  // through to pi's global registry or inherited cloud credentials.
+  // ~/.pi/agent/models.json is deliberately left alone.
+  const profileDir = fezHomeAt(home, "model-profiles", PILOT_PROVIDER, config.persona);
+  let saved: { providers?: Record<string, unknown> } | undefined;
+  try { saved = JSON.parse(await readFile(join(profileDir, "models.json"), "utf8")); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Invalid pilot model profile; left untouched", { cause: error }); }
+  const current = saved?.providers?.[PILOT_PROVIDER];
+  if (current !== undefined && JSON.stringify(current) !== JSON.stringify(provider)) throw new Error(`${PILOT_PROVIDER} already has different model configuration; left untouched`);
+  await privateJson(join(profileDir, "profile.json"), { provider: PILOT_PROVIDER, model: config.model, persona: config.persona });
+  await privateJson(join(profileDir, "models.json"), { providers: { [PILOT_PROVIDER]: provider } });
+  await privateJson(join(profileDir, "settings.json"), { defaultProvider: PILOT_PROVIDER, defaultModel: config.model,
+    defaultThinkingLevel: "off", quietStartup: true, retry: { enabled: false } });
+
   const persona = fezHomeAt(home, "personas", `${config.persona}.md`);
-  const text = `---\nharness: pi\nprovider: fez-mesh-mini\nmodel: ${config.model}\neffort: off\nrespondTo: owner\ndescription: Review supplied code and write concise technical notes using the Mac mini.\n---\nYou are ${config.persona}, a technical assistant running on the owner's Mac mini. Complete the supplied task accurately and concisely. Use tools only when the task requires them. Do not send messages or change external services unless explicitly requested.\n`;
+  const text = `---\nharness: pi\nprovider: ${PILOT_PROVIDER}\nmodelProfile: ${PILOT_PROVIDER}\nmodel: ${config.model}\neffort: off\nrespondTo: owner\ndescription: Review supplied code and write concise technical notes using the Mac mini.\n---\nYou are ${config.persona}, a technical assistant running on the owner's Mac mini. Complete the supplied task accurately and concisely. Use tools only when the task requires them. Do not send messages or change external services unless explicitly requested.\n`;
+  // Installs made before modelProfile existed wrote exactly this text minus that one line.
+  const legacy = text.replace(`modelProfile: ${PILOT_PROVIDER}\n`, "");
   let existing: string | undefined;
   try { existing = await readFile(persona, "utf8"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  if (existing !== undefined && existing !== text) throw new Error("The dedicated persona already has different instructions; left untouched");
-  if (providers["fez-mesh-mini"] !== undefined && JSON.stringify(providers["fez-mesh-mini"]) !== JSON.stringify(provider)) throw new Error("fez-mesh-mini already has different configuration; left untouched");
-  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-  const temp = `${file}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temp, JSON.stringify({ ...document, providers: { ...providers, "fez-mesh-mini": provider } }, null, 2) + "\n", { mode: 0o600, flag: "wx" });
-    await rename(temp, file);
-  } finally { await rm(temp, { force: true }); }
+  if (existing !== undefined && existing !== text && existing !== legacy) throw new Error("The dedicated persona already has different instructions; left untouched");
   await mkdir(dirname(persona), { recursive: true, mode: 0o700 });
   if (existing === undefined) await writeFile(persona, text, { mode: 0o600, flag: "wx" });
-  // A dedicated harness profile prevents any global cloud default or credential fallback.
-  const piDir = fezHomeAt(home, "mesh", "mini", "pi");
-  await mkdir(piDir, { recursive: true, mode: 0o700 });
-  await writeFile(join(piDir, "models.json"), JSON.stringify({ providers: { "fez-mesh-mini": provider } }), { mode: 0o600 });
-  await writeFile(join(piDir, "settings.json"), JSON.stringify({ defaultProvider: "fez-mesh-mini", defaultModel: config.model,
-    defaultThinkingLevel: "off", quietStartup: true, retry: { enabled: false } }), { mode: 0o600 });
+  else if (existing === legacy) await writeFile(persona, text, { mode: 0o600 });
 }
 
 export function sshArguments(config: GatewayConfig): string[] {
@@ -70,7 +71,7 @@ export function sshArguments(config: GatewayConfig): string[] {
   return ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=8",
     "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2"];
 }
-import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import { randomUUID } from "node:crypto";
 import { fezHomeAt } from "../../../src/shared/fez-home.js";
+import { privateJson } from "./enrollment.js";

@@ -48,7 +48,7 @@ export async function withCallerLock<T>(home: string, work: () => Promise<T>): P
   finally { await handle.close(); await rm(file, { force: true }); }
 }
 
-async function privateJson(file: string, value: unknown): Promise<void> {
+export async function privateJson(file: string, value: unknown): Promise<void> {
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const temp = `${file}.${randomUUID()}.tmp`;
   try {

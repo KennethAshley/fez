@@ -142,8 +142,7 @@ async function ask(config: GatewayConfig) {
       const child = spawn(process.execPath, [join(dirname(entry), "evaluate.mjs")], { stdio: ["ignore", "inherit", "inherit"], timeout: 135000,
         cwd: directory, env: { PATH: process.env.PATH, HOME: homedir(), TMPDIR: process.env.TMPDIR,
           FEZ_AGENT_PERSONA: config.persona, FEZ_EVALUATION_REQUEST: request,
-          FEZ_RELAY: `ws://127.0.0.1:${config.relayPort}`, PI_OFFLINE: "1", PI_TELEMETRY: "0",
-          PI_CODING_AGENT_DIR: fezHome("mesh", "mini", "pi") } });
+          FEZ_RELAY: `ws://127.0.0.1:${config.relayPort}`, PI_OFFLINE: "1", PI_TELEMETRY: "0" } });
       child.once("error", reject); child.once("exit", code => code === 0 ? resolve() : reject(new Error(`Fez evaluation exited ${code}`)));
     });
   } finally { await rm(directory, { recursive: true, force: true }); }

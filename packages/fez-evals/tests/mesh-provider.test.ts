@@ -12,6 +12,7 @@ import { buildNip98Header } from "../../../src/protocol/nip98.js";
 import { listenLocal } from "../../fez-mesh/src/mesh.js";
 import { startProvider, updateMember, checkProvider } from "../../fez-mesh/src/provider.js";
 import { configureClient, sshArguments, type GatewayConfig } from "../../fez-mesh/src/config.js";
+import { activateModelProfile } from "../../fez-acp/src/model-profile.js";
 
 const config: GatewayConfig = { role: "gateway", ssh: "ken@kenmini.local", remoteNode: "/usr/local/bin/node",
   remoteCli: "/Users/ken/.fez/mesh/mini/cli.mjs", remoteConfig: "/Users/ken/.fez/mesh/mini/config.json",
@@ -30,7 +31,7 @@ it.skipIf(!existsSync(pi))("uses the isolated Mini profile and sends an uncertai
     await configureClient({ ...config, port: Number(new URL(upstream.url).port) }, home);
     const running = promisify(execFile)(pi, ["--offline", "--no-session", "--no-tools", "--no-extensions", "--no-skills",
       "--no-context-files", "--no-prompt-templates", "--no-themes", "-p", "Reply OK"], {
-      cwd: home, timeout: 5000, env: { PATH: process.env.PATH, HOME: home, PI_CODING_AGENT_DIR: join(home, ".fez/mesh/mini/pi") },
+      cwd: home, timeout: 5000, env: { PATH: process.env.PATH, HOME: home, PI_CODING_AGENT_DIR: join(home, ".fez/model-profiles/fez-mesh-mini/mini-mesh") },
     });
     running.child.stdin?.end();
     await running.catch(() => {});
@@ -38,23 +39,47 @@ it.skipIf(!existsSync(pi))("uses the isolated Mini profile and sends an uncertai
   } finally { await upstream.close(); await rm(home, { recursive: true, force: true }); }
 }, 10000);
 
-it("adds the dedicated persona/provider without losing existing provider configuration", async () => {
+it("writes the pilot as a private model profile and leaves pi's global registry alone", async () => {
   const home = await mkdtemp(join(tmpdir(), "mesh-config-test-"));
-  const file = join(home, ".pi/agent/models.json");
+  const globalFile = join(home, ".pi/agent/models.json");
+  const profileDir = join(home, ".fez/model-profiles/fez-mesh-mini/mini-mesh");
   try {
     await mkdir(join(home, ".pi/agent"), { recursive: true });
-    await writeFile(file, JSON.stringify({ metadata: "keep", providers: { existing: { apiKey: "keep-private" } } }));
+    const untouched = JSON.stringify({ metadata: "keep", providers: { existing: { apiKey: "keep-private" } } });
+    await writeFile(globalFile, untouched);
     await configureClient(config, home);
     await configureClient(config, home);
-    const saved = JSON.parse(await readFile(file, "utf8"));
-    expect(saved.metadata).toBe("keep");
-    expect(saved.providers.existing).toEqual({ apiKey: "keep-private" });
-    expect(saved.providers["fez-mesh-mini"].baseUrl).toBe("http://127.0.0.1:18091/v1");
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
-    expect(await readFile(join(home, ".fez/personas/mini-mesh.md"), "utf8")).toContain("provider: fez-mesh-mini");
-    await writeFile(file, "broken JSON");
-    await expect(configureClient(config, home)).rejects.toThrow();
-    expect(await readFile(file, "utf8")).toBe("broken JSON");
+    // The global registry is exactly what it was: the pilot must never fall through to it.
+    expect(await readFile(globalFile, "utf8")).toBe(untouched);
+    expect(existsSync(join(home, ".fez/mesh/mini/pi"))).toBe(false);
+    const persona = await readFile(join(home, ".fez/personas/mini-mesh.md"), "utf8");
+    expect(persona).toContain("provider: fez-mesh-mini");
+    expect(persona).toContain("modelProfile: fez-mesh-mini");
+    const models = JSON.parse(await readFile(join(profileDir, "models.json"), "utf8"));
+    expect(Object.keys(models.providers)).toEqual(["fez-mesh-mini"]);
+    expect(models.providers["fez-mesh-mini"].baseUrl).toBe("http://127.0.0.1:18091/v1");
+    expect(JSON.parse(await readFile(join(profileDir, "settings.json"), "utf8")).retry).toEqual({ enabled: false });
+    for (const file of ["profile.json", "models.json", "settings.json"]) expect((await stat(join(profileDir, file))).mode & 0o777).toBe(0o600);
+    // The layout is the one fez-acp gates on at agent start.
+    const env: NodeJS.ProcessEnv = {};
+    expect(activateModelProfile({ id: "mini-mesh", harness: "pi", extra: { modelProfile: "fez-mesh-mini", provider: "fez-mesh-mini", model: config.model } }, home, env)).toBe(true);
+    expect(env.FEZ_PI_REQUIRED_MODEL).toBe(`fez-mesh-mini/${config.model}`);
+    expect(env.PI_CODING_AGENT_DIR).toBe(profileDir);
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+it("upgrades a pilot persona written before modelProfile, but never rewrites a customised one", async () => {
+  const home = await mkdtemp(join(tmpdir(), "mesh-upgrade-test-"));
+  const persona = join(home, ".fez/personas/mini-mesh.md");
+  try {
+    await configureClient(config, home);
+    const current = await readFile(persona, "utf8");
+    await writeFile(persona, current.replace("modelProfile: fez-mesh-mini\n", ""));
+    await configureClient(config, home);
+    expect(await readFile(persona, "utf8")).toBe(current);
+    await writeFile(persona, current + "\nAlways answer in French.\n");
+    await expect(configureClient(config, home)).rejects.toThrow(/left untouched/);
+    expect(await readFile(persona, "utf8")).toBe(current + "\nAlways answer in French.\n");
   } finally { await rm(home, { recursive: true, force: true }); }
 });
 
