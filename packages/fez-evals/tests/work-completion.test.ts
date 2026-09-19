@@ -24,14 +24,21 @@ vi.doMock(requireMcp.resolve("@modelcontextprotocol/sdk/server/mcp.js").replace(
 vi.mock("@fezchat/protocol", async importOriginal => ({
   ...await importOriginal<typeof import("@fezchat/protocol")>(),
   getKey: () => state.key, resolveRelays: () => ["ws://controlled.invalid"],
+  fetchRelayInfo: async () => ({ pubkey: getPublicKey(new Uint8Array(32).fill(6)) }),
+  pinWorkspaceOwner: (_url: string, advertised?: string) => advertised,
   RelayConnection: class {
     async connect() {}
-    async query(filters: Filter[]) { return state.events.filter(e => filters.some(f => matchFilter(f, e))); }
+    async query(filters: Filter[]) {
+      return [...new Map(filters.flatMap(filter => state.events.filter(e => matchFilter(filter, e))
+        .sort((a, b) => b.created_at - a.created_at).slice(0, filter.limit ?? Infinity)).map(event => [event.id, event])).values()];
+    }
+    async queryWithStatus(filters: Filter[]) { return { events: await this.query(filters), failures: [] }; }
     async publish(event: Event) { if (state.refuse) throw new Error("relay refused"); state.events.push(event); }
   },
 }));
 const callerKey = new Uint8Array(32).fill(4), workerKey = new Uint8Array(32).fill(5);
 const caller = getPublicKey(callerKey), worker = getPublicKey(workerKey);
+const ownerKey = new Uint8Array(32).fill(6), owner = getPublicKey(ownerKey);
 const request = finalizeEvent({ kind: 47103, created_at: 100, content: "@speaker narrate the script", tags: [
   ["h", "demo"], ["e", "a".repeat(64), "", "reply"], ["p", worker], ["task", worker], ["depth", "1"],
 ] }, callerKey);
@@ -40,9 +47,95 @@ async function load(key: Uint8Array) {
   if (!state.dir) state.dir = fs.mkdtempSync(path.join(os.tmpdir(), "fez-work-tool-"));
   vi.resetModules(); state.tools.clear(); state.key = Buffer.from(key).toString("hex");
   vi.stubEnv("FEZ_AGENT_PERSONA", "completion-test");
+  vi.stubEnv("FEZ_AGENT_OWNER", owner);
   await import("../../fez-mcp/src/server.js");
 }
 afterEach(() => { if (state.dir) fs.rmSync(state.dir, { recursive: true, force: true }); state.dir = ""; state.events = []; state.refuse = false; vi.unstubAllEnvs(); });
+
+function workspace() {
+  state.events.push(
+    finalizeEvent({ kind: 47102, created_at: 100, content: "", tags: [["d", "roster"], ["p", owner, "owner"], ["p", caller, "bot"], ["p", worker, "bot"]] }, ownerKey),
+    finalizeEvent({ kind: 47101, created_at: 100, content: '{"name":"demo"}', tags: [["d", "demo"]] }, ownerKey),
+    finalizeEvent({ kind: 47000, created_at: 100, content: '{"name":"speaker","aliases":["voice"]}', tags: [] }, workerKey),
+    finalizeEvent({ kind: 47006, created_at: 100, content: "", tags: [["p", worker]] }, ownerKey),
+  );
+}
+
+it("sends a compact tool handoff with the source thread, assigned worker, and retry identity", async () => {
+  workspace();
+  const source = finalizeEvent({ kind: 47103, created_at: 100, content: "PRIVATE_LONG_HISTORY_DO_NOT_COPY", tags: [["h", "demo"]] }, ownerKey);
+  state.events.push(source);
+  await load(callerKey);
+  const send = state.tools.get("fez_send_message")!;
+  const message = "@voice Task: narrate the approved script. Facts: use the linked script. Constraints: no edits. Return: audio URL. References: " + source.id;
+  expect((await send({ channel: "demo", message, replyTo: source.id })).isError).not.toBe(true);
+  const sent = state.events.at(-1)!;
+  expect(verifyEvent(sent)).toBe(true);
+  expect(sent.content).toBe(message);
+  expect(sent.content).not.toContain(source.content);
+  expect(sent.tags).toEqual(expect.arrayContaining([["h", "demo"], ["e", source.id, "", "reply"], ["p", worker], ["task", worker], ["depth", "1"]]));
+  await send({ channel: "demo", message, replyTo: source.id });
+  expect(state.events.filter(e => e.id === sent.id)).toHaveLength(1);
+});
+
+it("refuses handoffs without a source, oversized briefs, unknown recipients, and cross-channel parents", async () => {
+  workspace();
+  state.events.push(request);
+  const elsewhere = finalizeEvent({ ...request, tags: [["h", "other"]] }, callerKey);
+  state.events.push(elsewhere);
+  await load(callerKey);
+  const send = state.tools.get("fez_send_message")!;
+  for (const input of [
+    { message: "@speaker do work" },
+    { message: "@speaker " + "x".repeat(4000), replyTo: request.id },
+    { message: "@unknown do work", replyTo: request.id },
+    { message: "@speaker do work", replyTo: elsewhere.id },
+  ]) expect((await send({ channel: "demo", ...input })).isError).toBe(true);
+  expect(state.events.filter(e => e.created_at > 100)).toHaveLength(0);
+});
+
+it("rejects a duplicate recipient even when another member has over 200 recent announcements", async () => {
+  workspace();
+  const source = finalizeEvent({ kind: 47103, created_at: 100, content: "source", tags: [["h", "demo"]] }, ownerKey);
+  state.events.push(source, finalizeEvent({ kind: 47000, created_at: 100, content: '{"name":"speaker"}', tags: [] }, ownerKey));
+  for (let i = 0; i < 201; i++) state.events.push(finalizeEvent({ kind: 47000, created_at: 200 + i, content: '{"name":"speaker"}', tags: [] }, workerKey));
+  await load(callerKey);
+  const reply = await state.tools.get("fez_send_message")!({ channel: "demo", message: "@speaker narrate this", replyTo: source.id });
+  expect(reply.isError).toBe(true);
+  expect(reply.content[0].text).toContain("2 workspace members");
+  expect(state.events.some(e => e.pubkey === caller && e.kind === 47103)).toBe(false);
+});
+
+it("reuses a saved tool handoff after a failed publish and MCP restart", async () => {
+  workspace();
+  const source = finalizeEvent({ kind: 47103, created_at: 100, content: "source", tags: [["h", "demo"]] }, ownerKey);
+  state.events.push(source);
+  const input = { channel: "demo", replyTo: source.id, message: "@speaker narrate this" };
+  await load(callerKey); state.refuse = true;
+  expect((await state.tools.get("fez_send_message")!(input)).isError).toBe(true);
+  const { DurableWork } = await import("../../../src/shared/durable-work.js");
+  const [saved] = new DurableWork(state.dir).pendingHandoffs();
+  expect(saved).toBeDefined();
+  state.refuse = false; await load(callerKey);
+  expect((await state.tools.get("fez_send_message")!(input)).isError).not.toBe(true);
+  expect(state.events.filter(e => e.id === saved.id)).toHaveLength(1);
+  expect(new DurableWork(state.dir).pendingHandoffs()).toEqual([]);
+});
+
+it("reads only a requested message excerpt and refuses a non-member's reference", async () => {
+  workspace();
+  const source = finalizeEvent({ kind: 47103, created_at: 100, content: "x".repeat(4500) + "TAIL", tags: [["h", "demo"]] }, ownerKey);
+  const outsider = finalizeEvent({ ...source, content: "OUTSIDER" }, new Uint8Array(32).fill(7));
+  state.events.push(source, outsider);
+  await load(callerKey);
+  const read = state.tools.get("fez_read_message");
+  expect(read).toBeDefined();
+  const excerpt = JSON.parse((await read!({ id: source.id, offset: 0, limit: 2000 })).content[0].text);
+  expect(excerpt).toMatchObject({ id: source.id, content: "x".repeat(2000), nextOffset: 2000, totalCharacters: 4504 });
+  const tail = JSON.parse((await read!({ id: source.id, offset: 4500, limit: 2000 })).content[0].text);
+  expect(tail).toMatchObject({ content: "TAIL", nextOffset: null });
+  expect((await read!({ id: outsider.id })).isError).toBe(true);
+});
 
 it("publishes one signed result and a separate requester-signed acceptance linked to its work", async () => {
   state.events = [request];

@@ -9,6 +9,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Artifact, FezClient } from "@fezchat/client";
 import { parseQuery } from "@fezchat/client";
 import { registerArtifactViewer, snapshotArtifactViewers } from "./artifact-viewers";
+import { registerModelProvider, snapshotModelProviders, type ExtensionModelProvider } from "./model-providers";
 import { notifyEvent } from "./notify";
 import { toast } from "./toast";
 import { invitePersona } from "./invite-persona";
@@ -112,6 +113,7 @@ export interface GuiExtensionApi {
     set(key: string, value: unknown): Promise<void>;
   };
   registerArtifactViewer: typeof registerArtifactViewer;
+  registerModelProvider?: (provider: ExtensionModelProvider) => void;
   /**
    * Agent personas, as files — LIST/READ/UPDATE plus the stable-key
    * invite. Gated behind the sensitive "personas" permission: a persona
@@ -395,8 +397,10 @@ export function messagePresentation(props: Parameters<MessageDecorator["render"]
  * its own every time an extension wants something new.
  */
 export interface SettingsPanel {
-  /** The extension's name, used as the card's heading. */
+  /** Installed extension name; stable page identity. */
   name: string;
+  /** Extension-provided display name. */
+  label?: string;
   render: MountRender;
   /**
    * The channel `source` this panel configures, when it configures one.
@@ -413,9 +417,9 @@ const settingsPanels: SettingsPanel[] = [];
 export function registerSettingsPanel(
   name: string,
   render: SettingsPanel["render"],
-  opts?: { source?: string }
+  opts?: { source?: string; label?: string }
 ): void {
-  const panel: SettingsPanel = { name, render, source: opts?.source };
+  const panel: SettingsPanel = { name, label: opts?.label?.trim() || undefined, render, source: opts?.source };
   // Re-registering replaces, so a reload cannot stack two copies of the
   // same card — the same rule registerSystemPromptSection uses.
   const at = settingsPanels.findIndex((existing) => existing.name === name);
@@ -969,6 +973,7 @@ function snapshotRegistrations(): Dispose {
     snapshotArray(navViews),
     snapshotArray(artifactActions),
     snapshotArtifactViewers(),
+    snapshotModelProviders(),
     snapshotMap(themes),
   ];
   return () => { for (const restore of snapshots) restore(); };
@@ -1161,6 +1166,7 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
         },
       },
       registerArtifactViewer: may("ui") ? registerArtifactViewer : (refuse("ui", "register an artifact viewer") as never),
+      registerModelProvider: may("ui") ? (provider) => registerModelProvider(name, provider) : undefined,
       registerTheme: may("ui") ? registerTheme : (refuse("ui", "register a theme") as never),
       registerMessageDecorator: may("ui") ? registerMessageDecorator : (refuse("ui", "decorate messages") as never),
       registerBlockRenderer: may("ui") ? registerBlockRenderer : (refuse("ui", "render doc blocks") as never),
@@ -1286,14 +1292,15 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
             openGuestDm(guest);
           }
         : (refuse("ui", "open a guest DM") as never),
-      // The label is ignored on purpose — a panel is filed under the
-      // extension's own name, so one cannot present itself as another.
+      // The panel is filed under the extension's own name, so one cannot
+      // replace another's; the label is only what the rail displays
+      // ("Shared Models" for `mesh`). Pass a display name, not a package name.
       // `opts` is NOT ignored: it carries which channel source this
       // panel configures, and dropping it silently was why the rail's
       // group had no settings button.
       registerSettingsPanel: may("ui")
-        ? (_label: string, render: MountRender, opts?: { source?: string }) =>
-            registerSettingsPanel(name, render, opts)
+        ? (label: string, render: MountRender, opts?: { source?: string }) =>
+            registerSettingsPanel(name, render, { ...opts, label })
         : (refuse("ui", "add a settings panel") as never),
       registerAgentProfileSection: may("ui")
         ? (label, render) => {

@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 import PersonaEditor from "../../fez-desktop/src/PersonaEditor";
 import AiSetupDialog from "../../fez-desktop/src/AiSetupDialog";
 import QuitDialog from "../../fez-desktop/src/QuitDialog";
+import AgentsPane from "../../fez-desktop/src/AgentsPane";
+import { registerModelProvider, snapshotModelProviders } from "../../fez-desktop/src/model-providers";
 
 const { native, notice, quitListeners } = vi.hoisted(() => ({
   quitListeners: new Set<() => void>(),
@@ -22,10 +24,11 @@ vi.mock("../../fez-desktop/node_modules/@tauri-apps/api/event.js", () => ({
 vi.mock("../../fez-desktop/src/toast", () => ({ flash: notice, toast: { error: notice } }));
 vi.mock("../../fez-desktop/src/SkillPicker", () => ({ default: () => null }));
 vi.mock("../../fez-desktop/src/Avatar", () => ({ default: () => null }));
+vi.mock("../../fez-desktop/src/config-store", () => { const config = { skills: {} }; return { useConfig: () => config }; });
 vi.mock("../../fez-desktop/src/ModelPicker", () => ({
-  ModelPicker: ({ onChange }: { onChange: (brain: object) => void }) => React.createElement("button", {
-    onClick: () => onChange({ harness: "pi", provider: "chutes", model: "new-model" }),
-  }, "choose model"),
+  ModelPicker: ({ onChange }: { onChange: (brain: object) => void }) => React.createElement(React.Fragment, {},
+    React.createElement("button", { onClick: () => onChange({ harness: "pi", provider: "chutes", model: "new-model" }) }, "choose model"),
+    React.createElement("button", { onClick: () => onChange({ harness: "pi", provider: "ext-mesh-mini", model: "local/llama", modelProfile: "ext-mesh-mini" }) }, "choose Mini")),
 }));
 vi.mock("../../fez-desktop/src/Onboarding", () => ({
   ConnectAiStep: ({ setBrain, onNext }: { setBrain: (brain: object) => void; onNext: () => void }) => React.createElement("div", {},
@@ -49,7 +52,8 @@ beforeEach(() => {
     }
   });
 });
-afterEach(() => { vi.restoreAllMocks(); native.mockReset(); notice.mockReset(); });
+const restoreProviders = snapshotModelProviders();
+afterEach(() => { restoreProviders(); vi.restoreAllMocks(); native.mockReset(); notice.mockReset(); });
 
 async function mount(component: unknown) {
   const div = document.createElement("div"); document.body.append(div);
@@ -76,6 +80,115 @@ it("saving launch configuration preserves active work and tells the user to rest
     expect(native.mock.calls.some(([command]) => command === "kill_agent" || command === "spawn_agent")).toBe(false);
     expect(notice).toHaveBeenCalledWith(expect.stringMatching(/restart.*apply/i));
     expect(done).toHaveBeenCalledWith(true);
+  } finally { await p.close(); }
+});
+
+it("prepares the selected Mini model only on Save before updating an existing persona", async () => {
+  const prepare = vi.fn(async () => {});
+  registerModelProvider("mesh", { id: "ext-mesh-mini", label: "Mini", listModels: async () => [], prepare });
+  const p = await mount(React.createElement(PersonaEditor, { name: "scout", onDone: vi.fn() }));
+  try {
+    await p.click("choose Mini");
+    expect(prepare).not.toHaveBeenCalled();
+    await p.click("save");
+    expect(prepare).toHaveBeenCalledWith("scout", "local/llama");
+    expect(native).toHaveBeenCalledWith("update_persona", { name: "scout", content: expect.stringContaining("modelProfile: ext-mesh-mini") });
+    expect(native).toHaveBeenCalledWith("update_persona", { name: "scout", content: expect.stringContaining("provider: ext-mesh-mini") });
+    expect(native).toHaveBeenCalledWith("update_persona", { name: "scout", content: expect.stringContaining("Keep this prompt.") });
+    expect(native.mock.invocationCallOrder[native.mock.calls.findIndex(([command]) => command === "update_persona")]).toBeGreaterThan(prepare.mock.invocationCallOrder[0]);
+  } finally { await p.close(); }
+});
+
+it("keeps the persona untouched when Mini preparation fails", async () => {
+  registerModelProvider("mesh", { id: "ext-mesh-mini", label: "Mini", listModels: async () => [], prepare: async () => { throw Error("Mini is offline"); } });
+  const p = await mount(React.createElement(PersonaEditor, { name: "scout", onDone: vi.fn() }));
+  try {
+    await p.click("choose Mini");
+    await p.click("save");
+    expect(native.mock.calls.some(([command]) => command === "update_persona")).toBe(false);
+    expect(p.div.textContent).toContain("Mini is offline");
+  } finally { await p.close(); }
+});
+
+it("refuses to overwrite a saved profile whose extension is missing", async () => {
+  native.mockImplementation(async (command) => {
+    if (command === "read_persona") return "---\nharness: pi\nprovider: ext-mesh-mini\nmodel: local/llama\nmodelProfile: ext-mesh-mini\n---\n\nKeep this prompt.\n";
+    if (command === "agent_alive") return false;
+    throw Error(`Unexpected native command: ${command}`);
+  });
+  const p = await mount(React.createElement(PersonaEditor, { name: "scout", onDone: vi.fn() }));
+  try {
+    const description = p.div.querySelector('input[aria-label="agent description"]')!;
+    await React.act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(description, "Updated"); description.dispatchEvent(new Event("input", { bubbles: true })); });
+    await p.click("save");
+    expect(native.mock.calls.some(([command]) => command === "update_persona")).toBe(false);
+    expect(p.div.textContent).toContain("Restore its extension before saving");
+  } finally { await p.close(); }
+});
+
+it("switching an existing persona to a built-in model clears the saved profile", async () => {
+  native.mockImplementation(async (command) => {
+    if (command === "read_persona") return "---\nharness: pi\nprovider: ext-mesh-mini\nmodel: local/llama\nmodelProfile: ext-mesh-mini\ncustomSetting: keep\n---\n\nKeep this prompt.\n";
+    if (command === "agent_alive") return false;
+    if (command === "update_persona") return;
+    throw Error(`Unexpected native command: ${command}`);
+  });
+  const p = await mount(React.createElement(PersonaEditor, { name: "scout", onDone: vi.fn() }));
+  try {
+    await p.click("choose model");
+    await p.click("save");
+    const content = native.mock.calls.find(([command]) => command === "update_persona")?.[1]?.content as string;
+    expect(content).toContain("provider: chutes");
+    expect(content).toContain("model: new-model");
+    expect(content).toContain("customSetting: keep");
+    expect(content).toContain("Keep this prompt.");
+    expect(content).not.toContain("modelProfile:");
+  } finally { await p.close(); }
+});
+
+it("prepares a new agent's selected Mini model before creating its persona", async () => {
+  const prepare = vi.fn(async () => {});
+  registerModelProvider("mesh", { id: "ext-mesh-mini", label: "Mini", listModels: async () => [], prepare });
+  native.mockImplementation(async (command) => {
+    if (command === "list_personas" || command === "list_persona_drafts") return [];
+    if (command === "list_installed_skills") return "[]";
+    if (command === "write_persona") return;
+    throw Error(`Unexpected native command: ${command}`);
+  });
+  const client = { agents: () => new Map(), on: () => () => {} };
+  const p = await mount(React.createElement(AgentsPane, { client, wire: {}, activity: new Map(), working: new Map(), onCancel: vi.fn(), onDm: vi.fn(), onHistory: vi.fn(), onClose: vi.fn(), initialCreate: true }));
+  try {
+    const input = p.div.querySelector('input[placeholder="scout"]')!;
+    await React.act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "scout"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    await p.click("choose Mini");
+    expect(prepare).not.toHaveBeenCalled();
+    await p.click("create agent");
+    expect(prepare).toHaveBeenCalledWith("scout", "local/llama");
+    const write = native.mock.calls.find(([command]) => command === "write_persona")?.[1];
+    expect(write).toMatchObject({ name: "scout", content: expect.stringContaining("modelProfile: ext-mesh-mini") });
+    expect(write.content).toContain("provider: ext-mesh-mini");
+    expect(write.content).toContain("You are scout.");
+    expect(native.mock.invocationCallOrder[native.mock.calls.findIndex(([command]) => command === "write_persona")]).toBeGreaterThan(prepare.mock.invocationCallOrder[0]);
+  } finally { await p.close(); }
+});
+
+it("leaves a new persona unwritten when Mini preparation fails", async () => {
+  registerModelProvider("mesh", { id: "ext-mesh-mini", label: "Mini", listModels: async () => [], prepare: async () => { throw Error("Mini is offline"); } });
+  native.mockImplementation(async (command) => {
+    if (command === "list_personas" || command === "list_persona_drafts") return [];
+    if (command === "list_installed_skills") return "[]";
+    if (command === "write_persona") return;
+    throw Error(`Unexpected native command: ${command}`);
+  });
+  const client = { agents: () => new Map(), on: () => () => {} };
+  const p = await mount(React.createElement(AgentsPane, { client, wire: {}, activity: new Map(), working: new Map(), onCancel: vi.fn(), onDm: vi.fn(), onHistory: vi.fn(), onClose: vi.fn(), initialCreate: true }));
+  try {
+    const input = p.div.querySelector('input[placeholder="scout"]')!;
+    await React.act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "scout"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    await p.click("choose Mini");
+    await p.click("create agent");
+    expect(native.mock.calls.some(([command]) => command === "write_persona")).toBe(false);
+    expect(p.div.textContent).toContain("Mini is offline");
   } finally { await p.close(); }
 });
 

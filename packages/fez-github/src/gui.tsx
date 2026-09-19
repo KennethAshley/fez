@@ -346,5 +346,5 @@ export default function activate(api: GuiExtensionAPI): void {
     );
   }
 
-  api.registerSettingsPanel("fez-github", () => <GitHubPanel />);
+  api.registerSettingsPanel("GitHub", () => <GitHubPanel />);
 }

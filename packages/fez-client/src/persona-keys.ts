@@ -16,7 +16,7 @@ export const ALL_KNOWN_KEYS = [
   "harness", "aliases", "mcpServers", "description",
   // KNOWN_EXTRA_KEYS, mirrored from src/identity/personas.ts:172
   "workdir", "repo", "branch", "scope",
-  "provider", "model", "effort", "packages",
+  "provider", "model", "modelProfile", "effort", "packages",
   "routable", "idleExit", "idleTimeoutS", "turnTimeoutS",
   "reflectionEvery", "reflectionPrompt",
   "url", "channels", "owner", "respondTo",

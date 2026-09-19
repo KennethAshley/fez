@@ -79,6 +79,9 @@ const EXTENSIONS = [
   "packages/fez-numinous",
   "packages/fez-ridges",
   "packages/fez-oro",
+  // Shared Models. Needs a desktop build carrying the model-provider hook;
+  // installing it on an older Fez shows an update message rather than failing.
+  "packages/fez-mesh",
 ];
 
 function run(cmd, args, cwd) {

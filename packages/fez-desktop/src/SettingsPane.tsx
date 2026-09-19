@@ -352,7 +352,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
   const terms = search.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const matches = (text: string) => terms.every(term => text.toLowerCase().includes(term));
   const groups = SETTINGS_GROUPS.map(group => ({ ...group, sections: group.sections.filter(key => matches(`${SETTINGS_TABS[key]} ${SETTINGS_SEARCH[key]}`)) })).filter(group => group.sections.length);
-  const visibleExtensions = extPanels.filter(panel => matches(`${norm(panel.name)} ${panel.name}`));
+  const visibleExtensions = extPanels.filter(panel => matches(`${panel.label ?? norm(panel.name)} ${panel.name}`));
 
   const saveProfile = async () => {
     try {
@@ -434,11 +434,12 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             {visibleExtensions.map((panel) => (
               <button
                 key={panel.name}
+                title={panel.name}
                 className={section === `ext:${panel.name}` ? "settings-nav-item active" : "settings-nav-item"}
                 aria-current={section === `ext:${panel.name}` ? "page" : undefined}
                 onClick={() => setSection(`ext:${panel.name}`)}
               >
-                {norm(panel.name)}
+                {panel.label ?? norm(panel.name)}
               </button>
             ))}
           </div>
@@ -630,7 +631,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             of the app rather than as a different application. */}
         {openExt ? (
           <div className="ext-settings">
-            <Head title={norm(openExt.name)} sub="Account and preferences for this extension." />
+            <Head title={openExt.label ?? norm(openExt.name)} sub="Account and preferences for this extension." />
             <ExtensionPanel panel={openExt} />
           </div>
         ) : section.startsWith("ext:") ? (

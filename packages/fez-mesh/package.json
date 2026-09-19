@@ -1,0 +1,31 @@
+{
+  "name": "@fezchat/mesh",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Roster-gated model sharing over pinned SSH for a single Mac mini provider",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": { "gui": "dist/gui.js" },
+    "permissions": ["ui", "processes"]
+  },
+  "bin": {
+    "fez-mesh": "dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "smoke.mjs"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "smoke": "node smoke.mjs"
+  },
+  "devDependencies": {
+    "@fezchat/protocol": "file:../..",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0",
+    "@fezchat/acp": "file:../fez-acp"
+  }
+}

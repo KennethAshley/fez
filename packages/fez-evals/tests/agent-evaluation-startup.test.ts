@@ -4,10 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import type { Persona } from "@fezchat/protocol";
 
-const fixture = vi.hoisted(() => ({ directory: "", missing: false, pi: false, dropTool: false, calls: [] as { prompt: string; cwd: string; tools: string[] }[], logs: [] as string[], refreshed: 0 }));
+const fixture = vi.hoisted(() => ({ directory: "", tempRoot: "", missing: false, pi: false, profile: false, dropTool: false, calls: [] as { prompt: string; cwd: string; tools: string[] }[], logs: [] as string[], refreshed: 0 }));
 vi.mock("node:os", async original => {
   const actual = await original<typeof import("node:os")>();
-  return { ...actual, default: { ...actual, homedir: () => fixture.directory } };
+  return { ...actual, default: { ...actual, homedir: () => fixture.directory, tmpdir: () => fixture.tempRoot || actual.tmpdir() } };
 });
 vi.mock("../../fez-acp/src/mcp-path.js", async original => ({
   ...await original<typeof import("../../fez-acp/src/mcp-path.js")>(),
@@ -20,7 +20,7 @@ vi.mock("@fezchat/protocol", async original => {
     registerBuiltinHarnesses: () => {},
     findPersona: async (): Promise<Persona> => ({ id: "configured", harness: "pi", aliases: [],
       systemPrompt: "Private persona instructions.", mcpServers: ["reader"], mcpSources: {}, skills: [], skillSources: {}, skillSettings: {},
-      extra: { provider: "owner-provider", model: "owner-model", workdir: path.join(fixture.directory, "private-project"), repo: "private-repository" }, createdAt: "2026-09-10" }),
+      extra: { provider: "owner-provider", model: "owner-model", ...(fixture.profile ? { modelProfile: "owner-provider" } : {}), workdir: path.join(fixture.directory, "private-project"), repo: "private-repository" }, createdAt: "2026-09-10" }),
     findHarness: () => ({ id: "pi", command: process.execPath, aliases: [], detect: async () => { throw new Error("A preflight must not run a probe that can prepare credentials"); },
       invoke: async (prompt: string, cwd: string, _progress: unknown, tools: { name: string; env: { name: string; value: string }[] }[]) => {
         expect(process.env.FEZ_EVALUATION_ACTIVE).toBe("1");
@@ -29,7 +29,8 @@ vi.mock("@fezchat/protocol", async original => {
         fixture.calls.push({ prompt, cwd, tools: tools.map(t => t.name) });
         if (fixture.pi) {
           expect(JSON.parse(fs.readFileSync(path.join(cwd, ".pi/settings.json"), "utf8"))).toMatchObject({ defaultProvider: "owner-provider", defaultModel: "owner-model" });
-          expect(JSON.parse(fs.readFileSync(path.join(fixture.directory, ".pi/agent/trust.json"), "utf8"))[cwd]).toBe(true);
+          const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(fixture.directory, ".pi/agent");
+          expect(JSON.parse(fs.readFileSync(path.join(agentDir, "trust.json"), "utf8"))[fs.realpathSync(cwd)]).toBe(true);
         }
         return "The public script.";
       },
@@ -46,8 +47,9 @@ vi.mock("@fezchat/protocol", async original => {
 
 beforeEach(() => {
   vi.resetModules();
+  fixture.tempRoot = "";
   fixture.directory = fs.mkdtempSync(path.join(os.tmpdir(), "fez-evaluation-startup-"));
-  fixture.calls = []; fixture.logs = []; fixture.refreshed = 0; fixture.missing = false; fixture.pi = false; fixture.dropTool = false;
+  fixture.calls = []; fixture.logs = []; fixture.refreshed = 0; fixture.missing = false; fixture.pi = false; fixture.profile = false; fixture.dropTool = false;
   fs.mkdirSync(path.join(fixture.directory, ".fez/bin"), { recursive: true });
   fs.writeFileSync(path.join(fixture.directory, ".fez/bin/pi"), "do not execute", { mode: 0o755 });
   fs.mkdirSync(path.join(fixture.directory, ".pi/agent"), { recursive: true });
@@ -82,8 +84,35 @@ it("reports missing enabled tools without admitting or running the agent", async
   expect(fs.readdirSync(fixture.directory)).toEqual([".fez", ".pi"]);
 });
 
-it("runs an explicitly funded request with the owner's Pi model/tools and removes its isolated configuration", async () => {
+it("uses the selected agent model profile during actual runtime preflight", async () => {
+  fixture.profile = true;
+  const directory = path.join(fixture.directory, ".fez/model-profiles/owner-provider/configured");
+  fs.mkdirSync(directory, { recursive: true });
+  const documents = {
+    "profile.json": { provider: "owner-provider", model: "owner-model", persona: "configured" },
+    "settings.json": { defaultProvider: "owner-provider", defaultModel: "owner-model", retry: { enabled: false } },
+    "models.json": { providers: { "owner-provider": { apiKey: "private-profile-credential", models: [{ id: "owner-model" }] } } },
+  };
+  for (const [file, value] of Object.entries(documents)) fs.writeFileSync(path.join(directory, file), JSON.stringify(value));
+  await import("../../fez-acp/src/agent.js");
+  await vi.waitFor(() => expect(fixture.logs.some(line => line.startsWith("FEZ_EVALUATION_READY="))).toBe(true));
+  expect(process.env.PI_CODING_AGENT_DIR).toBe(directory);
+  expect(fixture.logs.join("\n")).not.toContain("private-profile-credential");
+  expect(fixture.calls).toHaveLength(0);
+});
+
+it.each([false, true])("runs the owner's Pi model/tools through an aliased directory (isolated profile: %s)", async isolated => {
   fixture.pi = true;
+  const actual = path.join(fixture.directory, "actual-temp");
+  fs.mkdirSync(actual);
+  fixture.tempRoot = path.join(fixture.directory, "temp-alias");
+  fs.symlinkSync(actual, fixture.tempRoot, "dir");
+  const piDir = isolated ? path.join(fixture.directory, "isolated-pi") : path.join(fixture.directory, ".pi/agent");
+  if (isolated) {
+    fs.mkdirSync(piDir);
+    fs.copyFileSync(path.join(fixture.directory, ".pi/agent/auth.json"), path.join(piDir, "auth.json"));
+    vi.stubEnv("PI_CODING_AGENT_DIR", piDir);
+  }
   vi.stubEnv("FEZ_EVALUATION_CHECK", "");
   const file = path.join(fixture.directory, "request.json");
   fs.writeFileSync(file, JSON.stringify({ prompt: "Write a public script.", maxCostUsd: 0.01, timeoutMs: 1000 }));
@@ -95,7 +124,7 @@ it("runs an explicitly funded request with the owner's Pi model/tools and remove
   expect(fixture.calls[0].prompt).toContain("Private persona instructions.");
   expect(fs.existsSync(fixture.calls[0].cwd)).toBe(false);
   expect(fs.existsSync(path.join(fixture.directory, "private-project"))).toBe(false);
-  expect(JSON.parse(fs.readFileSync(path.join(fixture.directory, ".pi/agent/trust.json"), "utf8"))).toEqual({});
+  expect(JSON.parse(fs.readFileSync(path.join(piDir, "trust.json"), "utf8"))).toEqual({});
 });
 
 it("does not invoke after credential refresh drops an admitted tool", async () => {

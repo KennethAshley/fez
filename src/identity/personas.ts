@@ -253,6 +253,7 @@ export const KNOWN_EXTRA_KEYS = new Set([
   "scope", // fez-acp: sparse-checkout cone(s) — the agent's assignment, made physical
   "provider", // pi: defaultProvider
   "model", // pi: defaultModel
+  "modelProfile", // fez-acp: private extension model settings, bound to this agent
   "effort", // pi: defaultThinkingLevel (low|medium|high)
   "packages", // pi: registry packages
   "routable", // orchestrator: false = never delegated to by @fez (infrastructure, not a teammate)

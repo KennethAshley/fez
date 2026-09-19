@@ -38,3 +38,16 @@ it("isolates identities and relay sets without depending on relay order", () => 
   expect(workDirectory("a", ["wss://a"])).not.toBe(workDirectory("b", ["wss://a"]));
   expect(workDirectory("a", ["wss://a"])).not.toBe(workDirectory("a", ["wss://b"]));
 });
+
+it("recovers pending handoffs independently of the parent's terminal slot", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fez-inbox-")); dirs.push(dir);
+  const parent = event(1), child = event(2), terminal = event(3);
+  const inbox = new DurableWork(dir);
+  inbox.handoff(child, () => child);
+  const restarted = new DurableWork(dir);
+  expect(restarted.pendingHandoffs()).toEqual([child]);
+  expect(restarted.delivery(parent.id, () => terminal)).toEqual(terminal);
+  restarted.handoffSent(child);
+  expect(new DurableWork(dir).pendingHandoffs()).toEqual([]);
+  expect(restarted.handoff(child, () => { throw new Error("do not sign twice"); })).toEqual(child);
+});

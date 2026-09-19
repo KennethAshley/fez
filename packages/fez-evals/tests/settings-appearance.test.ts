@@ -94,6 +94,18 @@ it("searches setting topics and installed extension names, opens the matching pa
   expect(button("About")).toBeDefined();
 });
 
+it("shows an extension's display label while keeping its installed name as the page identity", async () => {
+  registerSettingsPanel("mesh", () => React.createElement("p", {}, "Mesh controls"), { label: "Shared Models" });
+  await render();
+  expect(button("Shared Models")).toBeDefined();
+  await search("Shared Models");
+  expect(button("Shared Models")).toBeDefined();
+  await click("Shared Models");
+  expect(document.querySelector(".set-title")?.textContent).toBe("Shared Models");
+  expect(document.body.textContent).toContain("Mesh controls");
+  expect(button("Shared Models").getAttribute("aria-current")).toBe("page");
+});
+
 it("updates the System preview when the Mac changes color scheme while settings is open", async () => {
   const listeners = new Set<() => void>();
   const query = { matches: false, addEventListener: (_: string, fn: () => void) => listeners.add(fn), removeEventListener: (_: string, fn: () => void) => listeners.delete(fn) };
