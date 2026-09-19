@@ -107,8 +107,12 @@ export async function agentProfiles(members: string[], query: (filters: Filter[]
   ])))).flat();
 }
 
-/** Resolve only an exact, unique published workspace name; callers verify membership. */
-export function resolveAgentName(name: string, events: { pubkey: string; id: string; created_at: number; content: string }[]): string {
+/**
+ * Resolve an exact published workspace name; callers verify membership.
+ * Unknown → undefined (the name is dropped, never guessed). Ambiguous →
+ * throws, so a handoff can never pick a member at random.
+ */
+export function resolveAgentName(name: string, events: { pubkey: string; id: string; created_at: number; content: string }[]): string | undefined {
   const profiles = new Map<string, { name?: string; aliases?: unknown }>();
   for (const event of [...events].sort((a, b) => a.created_at - b.created_at || b.id.localeCompare(a.id))) {
     try { profiles.set(event.pubkey, JSON.parse(event.content)); } catch { /* invalid profile */ }
@@ -116,8 +120,8 @@ export function resolveAgentName(name: string, events: { pubkey: string; id: str
   const matches = [...profiles].filter(([, profile]) =>
     typeof profile?.name === "string" && profile.name.toLowerCase() === name.toLowerCase() ||
     Array.isArray(profile?.aliases) && profile.aliases.some(alias => typeof alias === "string" && alias.toLowerCase() === name.toLowerCase()));
-  if (matches.length !== 1) throw new Error(`@${name} resolves to ${matches.length} workspace members. Use one unambiguous published name before handing off work.`);
-  return matches[0][0];
+  if (matches.length > 1) throw new Error(`@${name} resolves to ${matches.length} workspace members. Use one unambiguous published name before handing off work.`);
+  return matches[0]?.[0];
 }
 
 /** Both model replies and MCP sends use the same thread, mention and assignment rules.
