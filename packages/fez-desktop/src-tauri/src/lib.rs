@@ -543,7 +543,7 @@ fn keychain_presence(code: Option<i32>) -> Result<bool, String> {
 /// webview imports each as an ES module and calls its activate(api) — the
 /// GUI's version of the TUI's extension loader.
 #[tauri::command]
-fn list_gui_extensions() -> Result<Vec<(String, String, String, Option<String>, Option<String>, Option<serde_json::Value>)>, String> {
+fn list_gui_extensions() -> Result<Vec<(String, String, String, Option<String>, Option<String>, Option<serde_json::Value>, Option<serde_json::Value>)>, String> {
     let home_path = fez_home()?;
     Ok(package_install::gui_parts(&home_path).into_iter().map(|(name, code, styles, runtime)| {
         let source = package_install::installed_manifest(&name, &home_path)
@@ -551,7 +551,10 @@ fn list_gui_extensions() -> Result<Vec<(String, String, String, Option<String>, 
                 .filter(|source| valid_secret_name(source)).map(str::to_owned));
         let contributions = package_install::installed_manifest(&name, &home_path)
             .and_then(|manifest| manifest.pointer("/fez/guiContributions").cloned());
-        (name, code, styles, source, runtime, contributions)
+        // A manifest-declared model provider; the GUI drives it through run_extension_bin.
+        let model_provider = package_install::installed_manifest(&name, &home_path)
+            .and_then(|manifest| manifest.pointer("/fez/modelProvider").cloned());
+        (name, code, styles, source, runtime, contributions, model_provider)
     }).collect())
 }
 
