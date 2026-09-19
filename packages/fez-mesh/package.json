@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/mesh",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Roster-gated model sharing over pinned SSH for a single Mac mini provider",
   "type": "module",
