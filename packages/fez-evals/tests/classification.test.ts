@@ -86,4 +86,21 @@ describe("classifyTurnError", () => {
     expect(classifyTurnError("ECONNREFUSED")).toBe("transient");
     expect(classifyTurnError(42)).toBe("fatal");
   });
+
+  // Seen live 2026-09-19: dubois on pi/chutes got HTTP 402 ("Quota exceeded and
+  // account balance is $-0.059"), pi printed nothing, fez-acp saw an empty
+  // reply, classified it transient and retried three times in silence.
+  // Billing is never transient: retrying costs nothing but hides the reason.
+  test("billing refusals are never retried and beat the empty-reply pattern", () => {
+    const quota = 'HTTP 402 {"detail":{"message":"Quota exceeded and account balance is $-0.059295774000066234, please pay with fiat or send tao to 5D4w"}}';
+    expect(classifyTurnError(new Error(quota))).toBe("billing");
+    expect(classifyTurnError(new Error(`transient: harness returned an empty reply (stderr: …${quota})`))).toBe("billing");
+    expect(classifyTurnError(new Error("402 Payment Required"))).toBe("billing");
+    expect(classifyTurnError(new Error("insufficient credits to complete the request"))).toBe("billing");
+    // Context, not bare numbers — matches the 5xx policy above.
+    expect(classifyTurnError(new Error("processed 402 items"))).not.toBe("billing");
+    expect(modelRecoveryHint(new Error(quota))).toMatch(/provider refused/i);
+    expect(modelRecoveryHint(new Error(quota))).toContain("Quota exceeded and account balance is $-0.059");
+    expect(modelRecoveryHint(new Error(quota))).not.toContain("5D4w");
+  });
 });

@@ -156,6 +156,8 @@ export type PromptInput = string | { text: string; images?: PromptImage[] };
 export interface HarnessSession {
   /** False once the underlying process died or close() was called. */
   readonly alive: boolean;
+  /** The tail of the process's stderr — what a harness said when it returned nothing. */
+  lastStderr?(): string;
   prompt(
     instruction: PromptInput,
     onProgress?: (textSoFar: string) => void,
@@ -830,6 +832,7 @@ async function openAcpSession(
           get alive() {
             return alive;
           },
+          lastStderr: () => stderrTail,
           async prompt(instruction, onProgress, onUpdate, signal) {
             if (!alive) throw new Error(`${command} session is closed`);
             try {
@@ -986,7 +989,20 @@ export function registerHarness(adapter: HarnessAdapter): void {
  * won't self-repair between attempts; it delays the visible failure),
  * while classifying a transient blip as fatal merely skips a retry.
  */
-export type TurnErrorKind = "auth" | "aborted" | "transient" | "fatal";
+export type TurnErrorKind = "auth" | "billing" | "aborted" | "transient" | "fatal";
+
+// Provider refused for money, not for a blip. Matched with context (a
+// status prefix or the named phrase), never as a bare 402 — see the 5xx
+// note in classifyTurnError.
+const BILLING = /HTTP 402|status 402|\b402 Payment|Payment Required|quota exceeded|insufficient (?:credits?|balance|funds)|account balance|out of credits?|no credits? (?:left|remaining)/i;
+
+/** The provider's own sentence, without its payment instructions. */
+export function providerRefusal(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  const quoted = /"message"\s*:\s*"([^"]{1,300})"/.exec(text)?.[1];
+  const raw = quoted ?? text.slice(text.search(BILLING)).slice(0, 200);
+  return raw.split(/,\s*please\b|\.\s*(?:please|send|pay)\b/i)[0].trim().replace(/[.\s]+$/, "");
+}
 
 // Match explicit model lookup failures, not a temporarily unavailable model
 // endpoint, a missing local config file, or an unrelated HTTP 404.
@@ -1004,6 +1020,9 @@ function isMissingModelError(err: unknown): boolean {
 
 /** Shared recovery steps keep channel, document and private failure notices consistent. */
 export function modelRecoveryHint(err: unknown): string {
+  if (classifyTurnError(err) === "billing") {
+    return ` — my model provider refused the request: ${providerRefusal(err)}. Add credit, or pick another model for this agent in Agents → edit agent → model, then mention me again.`;
+  }
   if (!isMissingModelError(err) || classifyTurnError(err) !== "fatal") return "";
   return " — the configured model was not found. Open Agents, edit this agent, choose an available model, and save. Restart it if it is still running, then resend your request.";
 }
@@ -1011,6 +1030,8 @@ export function modelRecoveryHint(err: unknown): string {
 export function classifyTurnError(err: unknown): TurnErrorKind {
   if (err instanceof Error && err.name === "AbortError") return "aborted";
   const message = err instanceof Error ? err.message : String(err);
+  // Before the transient patterns: a 402 arrives wrapped in "empty reply".
+  if (BILLING.test(message)) return "billing";
   if (/Re-authenticate|API Error: 401|oauth|authenticat|logged in/i.test(message)) return "auth";
   // A wrapper such as "exited before reply" must not retry a missing model.
   if (isMissingModelError(err)) return "fatal";

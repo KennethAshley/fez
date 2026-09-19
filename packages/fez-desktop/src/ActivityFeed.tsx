@@ -25,7 +25,14 @@ type ToolItem = {
   diff?: { path: string; oldText?: string; newText: string };
 };
 type Item = ToolItem | { t: "thought"; text: string } | { t: "text"; text: string };
-type TurnGroup = { outcome?: string; items: Item[]; firstTs?: number; lastTs?: number };
+type TurnGroup = { outcome?: string; reason?: string; items: Item[]; firstTs?: number; lastTs?: number };
+
+/** The provider's sentence if the reason wraps one, else its head — the full text stays in the tooltip. */
+function shortReason(reason: string): string {
+  const quoted = /"message"\s*:\s*"([^"]{1,200})"/.exec(reason)?.[1];
+  const text = (quoted ?? reason.replace(/^transient:\s*/i, "")).split(/,\s*please\b/i)[0];
+  return text.length > 96 ? `${text.slice(0, 95)}…` : text;
+}
 
 const KIND_GLYPH: Record<string, string> = {
   read: "≡",
@@ -58,6 +65,7 @@ function fold(entries: ObserverEntry[]): TurnGroup[] {
       if (entry.status === "started") open().firstTs = entry.ts;
       else if (current) {
         current.outcome = entry.status;
+        if (entry.reason) current.reason = entry.reason;
         current.lastTs = entry.ts;
         current = undefined;
       }
@@ -210,7 +218,7 @@ export default function ActivityFeed({
         return (
           <details key={index} className={`turn ${group.outcome ?? "live"}`} open={index === groups.length - 1}>
             <summary className="turn-head">
-              <span className={`turn-status ${group.outcome ?? "live"}`}>
+              <span className={`turn-status ${group.outcome ?? "live"}`} title={group.reason ?? ""}>
                 {/* A finished-looking group with NO outcome is a turn whose
                     stream died unclosed (agent restarted, superseded) —
                     "turn …" read like it was still coming. Say what it is. */}
@@ -219,6 +227,7 @@ export default function ActivityFeed({
               {live && <LiveElapsed baseMs={dur ?? 0} />}
               {live && group.lastTs !== undefined && <LiveQuiet lastTs={group.lastTs} />}
               {!live && dur !== undefined && dur > 0 && <span className="turn-elapsed">{fmtDur(dur)}</span>}
+              {!live && group.reason && <span className="turn-reason" title={group.reason}>{shortReason(group.reason)}</span>}
               {live && doing && (
                 <span className="turn-doing">
                   {running?.kind && <span className="turn-doing-kind">{KIND_GLYPH[running.kind] ?? "⚙"}</span>} {doing}

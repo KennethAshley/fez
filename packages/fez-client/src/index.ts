@@ -398,6 +398,10 @@ export interface ObserverEntry {
   path?: string;
   /** Source-truncated file modification for edit-class tools. */
   diff?: { path: string; oldText?: string; newText: string };
+  /** Why a turn is retrying or failed — the error text the agent saw. */
+  reason?: string;
+  attempt?: number;
+  delayMs?: number;
   ts: number;
 }
 
