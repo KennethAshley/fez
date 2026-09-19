@@ -1,8 +1,11 @@
 import type { GuiExtensionApi } from "../../fez-extension-api/src/gui.js";
-import { MODEL_PROVIDER, parseMeshState, type MeshState } from "./state.js";
+import { parseMeshState, type MeshState } from "./state.js";
 
 /**
- * The Shared Models panel. Settings draws the title and subtitle above this
+ * The Shared Models panel, in its own isolated webview. The model-picker entry
+ * is declared in package.json (fez.modelProvider) and driven by the host through
+ * this extension's CLI, so nothing here runs in the main page.
+ * Settings draws the title and subtitle above this
  * (SettingsPane's `Head`), so the panel opens on its content — an h3 here
  * would repeat the page's own name back at it.
  *
@@ -14,7 +17,6 @@ import { MODEL_PROVIDER, parseMeshState, type MeshState } from "./state.js";
 export default function activate(api: GuiExtensionApi): void {
   const h = api.React.createElement;
   const { useState, useEffect } = api.React;
-  const compatible = typeof api.registerModelProvider === "function";
   const run = async (...args: string[]) => {
     if (!api.processes) throw Error("Enable the Shared Models processes permission in Extensions.");
     const result = await api.processes.run("fez-mesh", args);
@@ -25,21 +27,6 @@ export default function activate(api: GuiExtensionApi): void {
   const shortModel = (s: MeshState) => (s.model === "fez-mini-qwen3-4b" ? "Qwen3 4B" : s.model);
   const modelName = (s: MeshState) => `${shortModel(s)} · ${s.label}`;
 
-  api.registerModelProvider?.({
-    id: MODEL_PROVIDER,
-    label: "Shared Models",
-    listModels: async () => {
-      const s = await read();
-      return s.configured ? [{ id: s.model, label: modelName(s), status: s.status,
-        detail: `Model runs on ${s.label}. Tools run on this Mac. Saving grants this agent access to ${s.label}.${s.detail ? ` ${s.detail}.` : ""}` }] : [];
-    },
-    prepare: async (persona, model) => {
-      const s = await read();
-      if (!s.configured || s.status !== "ready") throw Error(`Start ${s.label} in Settings → Shared Models, then save again.`);
-      if (s.model !== model) throw Error("The shared model changed. Select it again before saving.");
-      await run("connect", "--name", persona);
-    },
-  });
 
   const mono = { fontFamily: "var(--font-mono)", fontSize: 12 } as const;
   const indent = { marginLeft: 18 } as const;
@@ -65,7 +52,7 @@ export default function activate(api: GuiExtensionApi): void {
       } catch (e) { setError(String(e)); }
       finally { setPending(""); }
     };
-    const disabled = !!pending || !api.processes || !compatible;
+    const disabled = !!pending || !api.processes;
     const ready = state?.status === "ready";
     // Every sentence naming the machine reads it from the CLI, so a box that
     // is not a Mac mini is described correctly without editing this file.
@@ -79,7 +66,6 @@ export default function activate(api: GuiExtensionApi): void {
 
     return h("section", { "aria-label": "Shared Models", style: { maxWidth: 620 } },
       h("p", { className: "settings-hint" }, "Run a model on your own hardware. Agents keep their name, instructions and tools — only the thinking moves."),
-      !compatible && h("p", { role: "alert", className: "ob-error" }, "This Fez version cannot add shared models to the model picker. Update Fez to use this extension."),
       !api.processes && h("p", { role: "alert", className: "ob-error" }, "Enable the Shared Models processes permission in Extensions."),
 
       // No fact on this rule: the status word sits directly beneath it, and a

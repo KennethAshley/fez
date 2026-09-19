@@ -13,12 +13,13 @@ import { RelayConnection } from "../../../src/protocol/relay.js";
 import { startMeshGateway, gatewayReady, workspaceAccess } from "./mesh.js";
 import { startProvider, updateMember, checkProvider, type ProviderOptions } from "./provider.js";
 import { configureClient, validateGateway, sshArguments, machineLabel, DEFAULT_LABEL, type GatewayConfig } from "./config.js";
+import { modelList, prepareCheck, type MeshState } from "./state.js";
 import { enrollCaller, revokeCaller, resolveCallerToken, listCallers, publicCallers, validatePersona, withCallerLock, MODEL_PROVIDER } from "./enrollment.js";
 
 const exec = promisify(execFile);
 interface HostConfig extends ProviderOptions { role: "host"; modelCommand: { file: string; args: string[] } }
 type Config = GatewayConfig | HostConfig;
-const { values, positionals } = parseArgs({ allowPositionals: true, options: { config: { type: "string" }, file: { type: "string" }, name: { type: "string" }, json: { type: "boolean" } } });
+const { values, positionals } = parseArgs({ allowPositionals: true, options: { config: { type: "string" }, file: { type: "string" }, name: { type: "string" }, model: { type: "string" }, json: { type: "boolean" } } });
 const command = positionals[0];
 const configFile = resolve(values.config ?? fezHome("mesh", "mini", "config.json"));
 const entry = fileURLToPath(import.meta.url);
@@ -62,6 +63,50 @@ async function installServices(config: Config) {
   }
   console.log("Service definitions saved. Run fez-mesh start to load them.");
 }
+async function collectState(config: GatewayConfig): Promise<MeshState> {
+    let ready = true;
+    try {
+      await remote(config, "status"); // Mini verifies model, signed host and pinned workspace owner.
+      if (!await gatewayReady(`http://127.0.0.1:${config.port}`)) ready = false;
+    } catch { ready = false; }
+    let callers = await listCallers(homedir());
+    let callersVerified = false;
+    const wire = new RelayConnection({ url: `ws://127.0.0.1:${config.relayPort}` });
+    try {
+      await wire.connect();
+      callers = await publicCallers({ home: homedir(), legacyPersona: config.persona, loadKey: getKey,
+        isMember: workspaceAccess(wire, config.owner) });
+      callersVerified = true;
+    } catch { /* A disconnected relay or locked keychain cannot establish pilot access. */ }
+    finally { wire.disconnect(); }
+        return { configured: true, provider: MODEL_PROVIDER, model: config.model, label: machineLabel(config),
+      machine: config.ssh, status: ready ? "ready" : "offline",
+      ...(!ready || !callersVerified ? { detail: [!ready ? "Mini or signed gateway is unavailable" : "",
+        !callersVerified ? "Caller access could not be verified" : ""].filter(Boolean).join("; ") } : {}),
+      callersVerified, callers };
+}
+
+async function manageCaller(config: Config, action: "connect" | "disconnect", name: string) {
+    if (config.role !== "gateway") throw new Error("Manage callers on the Mac that holds the workspace-owner key");
+    validatePersona(name);
+    const owner = secret(config.ownerKey);
+    if (getPublicKey(owner) !== config.owner) throw new Error("Owner key does not match the pinned workspace");
+    await withCallerLock(homedir(), async () => {
+      const wire = new RelayConnection({ url: `ws://127.0.0.1:${config.relayPort}` });
+      try {
+        await wire.connect();
+        const updateMembership = (pubkey: string, admit: boolean) => updateMember(wire, owner, pubkey, admit);
+        if (action === "connect") {
+          const result = await enrollCaller({ home: homedir(), config, persona: name, loadKey: loadOrCreateKey, updateMembership });
+          console.log(`Connected: ${result.persona} (${result.pubkey})`);
+        } else {
+          await revokeCaller({ home: homedir(), persona: name, legacyPersona: config.persona, loadKey: getKey, updateMembership });
+          console.log(`Disconnected: ${name}`);
+        }
+      } finally { wire.disconnect(); }
+    });
+}
+
 async function service(config: Config, start: boolean) {
   if (start && config.role === "gateway") await remote(config, "start");
   const kinds = config.role === "host" ? (start ? ["model", "host"] : ["host", "model"]) : ["gateway"];
@@ -153,12 +198,13 @@ async function main() {
     console.log(`IDENTITY=${getPublicKey(Buffer.from(loadOrCreateKey(values.name), "hex"))}`); return;
   }
   if (!command || command === "help") {
-    console.log("fez-mesh install-services | start | stop | status | state --json | connect --name PERSONA | disconnect --name PERSONA | ask --file task.txt | admit PUBKEY | revoke PUBKEY [--config path]"); return;
+    console.log("fez-mesh install-services | start | stop | status | state --json | models --json | prepare --name PERSONA --model MODEL | connect --name PERSONA | disconnect --name PERSONA | ask --file task.txt | admit PUBKEY | revoke PUBKEY [--config path]"); return;
   }
   let rawConfig: string;
   try { rawConfig = await readFile(configFile, "utf8"); }
   catch (error) {
-    if (command === "state" && (error as NodeJS.ErrnoException).code === "ENOENT") {
+    if ((command === "state" || command === "models") && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      if (command === "models") { console.log("[]"); return; }
       console.log(JSON.stringify({ configured: false, provider: MODEL_PROVIDER, model: "", label: DEFAULT_LABEL, machine: "",
         status: "offline", detail: "Mini has not been configured", callersVerified: false, callers: [] })); return;
     }
@@ -169,48 +215,21 @@ async function main() {
   catch { throw new Error("Invalid Mini configuration JSON"); }
   if (config.role === "gateway") validateGateway(config);
   else if (config.role !== "host" || !/^[a-f0-9]{64}$/.test(config.owner)) throw new Error("Invalid provider profile");
-  if (command === "state") {
+  if (command === "state" || command === "models") {
     if (config.role !== "gateway") throw new Error("State is available on the caller Mac");
-    let ready = true;
-    try {
-      await remote(config, "status"); // Mini verifies model, signed host and pinned workspace owner.
-      if (!await gatewayReady(`http://127.0.0.1:${config.port}`)) ready = false;
-    } catch { ready = false; }
-    let callers = await listCallers(homedir());
-    let callersVerified = false;
-    const wire = new RelayConnection({ url: `ws://127.0.0.1:${config.relayPort}` });
-    try {
-      await wire.connect();
-      callers = await publicCallers({ home: homedir(), legacyPersona: config.persona, loadKey: getKey,
-        isMember: workspaceAccess(wire, config.owner) });
-      callersVerified = true;
-    } catch { /* A disconnected relay or locked keychain cannot establish pilot access. */ }
-    finally { wire.disconnect(); }
-    console.log(JSON.stringify({ configured: true, provider: MODEL_PROVIDER, model: config.model, label: machineLabel(config),
-      machine: config.ssh, status: ready ? "ready" : "offline",
-      ...(!ready || !callersVerified ? { detail: [!ready ? "Mini or signed gateway is unavailable" : "",
-        !callersVerified ? "Caller access could not be verified" : ""].filter(Boolean).join("; ") } : {}),
-      callersVerified, callers })); return;
+    const s = await collectState(config);
+    console.log(JSON.stringify(command === "state" ? s : modelList(s))); return;
   }
-  if (command === "connect" || command === "disconnect") {
-    if (config.role !== "gateway") throw new Error("Manage callers on the Mac that holds the workspace-owner key");
+  if (command === "connect" || command === "disconnect") { await manageCaller(config, command, values.name ?? ""); return; }
+  if (command === "prepare") {
+    // The desktop calls this from Agents → model → Save (fez.modelProvider): connect only when the
+    // machine is ready and the model on offer is the one the agent selected.
+    if (config.role !== "gateway") throw new Error("Prepare runs on the caller Mac");
+    const gateway: GatewayConfig = config;
     validatePersona(values.name ?? "");
-    const owner = secret(config.ownerKey);
-    if (getPublicKey(owner) !== config.owner) throw new Error("Owner key does not match the pinned workspace");
-    await withCallerLock(homedir(), async () => {
-      const wire = new RelayConnection({ url: `ws://127.0.0.1:${config.relayPort}` });
-      try {
-        await wire.connect();
-        const updateMembership = (pubkey: string, admit: boolean) => updateMember(wire, owner, pubkey, admit);
-        if (command === "connect") {
-          const result = await enrollCaller({ home: homedir(), config, persona: values.name!, loadKey: loadOrCreateKey, updateMembership });
-          console.log(`Connected: ${result.persona} (${result.pubkey})`);
-        } else {
-          await revokeCaller({ home: homedir(), persona: values.name!, legacyPersona: config.persona, loadKey: getKey, updateMembership });
-          console.log(`Disconnected: ${values.name}`);
-        }
-      } finally { wire.disconnect(); }
-    });
+    const why = prepareCheck(await collectState(gateway), values.model ?? "");
+    if (why) throw new Error(why);
+    await manageCaller(gateway, "connect", values.name!);
     return;
   }
   if (command === "install-services") return installServices(config);
