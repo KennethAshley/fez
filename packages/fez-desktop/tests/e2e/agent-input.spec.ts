@@ -51,6 +51,11 @@ test("answers several agent questions privately and restores a waiting form afte
     }, { relayUrl: relay.url });
     await page.goto("/");
     await expect(page.locator(".shell")).toBeVisible();
+    // Questions live in the home inbox now: the rail badge counts them and the
+    // inbox view lists each one as a blocked loop.
+    const inbox = page.locator(".home-link", { hasText: "inbox" });
+    const inboxBadge = inbox.locator(".badge");
+    const openInbox = async () => { await inbox.click(); await expect(page.locator(".loops-band")).toBeVisible(); };
     const form = inputForm({ mode: "form", message: "Choose the layout and features", requestedSchema: { properties: {
       layout: { type: "string", title: "Layout", oneOf: [{ const: "grid", title: "Grid", description: "Cards in columns" }, { const: "list", title: "List" }] },
       features: { type: "array", title: "Features", items: { anyOf: [{ const: "search", title: "Search" }, { const: "filters", title: "Filters" }] } },
@@ -63,8 +68,11 @@ test("answers several agent questions privately and restores a waiting form afte
       subscribe: (filters, receive) => connection.subscribe(filters, receive),
       encrypt: (peer, text) => agent.encryptTo(peer, text), decrypt: (peer, text) => agent.decryptFrom(peer, text),
     }, owner, form, { signal: abort.signal, timeoutMs: 45_000 });
+    await expect(inboxBadge).toHaveText("1");
+    await expect(page.locator(".agent-input")).toBeHidden();
+    await openInbox();
+    await page.getByRole("button", { name: "Answer question →" }).click();
     await expect(page.getByRole("region", { name: "Questions from quill" })).toBeVisible();
-    await expect(page.getByLabel("1 pending question request")).toHaveText("1");
     await expect.poll(() => notifications.length).toBe(1);
     expect(notifications[0]).toEqual({ title: "quill needs your input", body: "Open Fez to answer privately." });
     await page.getByRole("radio", { name: /Grid/ }).check();
@@ -80,6 +88,9 @@ test("answers several agent questions privately and restores a waiting form afte
     await page.getByRole("button", { name: "Next", exact: true }).click();
     await page.getByRole("textbox", { name: "Other", exact: true }).fill("Compact spacing");
     await page.reload();
+    await expect(page.locator(".shell")).toBeVisible();
+    await openInbox();
+    await page.getByRole("button", { name: "Answer question →" }).click();
     await expect(page.getByRole("region", { name: "Questions from quill" })).toBeVisible();
     await expect(page.getByText("Question 4 of 4", { exact: true })).toBeVisible();
     await expect(page.getByRole("radio", { name: /Grid/, includeHidden: true })).toBeChecked();
@@ -91,14 +102,14 @@ test("answers several agent questions privately and restores a waiting form afte
     await page.getByRole("button", { name: "Send", exact: true }).click();
     await expect(pending).resolves.toEqual({ action: "accept", content: { layout: "grid", features: ["search", "filters"], count: 0, custom: "Compact spacing" } });
     await expect(page.locator(".input-card")).toHaveCount(0);
-    await expect(page.getByLabel("1 pending question request")).toHaveCount(0);
+    await expect(inboxBadge).toHaveCount(0);
     await page.getByRole("button", { name: "History", exact: true }).click();
     await expect(page.getByText("Received by agent")).toBeVisible();
     await page.reload();
     await expect(page.locator(".shell")).toBeVisible();
     await expect(page.locator(".input-card")).toHaveCount(0);
-    await page.getByRole("button", { name: "Questions", exact: true }).click();
-    await page.getByRole("button", { name: "History", exact: true }).click();
+    await inbox.click();
+    await page.getByRole("button", { name: "Question history", exact: true }).click();
     await expect(page.getByText("Received by agent")).toBeVisible();
     await page.locator(".input-history-card summary").click();
     await expect(page.getByText("Compact spacing", { exact: true })).toBeVisible();

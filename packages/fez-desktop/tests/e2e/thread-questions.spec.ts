@@ -60,6 +60,11 @@ for (const kind of ["channel", "dm"] as const) test(`${kind}: questions open in 
     }, { relayUrl: relay.url });
     await page.goto("/");
     await expect(page.locator(".shell")).toBeVisible();
+    // Questions live in the home inbox now: the rail badge counts them and the
+    // inbox view lists each one as a blocked loop.
+    const inbox = page.locator(".home-link", { hasText: "inbox" });
+    const inboxBadge = inbox.locator(".badge");
+    const openInbox = async () => { await inbox.click(); await expect(page.locator(".loops-band")).toBeVisible(); };
     const pending = requestInput({
       pubkey: agentPk,
       publish: async template => { const event = agent.signEvent(template); await connection.publish(event); return event; },
@@ -69,7 +74,7 @@ for (const kind of ["channel", "dm"] as const) test(`${kind}: questions open in 
       layout: { type: "string", title: "Layout", enum: ["Grid", "List"] },
       custom: { type: "string", title: "Details" },
     }, required: ["layout"] } }), { origin, signal: abort.signal, timeoutMs: 80_000 });
-    await expect(page.getByLabel("1 pending question request")).toBeVisible();
+    await expect(inboxBadge).toHaveText("1");
     await expect(page.locator(".agent-input")).toBeHidden();
     if (kind === "dm") await expect(page.locator("main .timeline")).not.toContainText("Waiting for your answer");
     await expect.poll(() => page.evaluate(() => (window as unknown as { questionBanners: unknown[] }).questionBanners.length)).toBe(1);
@@ -96,8 +101,8 @@ for (const kind of ["channel", "dm"] as const) test(`${kind}: questions open in 
     }
     await page.reload();
     await expect(page.locator(".shell")).toBeVisible();
-    await page.getByRole("button", { name: "Questions", exact: true }).click();
-    await page.locator(".agent-input .input-thread-link").click();
+    await openInbox();
+    await page.getByRole("button", { name: "Answer question →" }).click();
     await expect(inline).toBeVisible();
     await expect(page.getByText(kind === "channel" ? "Original design discussion" : "Private design discussion", { exact: true })).toBeVisible();
     await expect(inline.getByRole("textbox", { name: "Details", exact: true })).toHaveValue("Compact spacing");
@@ -116,11 +121,11 @@ for (const kind of ["channel", "dm"] as const) test(`${kind}: questions open in 
     await inline.getByRole("button", { name: "Send", exact: true }).click();
     await expect(pending).resolves.toEqual({ action: "accept", content: { layout: "Grid", custom: "Compact spacing" } });
     await expect(inline.getByText("Received by agent")).toBeVisible();
-    await expect(page.getByLabel("1 pending question request")).toHaveCount(0);
     await page.reload();
     await expect(page.locator(".shell")).toBeVisible();
-    await page.getByRole("button", { name: "Questions", exact: true }).click();
-    await page.getByRole("button", { name: "History", exact: true }).click();
+    await expect(inboxBadge).toHaveCount(0);
+    await inbox.click();
+    await page.getByRole("button", { name: "Question history", exact: true }).click();
     await page.locator(".agent-input .input-thread-link").click();
     await expect(inline.getByText("Received by agent")).toBeVisible();
     await inline.locator("summary").click();
