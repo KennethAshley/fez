@@ -331,6 +331,19 @@ interface AcpDescriptor {
   env: () => NodeJS.ProcessEnv;
 }
 
+// Pi's saved default is advisory: an invalid models.json can select a cloud
+// fallback. A private profile must select and confirm its exact model before
+// either the standing or one-shot harness is allowed to send a prompt.
+async function requirePiModel(ctx: ClientContext, harnessId: string, sessionId: string): Promise<void> {
+  const model = harnessId === "pi" ? process.env.FEZ_PI_REQUIRED_MODEL : undefined;
+  if (!model) return;
+  try {
+    const result = await ctx.request(methods.agent.session.setConfigOption, { sessionId, configId: "model", value: model });
+    if (result.configOptions.some(option => option.id === "model" && option.type === "select" && option.currentValue === model)) return;
+  } catch { /* Missing, invalid, and unsupported selections all fail closed. */ }
+  throw new Error(`Required model ${model} is unavailable; reconnect the model before restarting. No prompt was sent.`);
+}
+
 // ACP reports cumulative session dollars; consumers need cumulative dollars
 // within the current turn. A missing/reset total leaves the next delta unknown.
 const sessionCosts = new WeakMap<object, number | null>();
@@ -807,6 +820,7 @@ async function openAcpSession(
         // refresh before use, and a dead connection withholds its skill.
         for (const server of await withFreshOAuth(mcpServers ?? [])) builder = builder.withMcpServer(harnessMcpServer(descriptor.id, server));
         const session = await builder.start();
+        await requirePiModel(ctx, descriptor.id, session.sessionId);
         let pendingSystemPrompt = systemPrompt;
         // Set when a turn exits without its "stop" — the next prompt must
         // drain that turn's tail before it reads anything of its own.
@@ -938,6 +952,7 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
             builder = builder.withMcpServer(harnessMcpServer(descriptor.id, server));
           }
           const session = await builder.start();
+          await requirePiModel(ctx, descriptor.id, session.sessionId);
           return await drivePrompt(session, command, instruction, onProgress, onUpdate, signal, undefined, undefined, bridge.input);
         });
       } finally {

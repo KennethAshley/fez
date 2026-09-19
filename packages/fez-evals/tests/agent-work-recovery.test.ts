@@ -7,6 +7,11 @@ import { startAcpRuntime, TEST_CHANNEL } from "./helpers/acp-runtime.js";
 let runtime: Awaited<ReturnType<typeof startAcpRuntime>> | undefined;
 afterEach(async () => { await runtime?.stop(); runtime = undefined; });
 
+const reported = (r: NonNullable<typeof runtime>, requestId: string, reply: string) => r.relay.events.filter(e =>
+  e.pubkey === r.agentPk && e.content.includes(reply) &&
+  e.tags.some(t => t[0] === "result" && t[1] === requestId) && e.tags.some(t => t[0] === "status" && t[1] === "error"));
+
+
 it("reports interrupted work, recovers every queued assignment, and does not redeliver after another restart", async () => {
   const r = runtime = await startAcpRuntime("queue");
   const tags = [["h", TEST_CHANNEL], ["p", r.agentPk], ["task", r.agentPk]];
@@ -26,11 +31,11 @@ it("reports interrupted work, recovers every queued assignment, and does not red
   await r.wait(() => r.prompts.length === 3, "third recovered separately");
   expect(r.prompts[2].instruction).toContain(third.id);
   r.release(r.prompts[2], "THIRD done");
-  await r.wait(() => r.relay.events.some(e => e.content === "THIRD done"), "last reply published");
+  await r.wait(() => reported(r, third.id, "THIRD done").length === 1, "last reply published");
   await r.restart();
   await new Promise(resolve => setTimeout(resolve, 1000));
   expect(r.prompts).toHaveLength(3);
-  expect(r.relay.events.filter(e => e.content === "SECOND done")).toHaveLength(1);
+  expect(reported(r, second.id, "SECOND done")).toHaveLength(1);
 }, 45000);
 
 it("reviews only one result per assigned worker even when two signed result IDs arrive", async () => {
@@ -117,7 +122,7 @@ it("gates disk-loaded queued work during and after failed reconciliation without
   const old = await r.send("OLD completed assignment", tags);
   await r.wait(() => r.prompts.length === 1, "old started");
   r.release(r.prompts[0], "already completed");
-  await r.wait(() => r.relay.events.some(e => e.content === "already completed"), "old reply");
+  await r.wait(() => reported(r, old.id, "already completed").length === 1, "old reply");
   let rejectHistory!: (error: Error) => void;
   let reconciling = false;
   const held = new Promise<void>((_, reject) => { rejectHistory = reject; });
@@ -190,11 +195,11 @@ it("receives late published assignments live and recovers today's old timestamp 
   await r.wait(() => r.prompts.length === 1, "old timestamp delivered live");
   expect(r.prompts[0].instruction).toContain(live.id);
   r.release(r.prompts[0], "late live done");
-  await r.wait(() => r.relay.events.some(e => e.content === "late live done"), "late live finished");
+  await r.wait(() => reported(r, live.id, "late live done").length === 1, "late live finished");
   const offline = late("late offline assignment");
   await r.restart(async () => { await r.publish(offline); });
   await r.wait(() => r.prompts.length === 2, "old timestamp recovered behind current checkpoint");
   expect(r.prompts[1].instruction).toContain(offline.id);
   r.release(r.prompts[1], "late offline done");
-  await r.wait(() => r.relay.events.some(e => e.content === "late offline done"), "late offline finished");
+  await r.wait(() => reported(r, offline.id, "late offline done").length === 1, "late offline finished");
 }, 45000);

@@ -34,7 +34,7 @@ process.on("message", (message: { id: number; reply?: string; error?: string; co
   } else pending.get(message.id)?.(message.reply ?? "fixture reply", message.error, message.costUsd, message.partialText);
 });
 registerHarness({
-  id: "test-harness", aliases: [], command: "unused", detect: async () => true,
+  id: process.env.FEZ_TEST_HARNESS_ID || "test-harness", aliases: [], command: "unused", detect: async () => true,
   invoke: async () => { throw new Error("expected a persistent session"); },
   openSession: async () => {
     const session = ++nextSession;

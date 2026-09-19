@@ -14,32 +14,13 @@
  * - Explicit task tags address their worker independently of prose;
  *   the caller still verifies the signature, author policy, and roster.
  */
-import { proseMentions } from "@fezchat/protocol";
+import { addressees, proseMentions } from "../../fez-client/src/agent-mentions.js";
+export { addressees };
 
 export interface AddressableEvent {
   pubkey: string;
   content: string;
   tags: string[][];
-}
-
-/**
- * SEGMENT-START addressing (v2, earned in the comms battery): the first
- * @name addresses, and so does any @name that OPENS a new segment — a
- * sentence (after . ? !) or a line. "T1: @a X? @b Y? @c Z." fans out
- * to all three. An unconditional "then @name" also opens an instruction;
- * "check it, if good then @coder" still protects coder
- * (mid-sentence = downstream handoff, not an addressee).
- */
-export function addressees(content: string): string[] {
-  const names: string[] = [];
-  for (const { name, index } of proseMentions(content)) {
-    const prefix = content.slice(0, index);
-    const clause = prefix.split(/[.?!\n]/).at(-1) ?? '';
-    const nextInstruction = /\bthen\s*$/i.test(clause) && !/\b(if|unless|when|once)\b/i.test(clause);
-    // Look back: only whitespace/quotes/brackets since a sentence end or line start?
-    if (names.length === 0 || nextInstruction || /[.?!\n]["')\]]*\s*$/.test(prefix)) names.push(name);
-  }
-  return [...new Set(names)];
 }
 
 /** Peers already dispatched by the source message need a reference, not a second task. */

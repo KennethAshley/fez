@@ -163,7 +163,8 @@ it("dispatches an authorized peer's explicit task without treating a bare p-tag 
   await vi.waitFor(() => expect(prompts.some(prompt => prompt.includes(assignment.id))).toBe(true), { timeout: 6000 });
   await vi.waitFor(async () => {
     const replies = await ownerWire.query([{ kinds: [47103], authors: [agentPk], "#e": [assignment.id] }]);
-    expect(replies.some(e => e.content === "STARTUP_DONE" && e.tags.some(t => t[0] === "e" && t[1] === assignment.id && t[3] === "reply"))).toBe(true);
+    expect(replies.some(e => e.content.includes("STARTUP_DONE") && e.tags.some(t => t[0] === "result" && t[1] === assignment.id) &&
+      e.tags.some(t => t[0] === "status" && t[1] === "error"))).toBe(true);
   }, { timeout: 6000 });
   await pause(200);
   expect(prompts.some(prompt => prompt.includes("BARE_REPLY_TAG"))).toBe(false);

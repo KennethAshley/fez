@@ -260,6 +260,221 @@ describe("delegated work completion", () => {
   const assignment = (content: string) => finalizeEvent({ kind: 47103, created_at: Math.floor(Date.now() / 1000),
     content, tags: [["h", channelA], ["task", agentPk], ["p", agentPk]] }, specialistKey);
 
+  it("reports a correlated blocker when an assigned worker omits its completion tool", async () => {
+    const request = assignment("Task: check the script. Return: verification and audio.");
+    await wire.publish(request); await vi.advanceTimersByTimeAsync(0);
+    expect(turns[0].text).toContain("fez_read_message");
+    expect(turns[0].text).toContain("self-contained brief");
+    await finish(turns[0], "I think the audio is done");
+    const result = replies().at(-1)!;
+    expect(result.tags).toEqual(expect.arrayContaining([["result", request.id], ["status", "error"], ["p", specialistPk]]));
+    expect(result.content).toMatch(/completion|terminal result/i);
+    expect(result.content).toContain("I think the audio is done");
+  });
+
+  it("waits for a child handoff, then requires completion of the original parent assignment", async () => {
+    const request = finalizeEvent({ kind: 47103, created_at: Math.floor(Date.now() / 1000),
+      content: "PARENT_TASK_BRIEF", tags: [["h", channelA], ["task", agentPk], ["p", agentPk]] }, ownerKey);
+    await wire.publish(request); await vi.advanceTimersByTimeAsync(0);
+    await finish(turns[0], "@speaker Task: narrate. Return: audio URL.");
+    const child = replies().at(-1)!;
+    expect(child.tags).toContainEqual(["task", specialistPk]);
+    expect(child.tags.some(t => t[0] === "result")).toBe(false);
+    const result = finalizeEvent({ kind: 47103, content: "audio delivered", created_at: child.created_at, tags: [
+      ["h", channelA], ["e", request.id, "", "root"], ["e", child.id, "", "reply"],
+      ["p", agentPk], ["result", child.id], ["status", "success"],
+    ] }, specialistKey);
+    await wire.publish(result); await vi.advanceTimersByTimeAsync(0);
+    expect(turns[1].text).toContain(`requestId=${request.id}`);
+    await finish(turns[1], "Skipped final completion");
+    expect(replies().at(-1)!.tags).toEqual(expect.arrayContaining([["result", request.id], ["status", "error"]]));
+  });
+
+  it("does not resume a terminated parent when a late child result arrives", async () => {
+    const parent = finalizeEvent({ kind: 47103, created_at: Math.floor(Date.now() / 1000), content: "parent brief",
+      tags: [["h", channelA], ["task", agentPk], ["p", agentPk]] }, ownerKey);
+    await wire.publish(parent); await vi.advanceTimersByTimeAsync(0);
+    await finish(turns[0], "@speaker narrate this");
+    const child = replies()[0];
+    const { completeWork } = await import("../../fez-client/src/work-completion.js");
+    await wire.publish(finalizeEvent({ ...completeWork(parent, agentPk, { status: "error", summary: "parent cancelled", capability: "test", artifacts: [] }), created_at: parent.created_at }, agentKey));
+    await wire.publish(finalizeEvent({ ...completeWork(child, specialistPk, { status: "success", summary: "late child result", capability: "test", artifacts: [] }), created_at: parent.created_at }, specialistKey));
+    await vi.advanceTimersByTimeAsync(35_001);
+    expect(turns).toHaveLength(1);
+  });
+
+  it.each([false, true])("waits for every child before requiring the parent's terminal result (separate briefs=%s)", async separate => {
+    const secondKey = new Uint8Array(32).fill(8), secondPk = getPublicKey(secondKey);
+    await wire.publish(finalizeEvent({ kind: 47102, created_at: Math.floor(Date.now() / 1000) + 1, content: "",
+      tags: [["d", "roster"], ["p", ownerPk], ["p", agentPk], ["p", specialistPk], ["p", secondPk]] }, ownerKey));
+    await wire.publish(finalizeEvent({ kind: 47006, created_at: Math.floor(Date.now() / 1000), content: "", tags: [["p", secondPk]] }, ownerKey));
+    const parent = finalizeEvent({ kind: 47103, created_at: Math.floor(Date.now() / 1000), content: "parent brief",
+      tags: [["h", channelA], ["task", agentPk], ["p", agentPk]] }, ownerKey);
+    await wire.publish(parent); await vi.advanceTimersByTimeAsync(0);
+    const children = (separate ? [[specialistPk], [secondPk]] : [[specialistPk, secondPk]]).map(workers => finalizeEvent({
+      kind: 47103, created_at: parent.created_at, content: "child brief", tags: [["h", channelA], ["e", parent.id, "", "reply"], ["depth", "1"],
+        ...workers.flatMap(pk => [["task", pk], ["p", pk]])],
+    }, agentKey));
+    for (const child of children) await wire.publish(child);
+    await finish(turns[0], "Delegated; waiting.");
+    const { completeWork } = await import("../../fez-client/src/work-completion.js");
+    await wire.publish(finalizeEvent({ ...completeWork(children[0], specialistPk, { status: "success", summary: "first result", capability: "test", artifacts: [] }), created_at: parent.created_at }, specialistKey));
+    await vi.advanceTimersByTimeAsync(0);
+    await finish(turns[1], "Waiting for the second worker.");
+    expect(replies().some(e => e.tags.some(t => t[0] === "result" && t[1] === parent.id))).toBe(false);
+    await wire.publish(finalizeEvent({ ...completeWork(children.at(-1)!, secondPk, { status: "success", summary: "second result", capability: "test", artifacts: [] }), created_at: parent.created_at }, secondKey));
+    await vi.advanceTimersByTimeAsync(0);
+    // This test isolates the callback contract from session-turn-cap summary capture.
+    if (turns.at(-1)!.text.includes("Your session is about to be recycled")) await finish(turns.at(-1)!, "Waiting for second result.");
+    const last = turns.at(-1)!;
+    expect(last.text).toContain(`requestId=${parent.id}`);
+    await finish(last, "Omitted explicit parent completion");
+    expect(replies().at(-1)!.tags).toEqual(expect.arrayContaining([["result", parent.id], ["status", "error"]]));
+  });
+
+  it.each([false, true])("requires a terminal result after a plain progress message (harness fails=%s)", async fails => {
+    const request = assignment("do the work");
+    await wire.publish(request); await vi.advanceTimersByTimeAsync(0);
+    await wire.publish(finalizeEvent({ kind: 47103, content: "Starting work", created_at: request.created_at,
+      tags: [["h", channelA], ["e", request.id, "", "reply"], ["p", specialistPk]] }, agentKey));
+    if (fails) { turns[0].fail(); await vi.advanceTimersByTimeAsync(1_000); }
+    else await finish(turns[0]);
+    expect(replies().at(-1)!.tags).toEqual(expect.arrayContaining([["result", request.id], ["status", "error"]]));
+  });
+
+  it("rejects ambiguous normal handoffs instead of selecting the first name", async () => {
+    await wire.publish(finalizeEvent({ kind: 47000, content: '{"name":"speaker"}', tags: [], created_at: Math.floor(Date.now() / 1000) }, ownerKey));
+    await send("delegate this");
+    await finish(turns[0], "@speaker narrate this");
+    expect(replies().some(e => e.tags.some(t => t[0] === "task"))).toBe(false);
+    expect(replies().at(-1)!.content).toContain("2 workspace members");
+  });
+
+  it("cancels an unsent tool handoff before recovery can dispatch it", async () => {
+    const parent = await send("delegate this");
+    const child = finalizeEvent({ kind: 47103, created_at: parent.created_at, content: "@speaker child", tags: [
+      ["h", channelA], ["e", parent.id, "", "reply"], ["task", specialistPk], ["p", specialistPk], ["depth", "1"],
+    ] }, agentKey);
+    const { DurableWork, workDirectory } = await import("../../../src/shared/durable-work.js");
+    const inbox = new DurableWork(workDirectory(agentPk, ["ws://controlled.invalid"]));
+    inbox.handoff(child, () => child);
+    const { CapabilityClient } = await import("@fezchat/protocol");
+    const owner = new CapabilityClient({ relay: "ws://controlled.invalid", privateKey: Buffer.from(ownerKey).toString("hex") });
+    await wire.publish(owner.signEvent({ kind: 20005, tags: [["p", agentPk]],
+      content: owner.encryptTo(agentPk, JSON.stringify({ cmd: "cancel", ts: Date.now() })) }));
+    await vi.advanceTimersByTimeAsync(35_001);
+    expect(turns[0].aborted).toBe(true);
+    expect(wire.events.some(e => e.id === child.id)).toBe(false);
+    expect(inbox.pendingHandoffs()).toEqual([]);
+    expect(replies().at(-1)!.content).toMatch(/stopped by my owner/);
+  });
+
+  it("retires a revoked child with a blocker and continues unrelated recovery", async () => {
+    const parent = await send("delegate this");
+    wire.beforePublish = async event => { if (event.tags.some(t => t[0] === "task")) throw new Error("publish timeout"); };
+    await finish(turns[0], "@speaker narrate this");
+    wire.beforePublish = undefined;
+    await wire.publish(finalizeEvent({ kind: 47102, content: "", created_at: Math.floor(Date.now() / 1000) + 1,
+      tags: [["d", "roster"], ["p", ownerPk], ["p", agentPk]] }, ownerKey));
+    const queued = finalizeEvent({ kind: 47103, content: "unrelated queued task", created_at: parent.created_at,
+      tags: [["h", channelB], ["task", agentPk], ["p", agentPk]] }, ownerKey);
+    wire.events.push(queued); // recovery must discover it without live notification
+    await vi.advanceTimersByTimeAsync(35_001);
+    expect(replies().some(e => e.content.includes("no longer authorized"))).toBe(true);
+    expect(replies().some(e => e.tags.some(t => t[0] === "task"))).toBe(false);
+    expect(turns).toHaveLength(2);
+    expect(turns[1].text).toContain(queued.id);
+  });
+
+  it.each(["pending child", "cancelled source", "pending parent result", "published parent result"])("recovers %s across an actual runtime reload", async scenario => {
+    vi.clearAllTimers(); wire.subscriptions = [];
+    for (const listener of process.listeners("exit")) if (!priorExit.includes(listener)) process.removeListener("exit", listener);
+    for (const listener of process.listeners("SIGINT")) if (!priorSigint.includes(listener)) process.removeListener("SIGINT", listener);
+    const { DurableWork, workDirectory } = await import("../../../src/shared/durable-work.js");
+    const inbox = new DurableWork(workDirectory(agentPk, ["ws://controlled.invalid"]));
+    const parent = finalizeEvent({ kind: 47103, created_at: Math.floor(Date.now() / 1000), content: "@isolation-test parent",
+      tags: [["h", channelA], ["p", agentPk], ...(["pending child", "cancelled source"].includes(scenario) ? [] : [["task", agentPk]])] }, ownerKey);
+    const child = finalizeEvent({ kind: 47103, content: "@speaker child", created_at: parent.created_at,
+      tags: [["h", channelA], ["e", parent.id, "", "reply"], ["task", specialistPk], ["p", specialistPk], ["depth", "1"]] }, agentKey);
+    wire.events.push(parent);
+    let expected: Event;
+    if (["pending child", "cancelled source"].includes(scenario)) {
+      inbox.handoff(child, () => child); expected = child;
+      if (scenario === "cancelled source") {
+        expected = finalizeEvent({ kind: 47103, created_at: parent.created_at, content: "Work stopped by my owner", tags: [
+          ["h", channelA], ["e", parent.id, "", "reply"], ["p", ownerPk],
+        ] }, agentKey);
+        inbox.delivery(parent.id, () => expected);
+      }
+    } else {
+      const callback = finalizeEvent({ kind: 47103, content: "child result", created_at: parent.created_at, tags: [
+        ["h", channelA], ["e", parent.id, "", "root"], ["e", child.id, "", "reply"], ["p", agentPk], ["result", child.id], ["status", "success"],
+      ] }, specialistKey);
+      wire.events.push(child, callback);
+      inbox.accept(callback); inbox.running(callback.id);
+      const { completeWork } = await import("../../fez-client/src/work-completion.js");
+      expected = finalizeEvent({ ...completeWork(parent, agentPk, { status: "success", summary: "verified parent result", capability: "test", artifacts: [] }), created_at: parent.created_at }, agentKey);
+      inbox.delivery(parent.id, () => expected);
+      if (scenario === "published parent result") wire.events.push(expected);
+    }
+    vi.resetModules();
+    await import("../../fez-acp/src/agent.js");
+    await vi.advanceTimersByTimeAsync(35_100);
+    expect(wire.events.filter(e => e.id === expected.id)).toHaveLength(1);
+    expect(turns).toHaveLength(0);
+    if (scenario === "cancelled source") expect(wire.events.some(e => e.id === child.id)).toBe(false);
+    expect(new DurableWork(inbox.directory).pendingHandoffs()).toEqual([]);
+  });
+
+  it.each([false, true])("preserves a tool handoff when the harness fails (published=%s)", async published => {
+    const request = finalizeEvent({ kind: 47103, created_at: Math.floor(Date.now() / 1000),
+      content: "parent", tags: [["h", channelA], ["task", agentPk], ["p", agentPk]] }, ownerKey);
+    await wire.publish(request); await vi.advanceTimersByTimeAsync(0);
+    const child = finalizeEvent({ kind: 47103, created_at: request.created_at, content: "@speaker child brief",
+      tags: [["h", channelA], ["e", request.id, "", "reply"], ["task", specialistPk], ["p", specialistPk], ["depth", "1"]] }, agentKey);
+    const { DurableWork, workDirectory } = await import("../../../src/shared/durable-work.js");
+    const inbox = new DurableWork(workDirectory(agentPk, ["ws://controlled.invalid"]));
+    inbox.handoff(child, () => child);
+    if (published) { await wire.publish(child); inbox.handoffSent(child); }
+    turns[0].fail(new Error("network unavailable"));
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(replies()).toEqual([child]);
+    expect(turns).toHaveLength(1);
+    expect(inbox.pendingHandoffs()).toEqual([]);
+  });
+
+  it("retries a saved child handoff without re-running the harness or terminating its parent", async () => {
+    const request = await send("delegate this");
+    wire.beforePublish = async event => { if (event.tags.some(t => t[0] === "task")) throw new Error("publish timeout"); };
+    await finish(turns[0], "@speaker Task: narrate. Return: audio URL.");
+    expect(replies()).toHaveLength(0);
+    wire.beforePublish = undefined;
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(replies()).toHaveLength(1);
+    expect(replies()[0].tags).toEqual(expect.arrayContaining([["e", request.id, "", "reply"], ["task", specialistPk]]));
+    expect(turns).toHaveLength(1);
+  });
+
+  it("retries a parent result saved during its child's callback without another model turn", async () => {
+    const request = finalizeEvent({ kind: 47103, created_at: Math.floor(Date.now() / 1000),
+      content: "parent", tags: [["h", channelA], ["task", agentPk], ["p", agentPk]] }, ownerKey);
+    await wire.publish(request); await vi.advanceTimersByTimeAsync(0);
+    await finish(turns[0], "@speaker narrate this");
+    const child = replies()[0];
+    const result = finalizeEvent({ kind: 47103, created_at: child.created_at, content: "audio", tags: [
+      ["h", channelA], ["e", request.id, "", "root"], ["e", child.id, "", "reply"],
+      ["p", agentPk], ["result", child.id], ["status", "success"],
+    ] }, specialistKey);
+    await wire.publish(result); await vi.advanceTimersByTimeAsync(0);
+    wire.beforePublish = async event => { if (event.pubkey === agentPk && event.tags.some(t => t[0] === "result")) throw new Error("publish timeout"); };
+    await finish(turns[1], "parent result needs explicit completion");
+    wire.beforePublish = undefined;
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(replies()).toHaveLength(2);
+    expect(replies()[1].tags).toEqual(expect.arrayContaining([["result", request.id], ["status", "error"]]));
+    expect(turns).toHaveLength(2);
+  });
+
   it("keeps queued assignments when checked authorization times out", async () => {
     await send("blocker");
     const job = assignment("durable authorized work");
@@ -283,7 +498,9 @@ describe("delegated work completion", () => {
     expect(turns).toHaveLength(2);
     wire.beforePublish = undefined;
     await vi.advanceTimersByTimeAsync(30_001);
-    expect(wire.events.filter(event => event.content === "SAVED_DELIVERY")).toHaveLength(1);
+    const deliveries = wire.events.filter(event => event.content.includes("SAVED_DELIVERY"));
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].tags).toEqual(expect.arrayContaining([["result", first.id], ["status", "error"]]));
     expect(turns).toHaveLength(2);
   });
 

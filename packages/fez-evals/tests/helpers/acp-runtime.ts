@@ -13,9 +13,10 @@ export const TEST_CHANNEL = "00000000-0000-4000-8000-000000000001";
 export const OTHER_CHANNEL = "00000000-0000-4000-8000-000000000002";
 export interface RuntimePrompt { type: "prompt"; id: number; session: number; instruction: string }
 
-export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { relayInfoAvailable = true, skills = [], frontmatter = "", env = {}, manualIntervalMs }: {
+export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { relayInfoAvailable = true, skills = [], frontmatter = "", env = {}, manualIntervalMs, harness = "test-harness", prepareHome }: {
   relayInfoAvailable?: boolean; skills?: { id: string; content: string; setting?: string }[];
   frontmatter?: string; env?: Record<string, string>; manualIntervalMs?: number | number[];
+  harness?: string; prepareHome?: (home: string) => Promise<void>;
 } = {}) {
   const repo = fileURLToPath(new URL("../../../../", import.meta.url));
   const cache = path.join(repo, "node_modules/.cache");
@@ -45,8 +46,9 @@ export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { rel
   }
   if (skills.length) await fs.writeFile(path.join(testHome, ".fez/packages/test-skills/package.json"), JSON.stringify({ fez: { skills: {} } }));
   const skillDecls = skills.length ? `skills: [${skills.map(skill => `${skill.id}${skill.setting ? `(${skill.setting})` : ""}`).join(", ")}]\n` : "";
-  await fs.writeFile(path.join(testHome, ".fez/personas/scope-test.md"), `---\nharness: test-harness\n${skillDecls}${frontmatter}\n---\nRuntime routing test.\n`);
+  await fs.writeFile(path.join(testHome, ".fez/personas/scope-test.md"), `---\nharness: ${harness}\n${skillDecls}${frontmatter}\n---\nRuntime routing test.\n`);
   await fs.writeFile(path.join(testHome, ".fez/agents/scope-test.key"), Buffer.from(agentKey).toString("hex"), { mode: 0o600 });
+  await prepareHome?.(testHome);
   const wire = new RelayConnection({ urls: [relay.url] });
   await wire.connect();
   const launch = () => fork(bundle, [], {
@@ -56,6 +58,7 @@ export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { rel
       FEZ_TEST_HOME: testHome, FEZ_KEYSTORE: "file", FEZ_RELAY: relay.url,
       FEZ_AGENT_PERSONA: "scope-test", FEZ_AGENT_OWNER: ownerPk,
       FEZ_AGENT_CHANNELS: `${TEST_CHANNEL},${OTHER_CHANNEL}`, FEZ_AGENT_ON_BUSY: onBusy,
+      FEZ_TEST_HARNESS_ID: harness,
       ...env,
       ...(manualIntervalMs ? { FEZ_TEST_MANUAL_INTERVAL: String(manualIntervalMs) } : {}),
     },
