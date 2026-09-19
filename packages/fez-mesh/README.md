@@ -13,6 +13,12 @@ In a desktop build containing the model-provider hook:
 2. Open **Agents → edit agent → model** and choose **Qwen3 4B · Mac mini**.
 3. Save to grant that agent access. Restart a running agent to apply the change.
 
+The picker entry is declared in `package.json` (`fez.modelProvider`): the desktop
+runs `fez-mesh models --json` to list the model and `fez-mesh prepare --name
+<persona> --model <id>` when you save, which connects the agent only while the
+Mini is ready and the model on offer is the one selected. The settings panel
+runs in its own isolated webview (`guiRuntime: "isolated"`).
+
 The agent keeps its name, key, prompt and tools. Inference runs on the Mini;
 tools run on this Mac. The settings card lists authorized agents and provides
 **Revoke access**. The extension is independent of the Bazaar. Its `ui` and
