@@ -1451,7 +1451,7 @@ async function main() {
     // images (PromptInput, and the retry that drops them when a model
     // refuses); fez-acp simply no longer sends any.
     if (!harness!.openSession) {
-      return invokeWithRetry(harness!, await buildPrompt(true), workDir, onProgress, mcpServers, onUpdate, signal, modelProfileActive || options.retry === false || typeof options.retry === "function" ? 1 : 3, onInput);
+      return invokeWithRetry(harness!, await buildPrompt(true), workDir, onProgress, mcpServers, onUpdate, signal, modelProfileActive || options.retry === false ? 1 : 3, onInput);
     }
     let pooled = await getSession(scope);
     try {
