@@ -1292,8 +1292,9 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
             openGuestDm(guest);
           }
         : (refuse("ui", "open a guest DM") as never),
-      // The label is ignored on purpose — a panel is filed under the
-      // extension's own name, so one cannot present itself as another.
+      // The panel is filed under the extension's own name, so one cannot
+      // replace another's; the label is only what the rail displays
+      // ("Shared Models" for `mesh`). Pass a display name, not a package name.
       // `opts` is NOT ignored: it carries which channel source this
       // panel configures, and dropping it silently was why the rail's
       // group had no settings button.
