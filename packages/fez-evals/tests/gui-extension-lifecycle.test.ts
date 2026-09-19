@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import type { FezClient } from "../../fez-client/src/index.js";
 
-const native = vi.hoisted(() => ({ files: [] as [string, string, string][] }));
+const native = vi.hoisted(() => ({ files: [] as unknown[][] }));
 vi.mock("../../fez-desktop/node_modules/@tauri-apps/api/core.js", () => ({
   invoke: async (command: string, args?: { extension?: string; bin?: string; args?: string[] }) => {
     if (command === "list_gui_extensions") return native.files;
@@ -13,7 +13,12 @@ vi.mock("../../fez-desktop/node_modules/@tauri-apps/api/core.js", () => ({
       Object.fromEntries(native.files.map(([name]) => [name, ["ui", "commands", "processes"]])),
     );
     if (command === "run_extension_bin") {
-      if (args?.extension !== "mesh" || args.bin !== "fez-mesh" || args.args?.join(" ") !== "state --json") throw Error("Unexpected mesh command");
+      if (args?.extension !== "mesh" || args.bin !== "fez-mesh") throw Error("Unexpected mesh command");
+      const command = args.args?.join(" ");
+      // The manifest-declared provider asks the bin for its model list; the panel asks for state.
+      if (command === "models --json") return { code: 0, stderr: "", stdout: JSON.stringify([{ id: "fez-mini-qwen3-4b", label: "Qwen3 4B · Mac mini", status: "offline",
+        detail: "Model runs on Mac mini. Tools run on this Mac. Saving grants this agent access to Mac mini." }]) };
+      if (command !== "state --json") throw Error("Unexpected mesh command");
       return { code: 0, stdout: JSON.stringify({ configured: true, provider: "ext-mesh-mini", model: "fez-mini-qwen3-4b", label: "Mac mini", machine: "mini.local", status: "offline", callersVerified: true, callers: [] }), stderr: "" };
     }
     throw new Error(`Unexpected native call: ${command}`);
@@ -88,12 +93,13 @@ it("loads a source-owned model provider and removes it on extension unload", asy
 });
 
 it("loads the compiled mesh GUI with the installed name and keeps its display label", async () => {
-  const pkg = JSON.parse(readFileSync(resolve(__dirname, "../../fez-mesh/package.json"), "utf8")) as { name: string; fez: { parts: { gui: string } } };
+  const pkg = JSON.parse(readFileSync(resolve(__dirname, "../../fez-mesh/package.json"), "utf8")) as { name: string; fez: { parts: { gui: string }; modelProvider: unknown } };
   const installedName = pkg.name.split("/").at(-1)!;
   expect(installedName).toBe("mesh");
   expect(pkg.fez.parts.gui).toBe("dist/gui.js");
   const compiled = execFileSync(resolve(__dirname, "../node_modules/esbuild/bin/esbuild"), [resolve(__dirname, "../../fez-mesh/src/gui.ts"), "--bundle", "--platform=browser", "--format=iife", "--global-name=__fezExt"], { encoding: "utf8" });
-  native.files = [[installedName, compiled, ""]];
+  // Legacy loader for the bundle itself; the picker entry comes from the manifest, as it does for the isolated runtime.
+  native.files = [[installedName, compiled, "", null, null, null, pkg.fez.modelProvider]];
   const host = await import("../../fez-desktop/src/gui-extensions.js");
   const models = await import("../../fez-desktop/src/model-providers.js");
   expect(await host.reloadGuiExtensions({} as FezClient)).toEqual(["mesh"]);

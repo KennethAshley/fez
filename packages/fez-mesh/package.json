@@ -6,8 +6,33 @@
   "type": "module",
   "fez": {
     "type": "extension",
-    "parts": { "gui": "dist/gui.js" },
-    "permissions": ["ui", "processes"]
+    "parts": {
+      "gui": "dist/gui.js"
+    },
+    "guiRuntime": "isolated",
+    "guiContributions": {
+      "settings": true
+    },
+    "permissions": [
+      "ui",
+      "processes"
+    ],
+    "modelProvider": {
+      "id": "mini",
+      "label": "Shared Models",
+      "bin": "fez-mesh",
+      "list": [
+        "models",
+        "--json"
+      ],
+      "prepare": [
+        "prepare",
+        "--name",
+        "{persona}",
+        "--model",
+        "{model}"
+      ]
+    }
   },
   "bin": {
     "fez-mesh": "dist/cli.mjs"

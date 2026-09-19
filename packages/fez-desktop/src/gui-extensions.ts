@@ -9,7 +9,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Artifact, FezClient } from "@fezchat/client";
 import { parseQuery } from "@fezchat/client";
 import { registerArtifactViewer, snapshotArtifactViewers } from "./artifact-viewers";
-import { registerModelProvider, snapshotModelProviders, type ExtensionModelProvider } from "./model-providers";
+import { registerModelProvider, snapshotModelProviders, parseModelProviderManifest, manifestModelProvider, type ExtensionModelProvider } from "./model-providers";
 import { notifyEvent } from "./notify";
 import { toast } from "./toast";
 import { invitePersona } from "./invite-persona";
@@ -1005,6 +1005,20 @@ export function injectExtensionStyles(name: string, css: string): Dispose {
 }
 
 /** Unload every extension and load the current set fresh — for install/uninstall/update without a relaunch. */
+/** Register `fez.modelProvider` from an installed manifest; returns the reason it was skipped, if any. */
+function registerManifestModelProvider(name: string, declared: unknown, grants: string[]): string | undefined {
+  let decl;
+  try { decl = parseModelProviderManifest(declared); }
+  catch (error) { return error instanceof Error ? error.message : String(error); }
+  if (!decl) return undefined;
+  if (!grants.includes("ui") || !grants.includes("processes")) return "fez.modelProvider requires recorded ui and processes grants";
+  try {
+    registerModelProvider(name, manifestModelProvider(name, decl,
+      (bin, args) => invoke<{ code: number; stdout: string; stderr: string }>("run_extension_bin", { extension: name, bin, args })));
+  } catch (error) { return error instanceof Error ? error.message : String(error); }
+  return undefined;
+}
+
 export async function reloadGuiExtensions(client: FezClient): Promise<string[]> {
   return loadGuiExtensions(client);
 }
@@ -1043,7 +1057,7 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
   restoreBaseline();
   const loaded: string[] = [];
   status.length = 0;
-  type GuiPart = [name: string, code: string, styles: string, settingsSource?: string | null, runtime?: unknown, contributions?: unknown];
+  type GuiPart = [name: string, code: string, styles: string, settingsSource?: string | null, runtime?: unknown, contributions?: unknown, modelProvider?: unknown];
   let files: GuiPart[];
   try {
     files = await invoke<GuiPart[]>("list_gui_extensions");
@@ -1055,11 +1069,15 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
     grants = JSON.parse(await invoke<string>("read_extension_grants"));
   } catch { /* no grants recorded — everything falls back to the legacy grant */ }
 
-  for (const [name, code, styles, settingsSource, runtime, contributions] of files) {
+  for (const [name, code, styles, settingsSource, runtime, contributions, modelProvider] of files) {
     if (runtime != null && runtime !== "isolated-settings" && runtime !== "isolated-page" && runtime !== "declarative" && runtime !== "isolated") {
       status.push({ name, ok: false, error: "Unsupported GUI runtime — update the extension or Fez" });
       continue;
     }
+    // A manifest-declared model provider registers for every runtime — it is
+    // how an isolated GUI part reaches Agents → model without host-page code.
+    const providerError = registerManifestModelProvider(name, modelProvider, grants[name] ?? []);
+    if (providerError) status.push({ name, ok: false, error: providerError });
     if (runtime === "isolated") {
       let active = true;
       let closePanel: Dispose | undefined;

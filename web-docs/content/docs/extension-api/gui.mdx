@@ -63,6 +63,7 @@ methods in `GuiExtensionApi`.
 | `registerGuiCommand(name, run)` | a composer slash command; return `""` to emit nothing | `commands` |
 | `registerMessageDecorator(match, render)` | a card mounted under matching message bodies (how the poll card enters) | `ui` |
 | `registerThreadView(name, match, render)` | a lens on a whole thread, keyed on the root message's content; rendered *above* the replies — an index of the conversation, not a substitute | `ui` |
+| `fez.modelProvider` (manifest, not a method) | a model in Agents → model, served by your own bin through the processes broker; the only route from an isolated runtime — see [Model providers](#model-providers-manifest) | `ui` + `processes` |
 | `registerPageView(name, match, render)` | own a whole document. `match` returning `true` adds a toggle; `"default"` opens your view instead of markdown. Markdown stays one click away — the document is the truth, a view is a lens | `ui` |
 | `registerBlockRenderer(lang, render, menu?)` | own a fenced code block by language tag. Pass `menu` (label + insert template) or your block type stays undiscoverable | `ui` |
 | `watchAgent(name)` | open the live activity pane for an agent | `read:agents` |
@@ -168,6 +169,49 @@ ElevenLabs and Themes JSON files. Current ElevenLabs permissions include
 `network:relay`, `publish`, `read:channels` and `ui`. Its older installed
 manifest and recorded grants may lack `read:agents`; updating a manifest alone
 does not grant it.
+
+## Model providers (manifest)
+
+An extension that runs a model can add it to **Agents → edit agent → model**
+without any code in the main page — which is what makes this work from the
+`isolated` runtimes. Declare the provider in `package.json` and ship the bin
+that answers for it:
+
+```json
+{
+  "fez": {
+    "type": "extension",
+    "parts": { "gui": "dist/gui.js" },
+    "guiRuntime": "isolated",
+    "permissions": ["ui", "processes"],
+    "bin": { "fez-mesh": "dist/cli.mjs" },
+    "modelProvider": {
+      "id": "mini",
+      "label": "Shared Models",
+      "bin": "fez-mesh",
+      "list": ["models", "--json"],
+      "prepare": ["prepare", "--name", "{persona}", "--model", "{model}"]
+    }
+  }
+}
+```
+
+The desktop registers it as `ext-<extension>-<id>` (`ext-mesh-mini` above) and
+drives it through the processes broker, so the same `processes` grant and bin
+claim that gate `api.processes.run` gate this. Both `ui` and `processes` must
+be recorded grants; a missing grant or a malformed declaration shows in the
+extension's status and does not stop its GUI part from loading.
+
+- `list` runs the bin with those args and must print a JSON array of
+  `{ id, label, status, detail? }` with `status` one of `ready`, `offline`,
+  `busy`. A nonzero exit reports stderr in the picker.
+- `prepare` runs when the user saves that model on an agent, with `{persona}`
+  and `{model}` substituted into the args (both must appear at least once).
+  Exit nonzero with the reason on stderr to refuse — the message is shown as
+  the save error. Exit zero once the agent may use the model.
+
+`api.registerModelProvider` remains for parts on the legacy host, but a
+manifest declaration works in every runtime and needs no host-page code.
 
 ## Isolated settings runner (macOS)
 

@@ -22,6 +22,64 @@ export function registerModelProvider(source: string, provider: ExtensionModelPr
   providers.set(provider.id, provider);
 }
 
+/**
+ * A model provider declared in the extension manifest (`fez.modelProvider`).
+ * The desktop drives the extension's own bin through the processes broker, so
+ * a GUI part in an isolated webview never runs code in the host to appear in
+ * the model picker. `list` prints a JSON array of models; `prepare` runs with
+ * `{persona}` and `{model}` substituted and reports refusal on stderr.
+ */
+export interface ModelProviderManifest {
+  id: string;
+  label: string;
+  bin: string;
+  list: string[];
+  prepare: string[];
+}
+
+const PLAIN = /^[^\p{Cc}]{1,256}$/u;
+const isArgs = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.length > 0 && value.length <= 16 && value.every(arg => typeof arg === "string" && PLAIN.test(arg));
+
+export function parseModelProviderManifest(value: unknown): ModelProviderManifest | undefined {
+  if (value === undefined || value === null) return undefined;
+  const bad = () => new Error("Invalid fez.modelProvider declaration");
+  if (typeof value !== "object" || Array.isArray(value)) throw bad();
+  const { id, label, bin, list, prepare } = value as Record<string, unknown>;
+  if (typeof id !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || id.length > 32 ||
+      typeof label !== "string" || !label.trim() || label.length > 64 || !PLAIN.test(label) ||
+      typeof bin !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(bin) ||
+      !isArgs(list) || !isArgs(prepare) ||
+      !prepare.some(arg => arg.includes("{persona}")) || !prepare.some(arg => arg.includes("{model}"))) throw bad();
+  return { id, label, bin, list: [...list], prepare: [...prepare] };
+}
+
+export type RunExtensionBin = (bin: string, args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>;
+
+export function manifestModelProvider(source: string, decl: ModelProviderManifest, run: RunExtensionBin): ExtensionModelProvider {
+  const slug = source.replace(/^@/, "").replace(/\//g, "-");
+  const failed = (result: { stderr: string }, fallback: string) => new Error(result.stderr.trim() || fallback);
+  return {
+    id: `ext-${slug}-${decl.id}`,
+    label: decl.label,
+    listModels: async () => {
+      const result = await run(decl.bin, decl.list);
+      if (result.code !== 0) throw failed(result, `${decl.label} could not list its models.`);
+      let models: unknown;
+      try { models = JSON.parse(result.stdout); } catch { throw new Error(`${decl.label} returned an invalid model list.`); }
+      if (!Array.isArray(models)) throw new Error(`${decl.label} returned an invalid model list.`);
+      return models;
+    },
+    prepare: async (persona, model) => {
+      if (!/^[a-z0-9][a-z0-9-]{1,31}$/.test(persona)) throw new Error("Select the agent again before saving.");
+      if (!PLAIN.test(model)) throw new Error("Select a model before saving.");
+      const args = decl.prepare.map(arg => arg.replaceAll("{persona}", persona).replaceAll("{model}", model));
+      const result = await run(decl.bin, args);
+      if (result.code !== 0) throw failed(result, `${decl.label} could not prepare this agent.`);
+    },
+  };
+}
+
 export function snapshotModelProviders(): () => void {
   const snapshot = new Map(providers);
   return () => { providers.clear(); for (const [id, provider] of snapshot) providers.set(id, provider); };
