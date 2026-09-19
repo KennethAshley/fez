@@ -1034,6 +1034,8 @@ select.ob-input:hover { border-color: var(--accent); }
 .turn-status.live { color: var(--phosphor); }
 .turn-status.failed { color: var(--red); }
 .turn-status.cancelled { color: var(--yellow); }
+.turn-status.retrying { color: var(--yellow); }
+.turn-reason { color: var(--fg-dim); font-size: 11px; margin-left: 8px; }
 .turn-status.done { color: var(--fg-dim); }
 /* Collapsed-only: an open turn lists its tools right below, so the
    count would just be repeating itself. (It was --bg2 here — a SURFACE

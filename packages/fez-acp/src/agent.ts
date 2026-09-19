@@ -1465,7 +1465,12 @@ async function main() {
       // scrubbed remainder was "" — and an empty message still breaks
       // the callback chain behind it). Throw as transient so the
       // recycle-and-replay path below gets one shot at it.
-      if (!reply.trim() && !options.allowEmpty) throw new Error("transient: harness returned an empty reply");
+      if (!reply.trim() && !options.allowEmpty) {
+        // pi prints a provider refusal (402, 401…) to stderr and returns nothing; carry it so the
+        // classifier and the activity feed see the reason instead of "empty reply".
+        const tail = pooled.session.lastStderr?.().trim() ?? "";
+        throw new Error(`transient: harness returned an empty reply${tail ? ` (stderr: …${tail.slice(-300)})` : ""}`);
+      }
       pooled.primed = true;
       pooled.turns++;
       pooled.lastUsed = Date.now();
@@ -1541,6 +1546,8 @@ async function main() {
   }
   const QUEUE_CAP = 20; // per channel (across threads), or DM conversation
   const RETRY_DELAYS_MS = [5_000, 30_000, 120_000];
+/** What the activity feed shows next to "turn retrying" — the error, not a guess. */
+const retryReason = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 300);
   const pendingByScope = new Map<string, (PendingItem & { order: number })[]>();
   let enqueueOrder = 0;
   const scopeOrder: string[] = [];
@@ -2396,7 +2403,7 @@ async function main() {
           // harness hiccup gets 3 spaced retries before dead-lettering.
           // No breaker count, no failure notice — this is recovery, not
           // failure yet.
-          publishObserver({ type: "turn", status: "retrying" });
+          publishObserver({ type: "turn", status: "retrying", attempt: attempts + 1, delayMs: RETRY_DELAYS_MS[attempts], reason: retryReason(err) });
           const delay = RETRY_DELAYS_MS[attempts];
           console.warn(`↻ transient turn failure — retry ${attempts + 1}/${RETRY_DELAYS_MS.length} in ${delay / 1000}s: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
           enqueue({ scope, kind: "ch", chEvent: event, doc, steering, attempts: attempts + 1, notBefore: Date.now() + delay });
@@ -2622,7 +2629,7 @@ async function main() {
         return;
       }
       if (!modelProfileActive && classifyTurnError(err) === "transient" && attempts < RETRY_DELAYS_MS.length) {
-        publishObserver({ type: "turn", status: "retrying" });
+        publishObserver({ type: "turn", status: "retrying", attempt: attempts + 1, delayMs: RETRY_DELAYS_MS[attempts], reason: retryReason(err) });
         const delay = RETRY_DELAYS_MS[attempts];
         console.warn(`↻ transient DM turn failure — retry ${attempts + 1}/${RETRY_DELAYS_MS.length} in ${delay / 1000}s`);
         enqueue({ scope: `dm:${convoKey}`, kind: "dm", dm, attempts: attempts + 1, notBefore: Date.now() + delay });
