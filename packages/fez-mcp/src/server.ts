@@ -212,7 +212,13 @@ server.registerTool(
       const source = replyTo ? (await trustedWorkspaceEvents({ kinds: [47103], ids: [replyTo] })).find(e => e.id === replyTo) : undefined;
       if (replyTo && !source) throw new Error("The source message is unavailable or its author is no longer a member.");
       const candidates = addressees(message).length ? await trustedWorkspaceEvents({ kinds: [47000, 0] }) : [];
-      const resolve = async (name: string) => resolveAgentName(name, candidates);
+      // A tool call that names a recipient must reach them: unknown is an
+      // error here, while a prose reply drops the name (agent-mentions.ts).
+      const resolve = async (name: string) => {
+        const pk = resolveAgentName(name, candidates);
+        if (!pk) throw new Error(`@${name} resolves to 0 workspace members. Use one unambiguous published name before handing off work.`);
+        return pk;
+      };
       const tags = await agentMessageTags(message, { channel: ref.channelId, sender: myPubkey, owner, source, resolve,
         isWorker: async pk => {
           if (!owner) return false;
