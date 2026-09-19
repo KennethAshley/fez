@@ -10,7 +10,7 @@ const React = require("react"), { createRoot } = require("react-dom/client");
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 async function panel(compatible = true, permission = true) {
-  let state: MeshState = { configured: true, provider: MODEL_PROVIDER, model: "fez-mini-qwen3-4b", label: "Mac mini", machine: "ken@kenmini.local", status: "offline", callersVerified: true, callers: [] };
+  const state: MeshState = { configured: true, provider: MODEL_PROVIDER, model: "fez-mini-qwen3-4b", label: "Mac mini", machine: "ken@kenmini.local", status: "offline", callersVerified: true, callers: [] };
   let failure = "";
   let provider!: ExtensionModelProvider;
   let render!: () => unknown;

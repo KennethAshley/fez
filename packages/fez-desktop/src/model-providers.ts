@@ -32,7 +32,7 @@ export async function listModelProviders(): Promise<Array<{ provider: ExtensionM
     try {
       const models = await provider.listModels();
       if (!Array.isArray(models) || !models.every(model => model &&
-          typeof model.id === "string" && /^[^\r\n\x00-\x1f]{1,256}$/.test(model.id) &&
+          typeof model.id === "string" && /^[^\p{Cc}]{1,256}$/u.test(model.id) &&
           typeof model.label === "string" && model.label.trim() &&
           ["ready", "offline", "busy"].includes(model.status) &&
           (model.detail === undefined || typeof model.detail === "string")) ||
@@ -48,6 +48,6 @@ export async function prepareAgentModel(selection: { harness: string; provider: 
   if (selection.harness !== "pi" || selection.provider !== selection.modelProfile) throw new Error("Select the model again before saving.");
   const provider = providers.get(selection.modelProfile);
   if (!provider) throw new Error(`Model provider ${selection.modelProfile} is unavailable. Restore its extension before saving.`);
-  if (!/^[^\r\n\x00-\x1f]{1,256}$/.test(selection.model)) throw new Error("Select a model before saving.");
+  if (!/^[^\p{Cc}]{1,256}$/u.test(selection.model)) throw new Error("Select a model before saving.");
   await provider.prepare(persona, selection.model);
 }

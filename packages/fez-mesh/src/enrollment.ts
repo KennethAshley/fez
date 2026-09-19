@@ -41,7 +41,7 @@ export async function withCallerLock<T>(home: string, work: () => Promise<T>): P
   let handle;
   try { handle = await open(file, "wx", 0o600); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Another Mini admission change is already in progress; retry when it finishes (remove a stale callers.lock only after confirming no command is running)");
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Another Mini admission change is already in progress; retry when it finishes (remove a stale callers.lock only after confirming no command is running)", { cause: error });
     throw error;
   }
   try { return await work(); }
@@ -99,7 +99,7 @@ export async function enrollCaller(opts: {
       const candidate = saved?.providers?.[MODEL_PROVIDER]?.apiKey;
       if (typeof candidate === "string" && hash(candidate) === prior.tokenHash) token = candidate;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Invalid private model profile; left untouched");
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Invalid private model profile; left untouched", { cause: error });
     }
   }
   token ??= randomBytes(32).toString("base64url");

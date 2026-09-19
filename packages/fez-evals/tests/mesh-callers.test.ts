@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { build } from "esbuild";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
-import { RelayConnection } from "../../../src/protocol/relay.js";
 import { listenLocal, startMeshGateway, gatewayReady, workspaceAccess } from "../../fez-mesh/src/mesh.js";
 import { startProvider, updateMember } from "../../fez-mesh/src/provider.js";
 import { enrollCaller, revokeCaller, resolveCallerToken, listCallers, publicCallers, validatePersona, withCallerLock, MODEL_PROVIDER } from "../../fez-mesh/src/enrollment.js";
