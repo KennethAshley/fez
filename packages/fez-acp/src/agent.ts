@@ -286,7 +286,8 @@ async function main() {
   // service keys (keychain account fez.TYPESAFE_API_KEY) makes the room's
   // judgment work with no fez gateway — the transport switches to
   // TypeSafe's API directly.
-  const ownTypeSafeKey = process.env.TYPESAFE_API_KEY || keychainSecret("fez", "TYPESAFE_API_KEY");
+  const ownTypeSafeKey = process.env.TYPESAFE_API_KEY || keychainSecret("fez", "TYPESAFE_API_KEY")
+    || keychainSecret("typesafe", "TYPESAFE_API_KEY"); // where the first svc37 build's workspace field saved it
   const judgeUrl = process.env.FEZ_JUDGE_URL || (persona.extra.judge as string | undefined) || settingsJudge.url || (ownTypeSafeKey ? TYPESAFE_DIRECT_URL : undefined);
   const judgeKey = process.env.FEZ_JUDGE_KEY || (persona.extra.judgeKey as string | undefined) || settingsJudge.key || ownTypeSafeKey;
   const governor = judgeUrl && judgeKey
