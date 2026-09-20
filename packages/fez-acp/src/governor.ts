@@ -335,6 +335,109 @@ export async function governAttention(
   }
 }
 
+// ── narration: publish the answer, not the process ──────────────────
+
+export interface NarrationVerdict { reply: string; kept: number; dropped: number; values?: number[]; latencyMs: number; error?: string }
+
+/**
+ * Some harnesses narrate: "Let me check…", "Now I can see…", "I'll verify
+ * that directly", then the sentence that was asked for. Live 2026-09-20
+ * quill's replies were 1.3–3k characters of process around a one-line
+ * deliverable. One request, one noul per paragraph: is this paragraph part
+ * of the deliverable? Narration paragraphs are dropped before publishing.
+ * Fails open: any judge problem, a reply with code fences, or a verdict
+ * that would drop everything publishes the reply untouched.
+ */
+export const DELIVERABLE_AT = 0.5;
+const MAX_PARAGRAPHS = 32;
+
+export function splitParagraphs(reply: string): string[] {
+  return reply.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+}
+
+export function narrationQuestions(count: number): Record<string, JudgeQuestion> {
+  const questions: Record<string, JudgeQuestion> = {};
+  for (let i = 0; i < count; i++) {
+    questions[`p${i}`] = {
+      type: "noul",
+      instructions: `Is \`paragraphs[${i}]\` part of what the asker wanted from \`request\` — an answer, a fact, a result, a source, or a question back to them — rather than narration about the process of producing it?`,
+      criteria: {
+        true: "It states or supports the deliverable: the answer, its details, sources, caveats about the answer, or a question the asker must answer.",
+        false: "It describes what the agent is doing or about to do: checking, looking up, reading the thread, deciding how to respond, confirming it has finished, or restating the request.",
+      },
+    };
+  }
+  return questions;
+}
+
+export async function governNarration(
+  ask: (state: unknown, questions: Record<string, JudgeQuestion>) => Promise<JudgeResult>,
+  request: string,
+  reply: string,
+): Promise<NarrationVerdict> {
+  const startedAt = Date.now();
+  const paragraphs = splitParagraphs(reply);
+  const untouched = (error?: string) => ({ reply, kept: paragraphs.length, dropped: 0, latencyMs: Date.now() - startedAt, ...(error ? { error } : {}) });
+  if (paragraphs.length < 2 || paragraphs.length > MAX_PARAGRAPHS || reply.includes("```")) return untouched();
+  try {
+    const result = await ask({ request: request.slice(0, STATE_CHARS), paragraphs }, narrationQuestions(paragraphs.length));
+    const values = paragraphs.map((_, i) => {
+      const answer = result.answers[`p${i}`];
+      if (answer?.type !== "noul") throw new Error(`narration: missing noul p${i}`);
+      return answer.noul;
+    });
+    const kept = paragraphs.filter((_, i) => values[i] >= DELIVERABLE_AT);
+    if (kept.length === 0) return { ...untouched(), values };
+    return { reply: kept.join("\n\n"), kept: kept.length, dropped: paragraphs.length - kept.length, values, latencyMs: Date.now() - startedAt };
+  } catch (error) {
+    return untouched(error instanceof Error ? error.message : String(error));
+  }
+}
+
+// ── a reply is a result ─────────────────────────────────────────────
+
+export interface DeliverableVerdict { outcome: "result" | "error"; reason: string; value?: number; latencyMs: number; error?: string }
+
+/**
+ * A worker that answers in plain text but never calls fez_complete_work
+ * used to have its answer filed as an ERROR result ("no terminal result
+ * was submitted… unverified"), and the requester spent a model turn
+ * relaying it. Live: drift answered "Go 1.27 shipped August 19" correctly
+ * and skipped the tool once. If the reply contains the deliverable the
+ * brief asked for, it IS the result. Fails open to today's error result.
+ */
+export const DELIVERS_AT = 0.8;
+
+export function deliverableQuestion(): Record<"delivers", JudgeQuestion> {
+  return {
+    delivers: {
+      type: "noul",
+      instructions: "Does `reply` contain the deliverable that `brief` asked for — the answer, result, or requested artifact — rather than a question back, a status update, a partial attempt, or a refusal?",
+      criteria: {
+        true: "The requested answer or deliverable is stated in `reply`, even with caveats or extra detail.",
+        false: "`reply` asks something, reports progress or a blocker, delivers only part of what was asked, or declines.",
+      },
+    },
+  };
+}
+
+export async function governDeliverable(
+  ask: (state: unknown, questions: Record<string, JudgeQuestion>) => Promise<JudgeResult>,
+  brief: string,
+  reply: string,
+): Promise<DeliverableVerdict> {
+  const startedAt = Date.now();
+  try {
+    const result = await ask({ brief: brief.slice(0, STATE_CHARS), reply: reply.slice(0, STATE_CHARS) }, deliverableQuestion());
+    const { delivers } = nouls(result, ["delivers"] as const);
+    return delivers >= DELIVERS_AT
+      ? { outcome: "result", reason: `delivers ${delivers.toFixed(2)}`, value: delivers, latencyMs: Date.now() - startedAt }
+      : { outcome: "error", reason: `delivers ${delivers.toFixed(2)}`, value: delivers, latencyMs: Date.now() - startedAt };
+  } catch (error) {
+    return { outcome: "error", reason: "judge unavailable", latencyMs: Date.now() - startedAt, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /**
  * The judge-unsure fallback runs the model to decide; when it accepts it
  * replies with the single word ACCEPTED and the agent posts nothing (the

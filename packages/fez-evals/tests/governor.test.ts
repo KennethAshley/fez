@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  completionDecision, completionQuestions, governCompletion, silentAccept, governSteer, governAttention, governOwnerMention, STATE_CHARS,
+  completionDecision, completionQuestions, governCompletion, silentAccept, governSteer, governAttention, governOwnerMention, governNarration, governDeliverable, STATE_CHARS,
   governThread, governorDecision, governorQuestions, governorState,
 } from "../../fez-acp/src/governor.js";
 import type { JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
@@ -163,6 +163,42 @@ describe("governAttention", () => {
     const v = await governAttention(async () => { throw new Error("Judge HTTP 503"); }, "Raleigh", "x", "y");
     expect(v.level).toBe("now");
     expect(v.error).toContain("503");
+  });
+});
+
+describe("governNarration", () => {
+  const reply = "I need to check what's happening here.\n\nLet me read the channel to understand the conversation.\n\nGo 1.27 shipped on August 19, 2026.\n\nSource: https://go.dev/doc/devel/release";
+  it("drops process paragraphs and keeps the deliverable, in order", async () => {
+    const v = await governNarration(async (_s, q) => { expect(Object.keys(q)).toHaveLength(4); return nouls({ p0: 0.05, p1: 0.08, p2: 0.97, p3: 0.9 }); }, "when did Go 1.27 ship?", reply);
+    expect(v.reply).toBe("Go 1.27 shipped on August 19, 2026.\n\nSource: https://go.dev/doc/devel/release");
+    expect(v).toMatchObject({ kept: 2, dropped: 2 });
+  });
+  it("never drops everything, and leaves single paragraphs and code alone", async () => {
+    const all = await governNarration(async () => nouls({ p0: 0.1, p1: 0.1, p2: 0.1, p3: 0.1 }), "x", reply);
+    expect(all.reply).toBe(reply);
+    let asked = false;
+    expect((await governNarration(async () => { asked = true; return nouls({}); }, "x", "Just the answer.")).reply).toBe("Just the answer.");
+    expect((await governNarration(async () => { asked = true; return nouls({}); }, "x", "Here:\n\n```js\nlet a = 1;\n```\n\nDone.")).dropped).toBe(0);
+    expect(asked).toBe(false);
+  });
+  it("fails open to the original reply", async () => {
+    const v = await governNarration(async () => { throw new Error("Judge HTTP 502"); }, "x", reply);
+    expect(v.reply).toBe(reply);
+    expect(v.error).toContain("502");
+  });
+});
+
+describe("governDeliverable", () => {
+  it("a reply that contains the answer is filed as a result", async () => {
+    expect((await governDeliverable(async () => nouls({ delivers: 0.93 }), "when did Go 1.27 ship?", "Go 1.27 shipped August 19, 2026.")).outcome).toBe("result");
+  });
+  it("a question back or a partial stays an error result", async () => {
+    expect((await governDeliverable(async () => nouls({ delivers: 0.2 }), "when did Go 1.27 ship?", "Do you mean the RC or the final?")).outcome).toBe("error");
+  });
+  it("fails open to the error result", async () => {
+    const v = await governDeliverable(async () => { throw new Error("Judge HTTP 500"); }, "b", "r");
+    expect(v.outcome).toBe("error");
+    expect(v.error).toContain("500");
   });
 });
 

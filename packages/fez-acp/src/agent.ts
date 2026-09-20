@@ -86,7 +86,7 @@ import { memoryPromptParts, memoryStateFromHeads, type CoreMemoryState } from ".
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
 import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
-import { governAttention, governCompletion, governOwnerMention, governSteer, governThread, silentAccept } from "./governor.js";
+import { governAttention, governCompletion, governDeliverable, governNarration, governOwnerMention, governSteer, governThread, silentAccept } from "./governor.js";
 import { piSessionError } from "./pi-session-error.js";
 import { parseWake, wakeEvent } from "./wake.js";
 import { buildRoster, decideRoute, isRouted, routerCall } from "./guide-router.js";
@@ -2456,7 +2456,16 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         // Never publish an empty message, whatever path produced it.
         if (!rawReply.trim()) throw new Error("harness returned an empty reply");
         const { text: rawText, artifacts } = extractArtifacts(rawReply);
-        const reply = capReply(withoutRepeatSummons(rawText, steering.at(-1)?.content ?? event.content, personaId));
+        let reply = capReply(withoutRepeatSummons(rawText, steering.at(-1)?.content ?? event.content, personaId));
+        // Publish the answer, not the process: paragraphs that narrate the
+        // work ("let me check…", "now I can see…") are dropped. Fails open.
+        if (!doc && !routed && governor) {
+          const n = await governNarration(governor, event.content, reply);
+          if (n.dropped > 0 || n.error) {
+            console.log(JSON.stringify({ governor: n.dropped > 0 ? "trimmed" : "kept", stage: "narration", kept: n.kept, dropped: n.dropped, values: n.values, latencyMs: n.latencyMs, error: n.error, event: event.id }));
+          }
+          reply = n.reply;
+        }
 
         // Whoever the reply names is tagged, on top of whoever triggered
         // it — otherwise an agent handing work to you notifies nobody.
@@ -2489,8 +2498,17 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         }
         if (handingOff && triggerDepth + 1 >= MAX_CHAIN_DEPTH) throw new Error("Handoff reached the agent chain limit; no further worker was summoned.");
         if (assignedRequest && !handingOff) {
-          const summary = `No terminal result was submitted with fez_complete_work. The last reply is unverified:\n${rawReply}`.slice(0, 8000);
-          const template = completeWork(assignedRequest!, myPubkey, { status: "error", summary, capability: "handoff", artifacts: [] });
+          // A reply is a result: if it contains what the brief asked for, file
+          // it as the success result instead of an "unverified" error that
+          // cost the requester a model turn to relay. Fails open to the error.
+          const verdict = governor ? await governDeliverable(governor, assignedRequest.content, reply)
+            : { outcome: "error" as const, reason: "no judge", latencyMs: 0 };
+          console.log(JSON.stringify({ governor: verdict.outcome, stage: "deliverable", reason: verdict.reason, value: verdict.value,
+            latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+          const delivered = verdict.outcome === "result";
+          const summary = delivered ? reply.slice(0, 8000)
+            : `No terminal result was submitted with fez_complete_work. The last reply is unverified:\n${rawReply}`.slice(0, 8000);
+          const template = completeWork(assignedRequest!, myPubkey, { status: delivered ? "success" : "error", summary, capability: delivered ? "reply" : "handoff", artifacts: [] });
           // Same rule as the MCP result tool: an owner who started the thread hears about it directly.
           if (owner && assignedRequest.pubkey !== owner) {
             const rootEvent = triggerRoot ? (await relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], ids: [triggerRoot] }]).catch(() => []))[0] : undefined;
@@ -2500,9 +2518,9 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
           await relay.publish(result);
           if (durable) workInbox.finish(event.id);
           recent.add(scope, result.id, `${who(result.pubkey)}: ${result.content}`);
-          publishObserver({ type: "turn", status: "failed" });
-          publishTurnMetric(`ch:${channelId}`, "failed", turnStartedAt, summary.length, event.id);
-          recordFailure();
+          publishObserver({ type: "turn", status: delivered ? "done" : "failed" });
+          publishTurnMetric(`ch:${channelId}`, delivered ? "done" : "failed", turnStartedAt, summary.length, event.id);
+          if (delivered) { consecutiveFailures = 0; console.log(`✅ Replied as the result (${summary.length} chars)`); } else recordFailure();
           return;
         }
         const replyEvent = client.signEvent({
