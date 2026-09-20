@@ -132,7 +132,7 @@ export function membershipPolicy(owner?: string): RelayPolicy {
       const dm = dmParticipants(channelId);
       if (dm) return dm.includes(ctx.authedPubkey);
       const roster = winningRoster(ctx);
-      if (!roster) return false;
+      if (!roster) return !!owner && ctx.authedPubkey === owner; // the owner sees their own first messages
       // Workspace-wide: on the roster means every channel, which is the
       // point — an invited member lands and sees the whole place.
       return (
@@ -179,7 +179,11 @@ export function membershipPolicy(owner?: string): RelayPolicy {
       }
 
       const roster = winningRoster(ctx);
-      if (!roster) return reject("blocked: this workspace has no roster yet");
+      // Before the first roster lands, the owner may still speak: they are
+      // the roster's signer and a member by definition. Live 2026-09-20:
+      // first run posted the welcome opener a beat before the roster and
+      // the owner saw "this workspace has no roster yet" on their own message.
+      if (!roster) return owner && event.pubkey === owner ? ok : reject("blocked: this workspace has no roster yet");
       const isMember = roster.tags.some((t) => t[0] === "p" && t[1] === event.pubkey);
       if (!isMember && roster.pubkey !== event.pubkey) {
         return reject("blocked: not a member of this workspace");
