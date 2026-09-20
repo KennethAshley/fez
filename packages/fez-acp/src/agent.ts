@@ -574,7 +574,12 @@ async function main() {
             .map((srv) => {
               const entry = srv as { name: string; command: string; args?: string[]; env?: unknown };
               const env = asObject(entry.env);
-              return [entry.name, { command: entry.command, args: entry.args ?? [], ...(env ? { env } : {}) }];
+              // The MCP SDK's default request timeout is 60 s; fez_ask_owner
+              // and fez_request_approval block up to an hour waiting for a
+              // human. Seen live: every 60 s the call "failed", the model
+              // retried, and the owner got the same question three times.
+              const requestTimeoutMs = entry.name === "fez" ? 3_660_000 : undefined;
+              return [entry.name, { command: entry.command, args: entry.args ?? [], ...(env ? { env } : {}), ...(requestTimeoutMs ? { requestTimeoutMs } : {}) }];
             })
         ),
       };
