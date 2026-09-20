@@ -30,6 +30,14 @@ export interface TypeSafeDecision {
 }
 
 export const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone";
+/**
+ * Bring your own key: a workspace whose judge URL is TypeSafe's own API
+ * talks to it directly with the user's key — no fez gateway anywhere. The
+ * same `askJudge`/router call sites work either way; only the transport
+ * differs. This is what a stranger's install uses.
+ */
+export const TYPESAFE_DIRECT_URL = "https://api.typesafe.ai/v1";
+export const isTypeSafeDirect = (url: string | undefined): boolean => !!url && /^https:\/\/api\.typesafe\.ai(\/|$)/i.test(url.trim());
 export const DEFAULT_JUDGE_MODEL = "jev-1.13.0";
 /** Per request. TypeSafe answers questions in parallel, so this bounds payload, not latency. */
 export const MAX_JUDGE_QUESTIONS = 32;
@@ -157,6 +165,7 @@ export async function askJudge(
   routerUrl: string, routerKey: string, state: unknown, questions: Record<string, JudgeQuestion>,
   options: { timeoutMs?: number } = {},
 ): Promise<JudgeResult> {
+  if (isTypeSafeDirect(routerUrl)) return judge(routerKey, state, questions, { timeoutMs: options.timeoutMs });
   validateJudgeQuestions(questions);
   const body = await post(`${routerUrl.replace(/\/+$/, "")}/judge`, routerKey, { state, questions }, options.timeoutMs ?? 5000, "Judge");
   return parseJudgeResponse(body, questions);

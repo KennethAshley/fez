@@ -90,7 +90,8 @@ import { governAttention, governCompletion, governDeliverable, governNarration, 
 import { piSessionError } from "./pi-session-error.js";
 import { parseWake, wakeEvent } from "./wake.js";
 import { buildRoster, decideRoute, isRouted, routerCall } from "./guide-router.js";
-import { askJudge, type JudgeQuestion } from "../../fez-orchestrator/src/typesafe.js";
+import { askJudge, TYPESAFE_DIRECT_URL, type JudgeQuestion } from "../../fez-orchestrator/src/typesafe.js";
+import { keychainSecret } from "../../../src/extensions/mcp-servers.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { finalizeEvent } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
@@ -281,8 +282,12 @@ async function main() {
       return { url: typeof s.judgeUrl === "string" ? s.judgeUrl : undefined, key: typeof s.judgeKey === "string" ? s.judgeKey : undefined };
     } catch { return { url: undefined, key: undefined }; }
   })();
-  const judgeUrl = process.env.FEZ_JUDGE_URL || (persona.extra.judge as string | undefined) || settingsJudge.url;
-  const judgeKey = process.env.FEZ_JUDGE_KEY || (persona.extra.judgeKey as string | undefined) || settingsJudge.key;
+  // Bring your own key: a TypeSafe key saved in Settings (keychain, account
+  // typesafe.TYPESAFE_API_KEY) makes the room's judgment work with no fez
+  // gateway at all — the transport switches to TypeSafe's API directly.
+  const ownTypeSafeKey = process.env.TYPESAFE_API_KEY || keychainSecret("typesafe", "TYPESAFE_API_KEY");
+  const judgeUrl = process.env.FEZ_JUDGE_URL || (persona.extra.judge as string | undefined) || settingsJudge.url || (ownTypeSafeKey ? TYPESAFE_DIRECT_URL : undefined);
+  const judgeKey = process.env.FEZ_JUDGE_KEY || (persona.extra.judgeKey as string | undefined) || settingsJudge.key || ownTypeSafeKey;
   const governor = judgeUrl && judgeKey
     ? (state: unknown, questions: Record<string, JudgeQuestion>) => askJudge(judgeUrl, judgeKey, state, questions, { timeoutMs: 4000 })
     : undefined;

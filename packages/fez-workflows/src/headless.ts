@@ -5,7 +5,8 @@ import type { FezExtensionAPI, ScheduledTaskContext } from "../../fez-extension-
 import { KIND_CHANNEL, KIND_OBSERVER_CONTROL } from "../../../src/protocol/kinds.js";
 import { loadDefs, usesJudge } from "./defs.js";
 import { judgeConfigFromEnv, type Ask } from "./judge.js";
-import { askJudge } from "../../fez-orchestrator/src/typesafe.js";
+import { askJudge, TYPESAFE_DIRECT_URL } from "../../fez-orchestrator/src/typesafe.js";
+import { keychainSecret } from "../../../src/extensions/mcp-servers.js";
 import { startWorkflowEngine, type EngineHandle } from "./engine.js";
 
 /**
@@ -29,9 +30,13 @@ function judgeFromSettings(): { url: string; key: string } | undefined {
   if (fromEnv) return fromEnv;
   try {
     const settings = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".fez", "settings.json"), "utf8")) as { judgeUrl?: unknown; judgeKey?: unknown };
-    return judgeConfigFromEnv({ FEZ_JUDGE_URL: typeof settings.judgeUrl === "string" ? settings.judgeUrl : undefined,
+    const fromSettings = judgeConfigFromEnv({ FEZ_JUDGE_URL: typeof settings.judgeUrl === "string" ? settings.judgeUrl : undefined,
       FEZ_JUDGE_KEY: typeof settings.judgeKey === "string" ? settings.judgeKey : undefined });
-  } catch { return undefined; }
+    if (fromSettings) return fromSettings;
+  } catch { /* no settings file */ }
+  // Bring your own key: the TypeSafe key saved in Settings (keychain) — the same fallback the agent runtime uses.
+  const own = keychainSecret("typesafe", "TYPESAFE_API_KEY");
+  return own ? { url: TYPESAFE_DIRECT_URL, key: own } : undefined;
 }
 
 async function start(ctx: ScheduledTaskContext): Promise<EngineHandle | undefined> {

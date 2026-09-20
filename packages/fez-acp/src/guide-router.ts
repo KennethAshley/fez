@@ -14,6 +14,7 @@
  * exactly what a model-written handoff would get.
  */
 import { agentTool, explicitActor, fleetQuestion, isSmallTalk, noneTool, routerBody, scrubNames } from "../../fez-orchestrator/src/route-logic.js";
+import { chooseTypeSafeRoute, isTypeSafeDirect } from "../../fez-orchestrator/src/typesafe.js";
 
 export interface RosterAgent { pubkey: string; name: string; about?: string; skills?: string[]; tasks?: string[]; routable: boolean; updatedAt: number }
 
@@ -139,8 +140,26 @@ export async function decideRoute(opts: {
   return { agent, reply: handoff(agent), confidence: answer.confidence, reason: explicit ? "explicit" : "router" };
 }
 
+/**
+ * Bring your own key: with TypeSafe's own API as the router URL there is no
+ * gateway to shape an OpenAI reply, so the routing body is turned into the
+ * same Choice the gateway would have asked (tool name → description) and
+ * answered directly. Same prelayers, same bar, same log lines.
+ */
+function directRouterCall(apiKey: string, timeoutMs: number): RouterCall {
+  return async (body) => {
+    const b = body as { messages?: { role?: string; content?: unknown }[]; tools?: { function?: { name?: string; description?: string } }[] };
+    const message = b.messages?.filter((m) => m?.role === "user").at(-1)?.content;
+    const criteria = Object.fromEntries((b.tools ?? []).flatMap((t) => (t.function?.name && typeof t.function.description === "string" ? [[t.function.name, t.function.description]] : [])));
+    if (typeof message !== "string" || Object.keys(criteria).length < 2) throw new Error("router: not a routing request");
+    const decision = await chooseTypeSafeRoute(apiKey, message, criteria, { timeoutMs });
+    return { choice: decision.choice, confidence: decision.confidence };
+  };
+}
+
 /** The hosted router's OpenAI-shaped reply plus the X-Fez-Router-Confidence header. */
 export function routerCall(baseUrl: string, key: string | undefined, timeoutMs = 6000): RouterCall {
+  if (isTypeSafeDirect(baseUrl) && key) return directRouterCall(key, timeoutMs);
   return async (body) => {
     const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
