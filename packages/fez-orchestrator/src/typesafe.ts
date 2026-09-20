@@ -80,7 +80,11 @@ function distribution(value: unknown, keys: string[]): Record<string, number> {
     if (!probability(p)) throw new Error("Invalid TypeSafe response: probabilities");
     out[key] = p;
   }
-  if (Math.abs(Object.values(out).reduce((sum, n) => sum + n, 0) - 1) > 0.001) throw new Error("Invalid TypeSafe response: probability distribution");
+  // Probabilities arrive rounded to two decimals; nine options can drift a
+  // few hundredths from 1 and still be a real distribution. Seen live: a
+  // valid answer rejected here sent routing to the 25 s local fallback.
+  const sum = Object.values(out).reduce((acc, n) => acc + n, 0);
+  if (Math.abs(sum - 1) > 0.01 + 0.005 * keys.length) throw new Error(`Invalid TypeSafe response: probability distribution (sum ${sum.toFixed(3)})`);
   return out;
 }
 

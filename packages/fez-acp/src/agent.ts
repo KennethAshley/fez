@@ -87,6 +87,7 @@ import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillF
 import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
 import { governCompletion, governThread } from "./governor.js";
+import { buildRoster, decideRoute, isRouted, routerCall } from "./guide-router.js";
 import { askJudge, type JudgeQuestion } from "../../fez-orchestrator/src/typesafe.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { finalizeEvent } from "nostr-tools/pure";
@@ -270,6 +271,16 @@ async function main() {
   const judgeKey = process.env.FEZ_JUDGE_KEY || (persona.extra.judgeKey as string | undefined);
   const governor = judgeUrl && judgeKey
     ? (state: unknown, questions: Record<string, JudgeQuestion>) => askJudge(judgeUrl, judgeKey, state, questions, { timeoutMs: 4000 })
+    : undefined;
+  // Guide routing (guide-router.ts): a persona with a router `url:` — the
+  // guide — hands confident task routes to the router instead of spending
+  // a model turn deciding who to summon. Same env/persona seam as the
+  // standalone orchestrator; the router key falls back to the judge key,
+  // since the hosted gateway serves both routes under one credential.
+  const routerUrl = process.env.FEZ_ORCHESTRATOR_URL || (persona.extra.url as string | undefined);
+  const routerModel = process.env.FEZ_ORCHESTRATOR_MODEL || "fez-router";
+  const guideRoute = routerUrl
+    ? routerCall(routerUrl, process.env.FEZ_ORCHESTRATOR_KEY || (persona.extra.key as string | undefined) || judgeKey)
     : undefined;
   // Resolve declared skills; the unresolved ones aren't silently dropped
   // — the agent is told about the gap so it can SAY SO when a task needs
@@ -2338,10 +2349,24 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         // The frame names its thread: without `root`, the desktop's
         // channel-level "working…" strip can't tell threaded work from
         // top-level and showed both at once (steph's double indicator).
+        // Guide routing: a confident task route needs no model turn. The
+        // templated handoff becomes this turn's reply and rides the normal
+        // publish path below (p/task tags, handoff inbox, recent context),
+        // so downstream sees exactly what a model-written handoff would be.
+        const routeOutcome = guideRoute && !doc && !completedRequest && !assignedRequest && steering.length === 0
+          ? await decideRoute({
+              text: event.content, guideNames: [personaId!, ...(persona.aliases ?? [])], asker: who(event.pubkey), model: routerModel, call: guideRoute,
+              roster: buildRoster(await agentProfiles([...workspace.workspace.members.keys()].filter(pk => workspace.isMember(pk)), checkedWorkEvents), myPubkey),
+            }).catch((error: unknown) => ({ skipped: `roster/router failure: ${error instanceof Error ? error.message : String(error)}` }))
+          : undefined;
+        const routed = isRouted(routeOutcome) ? routeOutcome : undefined;
+        if (routeOutcome) console.log(JSON.stringify(routed
+          ? { governor: "route", agent: routed.agent.name, confidence: routed.confidence, reason: routed.reason, event: event.id }
+          : { governor: "route-skip", ...routeOutcome, event: event.id }));
         publishObserver({ type: "turn", status: "started", ...(triggerRoot ? { root: triggerRoot } : {}) });
         const onUpdate = makeOnUpdate();
         inputOrigin = doc ? undefined : { kind: "channel", channelId, rootId: triggerRoot ?? event.id, messageId: event.id };
-        const rawReply = await promptSession(
+        const rawReply = routed?.reply ?? await promptSession(
           scope,
           withNotice(buildPrompt, attachmentPrompt(event)),
           publishDraft,
