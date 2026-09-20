@@ -86,7 +86,7 @@ import { memoryPromptParts, memoryStateFromHeads, type CoreMemoryState } from ".
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
 import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
-import { governCompletion, governThread } from "./governor.js";
+import { governCompletion, governThread, silentAccept } from "./governor.js";
 import { parseWake, wakeEvent } from "./wake.js";
 import { buildRoster, decideRoute, isRouted, routerCall } from "./guide-router.js";
 import { askJudge, type JudgeQuestion } from "../../fez-orchestrator/src/typesafe.js";
@@ -2222,7 +2222,7 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
           const memory = memoryPromptParts(await coreMemoryState());
           const sourceNotice = `Current source message ID: ${event.id}; channel: ${untrustedValue(channelId)}; author: ${event.pubkey}${event.pubkey === owner ? " (your owner)" : ""}.`;
           const workNotice = (completedRequest
-            ? `Delegated result ${event.id} for request ${completedRequest.id}: ${workResult(event, completedRequest)}. Check the deliverable against the original request: ${untrustedValue(completedRequest.content)}. If it meets the request, call fez_accept_work with resultId=${event.id} and a note naming what you actually checked. Then close out to the original user in one sentence: say the result is accepted and point them to the worker's message. Do not restate the deliverable; they can already see it. Submission alone is not acceptance. Do not @mention the worker to acknowledge it.`
+            ? `Delegated result ${event.id} for request ${completedRequest.id}: ${workResult(event, completedRequest)}. Check the deliverable against the original request: ${untrustedValue(completedRequest.content)}. If it meets the request, call fez_accept_work with resultId=${event.id} and a note naming what you actually checked, then reply with exactly the single word ACCEPTED and nothing else — the chit is the record, the user can already see the worker's message, and no close-out is posted. If it does not meet the request, reply saying what is missing or wrong. Submission alone is not acceptance. Do not @mention the worker to acknowledge it.`
             : !doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey)
               ? `Assigned work requestId=${event.id}. When finished, call fez_complete_work with this requestId, status success or error, summary, capability, and artifact URLs/event ids. The summary is the actual reply delivered to the requester: include your full answer or deliverable and useful details, not a report about answering them (say "Hello!" rather than "Greeted the user"). This publishes your result automatically; do not put the answer in a separate message after the tool, or send a separate callback or acceptance. Report blockers as error, never as success.`
               : "") + (completedRequest && assignedRequest
@@ -2392,6 +2392,21 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
           publishObserver({ type: "turn", status: "done" });
           publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, delivered.content.length, event.id);
           consecutiveFailures = 0;
+          return;
+        }
+        // The judge-unsure completion turn accepted: the chit is the whole
+        // record, nothing is posted (same silence as the auto-accept path).
+        // If the model said ACCEPTED but skipped the tool, sign the chit here.
+        if (completedRequest && !assignedRequest && silentAccept(rawReply)) {
+          const prior = await relay.query([{ kinds: [KIND_CHIT], authors: [myPubkey], "#e": [event.id] }]).catch(() => []);
+          if (!prior.some(e => e.tags.some(t => t[0] === "p" && t[1] === event.pubkey))) {
+            await relay.publish(client.signEvent(acceptWork(event, completedRequest, myPubkey, `Accepted by ${personaId} after review.`)));
+          }
+          if (workInbox.get(event.id)) workInbox.finish(event.id);
+          publishObserver({ type: "turn", status: "done" });
+          publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, 0, event.id);
+          consecutiveFailures = 0;
+          console.log(`✓ accepted ${who(event.pubkey)}'s result after review — chit only, no message`);
           return;
         }
         // Never publish an empty message, whatever path produced it.
