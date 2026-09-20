@@ -118,14 +118,16 @@ export async function decideRoute(opts: {
   const names = candidates.map((a) => a.name);
   if (fleetQuestion(cleaned, names)) return { skipped: "fleet question" };
   const handoff = (agent: RosterAgent) => `@${agent.name} (from ${opts.asker}) ${cleaned}`;
+  // A named agent used to short-circuit the router. Live (2026-09-20):
+  // "find the latest Deno release, then have quill turn that into an
+  // announcement" went straight to quill, who did the research badly.
+  // Naming an agent is an instruction the router can read; only the
+  // scrubbing is skipped, so "have drift find X" still lands on drift and
+  // a later-step name doesn't steal the first step.
   const explicit = explicitActor(cleaned, names);
-  if (explicit) {
-    const agent = candidates.find((a) => a.name === explicit)!;
-    return { agent, reply: handoff(agent), reason: "explicit" };
-  }
   let answer: RouterAnswer;
   try {
-    answer = await opts.call(routerBody("tools", opts.model, scrubNames(cleaned, names), [...candidates.map(agentTool), guideTool(), noneTool()]));
+    answer = await opts.call(routerBody("tools", opts.model, explicit ? cleaned : scrubNames(cleaned, names), [...candidates.map(agentTool), guideTool(), noneTool()]));
   } catch (error) { return { skipped: `router error: ${error instanceof Error ? error.message : String(error)}` }; }
   const agent = candidates.find((a) => a.name === answer.choice);
   if (!agent) {
@@ -134,7 +136,7 @@ export async function decideRoute(opts: {
   }
   if (answer.confidence === undefined) return { skipped: "no confidence reported", ...answer };
   if (answer.confidence < ROUTE_AT) return { skipped: `confidence below ${ROUTE_AT}`, ...answer };
-  return { agent, reply: handoff(agent), confidence: answer.confidence, reason: "router" };
+  return { agent, reply: handoff(agent), confidence: answer.confidence, reason: explicit ? "explicit" : "router" };
 }
 
 /** The hosted router's OpenAI-shaped reply plus the X-Fez-Router-Confidence header. */

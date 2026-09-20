@@ -10,6 +10,8 @@ import type { WireEvent } from "../../fez-client/src/index.js";
 import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
 import { gateOwnerQuestion } from "./owner-gate.js";
 import { askJudge } from "../../fez-orchestrator/src/typesafe.js";
+import { governAttention, type Attention } from "../../fez-acp/src/governor.js";
+import { ownerResultTags } from "./result-attention.js";
 import { attachedSkills, loadSkillBody } from "./skills.js";
 import { registerConnectionTools } from "./connections.js";
 import { DurableWork, workDirectory } from "../../../src/shared/durable-work.js";
@@ -279,6 +281,18 @@ server.registerTool("fez_complete_work", {
   try {
     const request = await workMessage(requestId);
     const template = completeWork(request, myPubkey, result);
+    // The answer lands where the question came from: if the owner started
+    // this thread and someone else delegated to me, tag the owner too, with
+    // an attention level (judged for a success, "now" for an error).
+    const rootId = request.tags.find(t => t[0] === "e" && t[3] === "root")?.[1] ?? request.id;
+    const root = rootId === request.id ? request : (await relay.query([{ kinds: [47103], ids: [rootId] }]).catch(() => []))[0];
+    if (root && owner && root.pubkey === owner && request.pubkey !== owner) {
+      const level: Attention = result.status !== "success" ? "now"
+        : judgeUrl && judgeKey
+          ? (await governAttention((state, questions) => askJudge(judgeUrl, judgeKey, state, questions, { timeoutMs: 4000 }), "the owner", root.content, result.summary)).level
+          : "now";
+      template.tags.push(...ownerResultTags({ rootAuthor: root.pubkey, requester: request.pubkey, owner, level }));
+    }
     const prior = await relay.query([{ kinds: [47103], authors: [myPubkey], "#result": [requestId] }]);
     const existing = prior.find(e => workResult(e, request));
     if (existing) return text(`Already submitted: ${existing.id}. Acceptance belongs to the requester.`);

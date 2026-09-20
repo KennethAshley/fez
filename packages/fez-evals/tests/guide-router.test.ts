@@ -24,11 +24,16 @@ describe("roster", () => {
 describe("decideRoute", () => {
   const base = { guideNames: ["fez", "orchestrator"], asker: "Ken", roster, model: "fez-router" };
 
-  test("an explicitly named actor routes without calling the router", async () => {
-    let called = false;
-    const d = await decideRoute({ ...base, text: "@fez have drift find the NIP-17 changelog", call: async () => { called = true; return {}; } });
-    expect(called).toBe(false);
+  test("an explicitly named actor still goes through the router, with the name left in for it to read", async () => {
+    let sent: { messages: { content: string }[] } | undefined;
+    const d = await decideRoute({ ...base, text: "@fez have drift find the NIP-17 changelog", call: async (body) => { sent = body as never; return { choice: "drift", confidence: 0.97 }; } });
+    expect(sent!.messages.at(-1)!.content).toBe("have drift find the NIP-17 changelog");
     expect(d).toMatchObject({ reason: "explicit", agent: { name: "drift" }, reply: "@drift (from Ken) have drift find the NIP-17 changelog" });
+  });
+
+  test("a later-step name does not steal the first step: the router's pick wins", async () => {
+    const d = await decideRoute({ ...base, text: "@fez find the latest Deno release, then have quill write an announcement", call: async () => ({ choice: "drift", confidence: 0.9 }) });
+    expect(d).toMatchObject({ agent: { name: "drift" } });
   });
 
   test("a confident router pick routes with the user's own words", async () => {
