@@ -23,7 +23,7 @@ const REPO = path.resolve(__dirname, "../../..");
 const SITES = [
   "packages/fez-acp/src/agent.ts",
   "packages/fez-orchestrator/src/orchestrator.ts",
-  "packages/fez-workflows/src/workflows.ts",
+  "packages/fez-workflows/src/engine.ts", // the host-agnostic engine; workflows.ts and headless.ts are hosts
   "src/cli/tui.ts",
   "src/agent/summon.ts",
 ];

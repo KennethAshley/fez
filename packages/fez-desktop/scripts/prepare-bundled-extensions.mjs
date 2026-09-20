@@ -10,7 +10,10 @@ const output = join(cache, 'bundled-extensions');
 await mkdir(cache, { recursive: true });
 const stage = await mkdtemp(join(cache, 'extensions-'));
 try {
-  for (const name of ['fez-browser', 'fez-browser-use', 'fez-workflows']) {
+  // FEZ_BUNDLED_EXTENSIONS lets the packaging test stage a subset: fez-workflows
+  // builds against monorepo paths, which a copied-out package tree lacks.
+  const names = process.env.FEZ_BUNDLED_EXTENSIONS?.split(',').filter(Boolean) ?? ['fez-browser', 'fez-browser-use', 'fez-workflows'];
+  for (const name of names) {
     const cwd = resolve(desktop, '..', name);
     execFileSync('npm', ['run', 'build'], { cwd, stdio: 'inherit' });
     const packed = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', stage, '--cache', join(cache, 'npm-cache')], { cwd, encoding: 'utf8' }));

@@ -128,7 +128,9 @@ it('packages independently runnable Browser and Browser Use extensions without r
     await copyFile(new URL('../../fez-browser/tsconfig.types.json', import.meta.url), join(root, 'packages/fez-browser/tsconfig.types.json'));
     await mkdir(join(root, 'packages/fez-browser/prototype-cef'));
     await copyFile(new URL('../../fez-browser/prototype-cef/gui.css', import.meta.url), join(root, 'packages/fez-browser/prototype-cef/gui.css'));
-    const result = await run(process.execPath, [join(scripts, 'prepare-bundled-extensions.mjs')]).then(() => ({ error: undefined }), error => ({ error: String(error) }));
+    // Only the two browser packages are staged here; fez-workflows (also bundled) builds against monorepo paths.
+    const result = await run(process.execPath, [join(scripts, 'prepare-bundled-extensions.mjs')], { env: { ...process.env, FEZ_BUNDLED_EXTENSIONS: 'fez-browser,fez-browser-use' } })
+      .then(() => ({ error: undefined }), error => ({ error: String(error) }));
     expect(result.error).toBeUndefined();
     const output = join(root, 'packages/fez-desktop/src-tauri/target/native-browser/bundled-extensions');
     const archives = (await readdir(output)).filter(file => file.endsWith('.tgz'));
