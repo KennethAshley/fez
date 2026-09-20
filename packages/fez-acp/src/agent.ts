@@ -2010,7 +2010,11 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
       // chains, and anything short of the bar run the full completion turn.
       if (governor && completedRequest && !assignedRequest && workResult(event, completedRequest) === "success") {
         const worker = who(event.pubkey);
-        const verdict = await governCompletion(governor, personaId!, worker, completedRequest.content, event.content,
+        // The owner's original ask is the thread root; the judge compares the result against it by name.
+        const rootAsk = triggerRoot
+          ? (await relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], ids: [triggerRoot] }]).catch(() => []))[0]?.content
+          : undefined;
+        const verdict = await governCompletion(governor, personaId!, worker, completedRequest.content, event.content, rootAsk,
           recent.get(scope, `${worker}: ${event.content}`));
         console.log(JSON.stringify({ governor: verdict.outcome, stage: "completion", reason: verdict.reason, values: verdict.values,
           latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));

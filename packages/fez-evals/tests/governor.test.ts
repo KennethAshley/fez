@@ -74,18 +74,31 @@ describe("completionDecision", () => {
 });
 
 describe("governCompletion", () => {
-  it("sends brief, result and thread as state and names both agents", async () => {
+  it("sends request, brief, result and thread as state; names both agents; carries the outcome label", async () => {
     let seen: { state: unknown; questions: Record<string, unknown> } | undefined;
-    const verdict = await governCompletion(async (state, questions) => { seen = { state, questions }; return nouls({ satisfies: 0.97, owner_needs_more: 0.05 }); },
-      "drift", "quill", "summarize X in two sentences", "X is ... Y is ...", ["Raleigh: @drift ...", "drift: @quill ...", "quill: X is ... Y is ..."]);
+    const verdict = await governCompletion(async (state, questions) => {
+      seen = { state, questions };
+      const r = nouls({ satisfies: 0.97, owner_needs_more: 0.05 });
+      r.answers.outcome = { type: "choice", choice: "answered", confidence: 0.96, probabilities: { answered: 0.97, partial: 0.02, wrong: 0.01, deferred: 0 } };
+      return r;
+    }, "drift", "quill", "summarize X in two sentences", "X is ... Y is ...", "@drift what is X? hand it to quill for two sentences",
+      ["Raleigh: @drift ...", "drift: @quill ...", "quill: X is ... Y is ..."]);
     expect(verdict.outcome).toBe("accept");
-    expect(seen?.state).toMatchObject({ brief: "summarize X in two sentences", result: "X is ... Y is ..." });
+    expect(verdict.values?.outcome).toBe("answered");
+    expect(seen?.state).toMatchObject({ request: "@drift what is X? hand it to quill for two sentences", brief: "summarize X in two sentences", result: "X is ... Y is ..." });
     expect((seen?.state as { thread: string[] }).thread).toHaveLength(3);
-    expect(Object.keys(seen!.questions)).toEqual(["satisfies", "owner_needs_more"]);
+    expect(Object.keys(seen!.questions)).toEqual(["satisfies", "owner_needs_more", "outcome"]);
     expect(JSON.stringify(completionQuestions("drift", "quill"))).toContain("quill");
   });
+  it("falls back to the brief as the request when the thread root is unavailable, and tolerates a missing outcome", async () => {
+    let seen: unknown;
+    const verdict = await governCompletion(async (state) => { seen = state; return nouls({ satisfies: 0.9, owner_needs_more: 0.1 }); }, "drift", "quill", "b", "r", undefined, []);
+    expect(seen).toMatchObject({ brief: "b", result: "r", request: "b" });
+    expect(verdict.outcome).toBe("accept");
+    expect(verdict.values?.outcome).toBeUndefined();
+  });
   it("fails open to the full completion turn on a judge error", async () => {
-    const verdict = await governCompletion(async () => { throw new Error("Judge HTTP 504"); }, "drift", "quill", "b", "r", []);
+    const verdict = await governCompletion(async () => { throw new Error("Judge HTTP 504"); }, "drift", "quill", "b", "r", undefined, []);
     expect(verdict.outcome).toBe("run");
     expect(verdict.error).toContain("504");
   });

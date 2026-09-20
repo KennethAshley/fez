@@ -110,7 +110,7 @@ export async function governThread(
 // ── completion stage ─────────────────────────────────────────────────
 
 export type CompletionOutcome = "accept" | "run";
-export interface CompletionValues { satisfies: number; owner_needs_more: number }
+export interface CompletionValues { satisfies: number; owner_needs_more: number; /** the judge's label for how the result responded (logged, not gating) */ outcome?: string }
 export interface CompletionVerdict {
   outcome: CompletionOutcome;
   reason: string;
@@ -125,26 +125,50 @@ export interface CompletionVerdict {
 export const ACCEPT_AT = 0.85;
 export const OWNER_NEEDS_MORE_BELOW = 0.3;
 
-export function completionQuestions(me: string, worker: string): Record<"satisfies" | "owner_needs_more", JudgeQuestion> {
+export function completionQuestions(me: string, worker: string): Record<"satisfies" | "owner_needs_more" | "outcome", JudgeQuestion> {
   return {
-    // Wording chosen against five live cases (2026-09-20): substance-only
-    // scored the two correct results 0.89/0.94 and every bad one ≤ 0.04;
-    // wordings that let format count dragged a correct result to 0.57.
+    // Wording chosen on ten cases (2026-09-20, five live research loops +
+    // five synthetic): "state every point … to cover" scored correct
+    // research answers 0.82–0.87 (under the bar, paying a model turn);
+    // "directly answer what brief asks for" scores them 0.93–0.95 with the
+    // bad ones ≤ 0.15. Length and caveats are named as ignorable because
+    // Jev reads a "two-sentence" brief literally otherwise.
     satisfies: {
       type: "noul",
       instructions: {
         requester: me, worker,
-        question: "Does `result` state every point `brief` asked `worker` to cover, consistent with the facts in `brief`?",
-        ignore: "sentence count, headings, phrasing, and any extra correct detail",
+        question: "Does `result` directly answer what `brief` asks `worker` for, giving the requested facts or deliverable?",
+        ignore: "length, sentence count, format, caveats, and any extra correct detail",
       },
       criteria: {
-        true: "All requested points are stated and match the brief's facts.",
-        false: "A requested point is absent or contradicts the brief, or the worker asked a question or reported a blocker instead.",
+        true: "It answers the brief's question or request with specific facts or the requested deliverable; caveats and extra detail are fine.",
+        false: "It leaves a requested point unanswered, contradicts a fact stated in `brief`, or asks a question or reports a blocker instead of answering.",
       },
     },
+    // One hop, named state: the original ask is passed as `request`
+    // instead of "see the start of `thread`" — the thread is the recent
+    // buffer trimmed from the end, so on a long one the ask that pointer
+    // named was gone, and Jev reads such pointers literally.
     owner_needs_more: {
       type: "noul",
-      instructions: "Does the person who originally asked (see the start of `thread`) still need information that is not already in `result`?",
+      instructions: "Does `request` ask for information that `result` does not provide?",
+      criteria: {
+        true: "A fact or answer `request` asked for is missing from `result`.",
+        false: "`result` provides every fact or answer `request` asked for; length and format do not matter.",
+      },
+    },
+    // Logged, not gating: names WHY a result fell short so the bar can be
+    // read against reasons, not just numbers. Scored the ten cases with
+    // full confidence and p(answered) 0.90–0.99 on every correct result.
+    outcome: {
+      type: "choice",
+      instructions: { requester: me, worker, question: "How does `result` respond to what `brief` asked `worker` for?" },
+      criteria: {
+        answered: "gives the requested facts or deliverable; caveats, extra detail, and any length are fine",
+        partial: "answers some of it but a requested point is missing",
+        wrong: "states something that contradicts a fact given in `brief`",
+        deferred: "asks a question back or reports a blocker instead of answering",
+      },
     },
   };
 }
@@ -162,13 +186,19 @@ export async function governCompletion(
   worker: string,
   brief: string,
   result: string,
+  /** The thread's original ask (root message); the brief stands in when it can't be fetched. */
+  request: string | undefined,
   lines: readonly string[],
 ): Promise<CompletionVerdict> {
   const startedAt = Date.now();
   try {
-    const state = { brief: brief.slice(0, STATE_CHARS), result: result.slice(0, STATE_CHARS), ...governorState(lines) };
+    // Request, brief, result AND the recent thread. Dropping the thread
+    // was tried (Jev's notes warn about irrelevant state) and lowered every
+    // live case by 0.04–0.11: here the thread is the context, not noise.
+    const state = { request: (request ?? brief).slice(0, STATE_CHARS), brief: brief.slice(0, STATE_CHARS), result: result.slice(0, STATE_CHARS), ...governorState(lines) };
     const answers = await ask(state, completionQuestions(me, worker));
-    const values = nouls(answers, ["satisfies", "owner_needs_more"] as const);
+    const outcome = answers.answers.outcome;
+    const values: CompletionValues = { ...nouls(answers, ["satisfies", "owner_needs_more"] as const), ...(outcome?.type === "choice" ? { outcome: outcome.choice } : {}) };
     return { ...completionDecision(values), values, latencyMs: Date.now() - startedAt };
   } catch (error) {
     return { outcome: "run", reason: "judge unavailable", latencyMs: Date.now() - startedAt,
