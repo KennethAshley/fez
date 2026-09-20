@@ -38,16 +38,23 @@ describe("decideRoute", () => {
     expect(sent!.messages.at(-1)!.content).toBe("what changed in NIP-17 this month?");
   });
 
-  test("roster names inside the task are scrubbed before routing", async () => {
-    let sent: { messages: { content: string }[] } | undefined;
+  test("roster names inside the task are scrubbed before routing, and the guide option rides along", async () => {
+    let sent: { messages: { content: string }[]; tools: { function: { name: string } }[] } | undefined;
     await decideRoute({ ...base, text: "@fez quill mentioned a paper, find it", call: async (body) => { sent = body as never; return { choice: "drift", confidence: 0.9 }; } });
     expect(sent!.messages.at(-1)!.content).toBe("a teammate mentioned a paper, find it");
+    expect(sent!.tools.map((t) => t.function.name)).toEqual(["drift", "quill", "guide", "nobody"]);
+  });
+
+  test("a guide pick is a skip with its reason", async () => {
+    const outcome = await decideRoute({ ...base, text: "@fez how do slash commands work?", call: async () => ({ choice: "guide", confidence: 1 }) });
+    expect(outcome).toMatchObject({ skipped: "guide question", choice: "guide" });
   });
 
   test.each([
     ["below the bar", { choice: "drift", confidence: ROUTE_AT - 0.01 }],
     ["no confidence reported (local fallback)", { choice: "drift" }],
     ["nobody", { choice: "nobody", confidence: 0.99 }],
+    ["a guide question", { choice: "guide", confidence: 1 }],
     ["an unknown name", { choice: "ghost", confidence: 0.99 }],
   ])("falls back to the model on %s", async (_label, answer) => {
     const outcome = await decideRoute({ ...base, text: "@fez summarize the release notes", call: async () => answer });

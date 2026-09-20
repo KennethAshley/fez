@@ -62,6 +62,25 @@ export function routable(roster: RosterAgent[]): RosterAgent[] {
   return [...byName.values()];
 }
 
+/**
+ * The router's escape hatch for the GUIDE's own work. `nobody` means "no
+ * agent can do this task"; questions about fez itself are not tasks, and
+ * without this option Jev routed "how do slash commands work in fez" to
+ * the research agent at 0.62. Checked live 2026-09-20: three fez questions
+ * scored guide 0.95–1.00, tasks stayed with their agents, a limerick went
+ * to nobody.
+ */
+export function guideTool() {
+  return {
+    type: "function",
+    function: {
+      name: "guide",
+      description: "questions about fez itself — the protocol, relays, extensions, the CLI, slash commands, git hosting, how agents and personas work, how to install or configure things — the guide answers these in person instead of delegating",
+      parameters: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+    },
+  };
+}
+
 export interface RouterAnswer { choice?: string; confidence?: number }
 export type RouterCall = (body: object) => Promise<RouterAnswer>;
 
@@ -102,10 +121,13 @@ export async function decideRoute(opts: {
   }
   let answer: RouterAnswer;
   try {
-    answer = await opts.call(routerBody("tools", opts.model, scrubNames(cleaned, names), [...candidates.map(agentTool), noneTool()]));
+    answer = await opts.call(routerBody("tools", opts.model, scrubNames(cleaned, names), [...candidates.map(agentTool), guideTool(), noneTool()]));
   } catch (error) { return { skipped: `router error: ${error instanceof Error ? error.message : String(error)}` }; }
   const agent = candidates.find((a) => a.name === answer.choice);
-  if (!agent) return { skipped: answer.choice === "nobody" ? "nobody fits" : `unknown pick ${answer.choice ?? "(none)"}`, ...answer };
+  if (!agent) {
+    const why = answer.choice === "guide" ? "guide question" : answer.choice === "nobody" ? "nobody fits" : `unknown pick ${answer.choice ?? "(none)"}`;
+    return { skipped: why, ...answer };
+  }
   if (answer.confidence === undefined) return { skipped: "no confidence reported", ...answer };
   if (answer.confidence < ROUTE_AT) return { skipped: `confidence below ${ROUTE_AT}`, ...answer };
   return { agent, reply: handoff(agent), confidence: answer.confidence, reason: "router" };
