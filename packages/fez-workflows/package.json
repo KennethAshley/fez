@@ -2,19 +2,25 @@
   "name": "@fezchat/workflows",
   "version": "0.1.0",
   "private": true,
-  "description": "Deterministic channel automations for fez \u2014 reply-triggered handoffs and approval-by-reaction gates, Buzz's workflow engine decentralized",
+  "description": "Deterministic channel automations for fez \u2014 reply-triggered handoffs, approval-by-reaction gates, judged conditions; Buzz's workflow engine decentralized. Runs standalone or inside the desktop's background worker.",
   "type": "module",
   "fez": {
-    "type": "agent",
-    "agent": {
-      "entry": "dist/workflows.js",
-      "supportedTasks": [
-        "workflow-automation"
-      ]
-    }
+    "type": "extension",
+    "minFezVersion": "0.2.2",
+    "parts": {
+      "headless": "dist/headless.js",
+      "background": true
+    },
+    "permissions": [
+      "read:channels",
+      "read:agents",
+      "publish",
+      "sign",
+      "background"
+    ]
   },
   "scripts": {
-    "build": "esbuild src/workflows.ts --bundle --format=esm --platform=node --external:@fezchat/protocol --outfile=dist/workflows.js && esbuild src/defs.ts --bundle --format=esm --platform=node --outfile=dist/defs.js",
+    "build": "esbuild src/workflows.ts --bundle --format=esm --platform=node --external:@fezchat/protocol --outfile=dist/workflows.js && esbuild src/defs.ts --bundle --format=esm --platform=node --outfile=dist/defs.js && esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {
