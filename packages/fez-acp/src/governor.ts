@@ -306,10 +306,10 @@ export function attentionQuestions(owner: string): Record<"needs_owner" | "urgen
     },
     urgency: {
       type: "choice",
-      instructions: "If `owner` should see `reply`, how soon?",
+      instructions: "If `owner` should see `reply`, how soon? Read `request` for how urgently they asked.",
       criteria: {
-        now: "it answers what they asked, asks them something, or reports a blocker — they are waiting on it",
-        later: "useful to read at some point, nothing waits on them",
+        now: "it answers what they asked, asks them something, or reports a blocker — and nothing in `request` said it could wait",
+        later: "useful to read at some point, nothing waits on them — including any answer to a `request` that said no rush, when you get a chance, or whenever",
         none: "nothing for the owner in it",
       },
     },

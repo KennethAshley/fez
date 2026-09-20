@@ -75,7 +75,11 @@ export function guideTool() {
     type: "function",
     function: {
       name: "guide",
-      description: "questions about fez itself — the protocol, relays, extensions, the CLI, slash commands, git hosting, how agents and personas work, how to install or configure things — the guide answers these in person instead of delegating",
+      // "who on the team can search the web?" slipped past the regex fleet
+      // prelayer, went to the router at 0.38, and the guide's model answer
+      // @mentioned drift — which the room read as a handoff (two wasted
+      // turns). Team questions are guide questions.
+      description: "questions about fez itself or about this team — the protocol, relays, extensions, the CLI, slash commands, git hosting, how agents and personas work, how to install or configure things, who is on the team and who can do what — the guide answers these in person instead of delegating",
       parameters: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
     },
   };
