@@ -1250,6 +1250,10 @@ async function main() {
     // The tally moves whether or not there is an owner to report to —
     // enforcement must not depend on visibility.
     if (turnUsage?.costUsd) recordSpend(turnUsage.costUsd);
+    // Plain-text twin of the encrypted metric, so tokens per turn can be
+    // read straight from the agent log without the owner's key.
+    console.log(JSON.stringify({ turn: status, agent: personaId, durationMs: Date.now() - startedAtMs, replyChars,
+      ...(turnUsage ?? {}), ...(trigger ? { event: trigger } : {}) }));
     if (!owner) return;
     void relay
       .publish(
@@ -2241,7 +2245,7 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
             `- Doc comments: a native document turn already includes its prior discussion, and your normal reply is posted into its root — do not call fez_comment_reply there. Use fez_doc_comments and fez_comment_reply only for a thread you discover outside a native document turn. Resolve only when the request is actually done.`,
             UNTRUSTED_CONTENT_NOTICE,
             ...(persona.harness === "pi" && mcpServers.length > 0
-              ? [`- MCP tools: your attached tools (${mcpServers.map((m) => m.name).join(", ")}) live behind the \`mcp\` proxy, not as direct functions. To use one, first call mcp({ search: "<capability>" }) to find the exact tool name (search by what you want to DO — "search", "fetch", "pay" — not by your query text), then call it. Don't reach for shell curl/wget when a tool exists; discover it through mcp first.`]
+              ? [`- MCP tools: your attached tools (${mcpServers.map((m) => m.name).join(", ")}) live behind the \`mcp\` proxy, not as direct functions. To use one, first call mcp({ search: "<capability>" }) to find the exact tool name (search by what you want to DO — "search", "fetch", "pay" — not by your query text), then call it. Don't reach for shell curl/wget when a tool exists; discover it through mcp first. The fez tools need no search — call them through the fez proxy with the exact parameter names, e.g. mcp__fez({ tool: "fez_ask_owner", args: { channel: "<channel id from the source notice>", question: "…", options: [{ label: "…" }, { label: "…", recommended: true }] } }) — args is an object and options are objects, never bare strings; a wrong shape costs a full extra model call.`]
               : []),
             `- Names: everyone in a channel appears by their name, not a key. An @mention only reaches someone if you use that NAME — writing @ followed by a hex id reaches nobody, notifies nobody, and merely looks like it worked. If all you can see for someone is a short hex id they have no name published; refer to them without an @.`,
             `- Handoffs: address @name only when that agent must act. Write a fresh self-contained brief: task, relevant facts, constraints, expected result, and message/document/artifact references. Keep it under ${HANDOFF_BRIEF_LIMIT} characters. Never copy transcripts, private memory, or nested briefs. Use fez_read_message with an exact ID to fetch only needed excerpts; documents have their own read tools. Your normal reply creates the handoff; if using fez_send_message, supply replyTo with the current source message ID. Send once, then wait for the signed result. References to teammates, thanks, and acknowledgments use names WITHOUT @. Conditional downstream handoffs wait until their condition is met.`,
