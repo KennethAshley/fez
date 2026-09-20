@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  completionDecision, completionQuestions, governCompletion, silentAccept, governSteer, governAttention, STATE_CHARS,
+  completionDecision, completionQuestions, governCompletion, silentAccept, governSteer, governAttention, governOwnerMention, STATE_CHARS,
   governThread, governorDecision, governorQuestions, governorState,
 } from "../../fez-acp/src/governor.js";
 import type { JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
@@ -101,6 +101,23 @@ describe("governCompletion", () => {
     const verdict = await governCompletion(async () => { throw new Error("Judge HTTP 504"); }, "drift", "quill", "b", "r", undefined, []);
     expect(verdict.outcome).toBe("run");
     expect(verdict.error).toContain("504");
+  });
+});
+
+describe("governOwnerMention", () => {
+  it("skips a bare acknowledgment and asks only the needs_me question", async () => {
+    let keys: string[] = [];
+    const v = await governOwnerMention(async (_s, q) => { keys = Object.keys(q); return nouls({ needs_me: 0.06 }); }, "drift", ["Raleigh: @drift thanks, that's all I needed."]);
+    expect(v.outcome).toBe("skip");
+    expect(keys).toEqual(["needs_me"]);
+  });
+  it("runs anything that asks for something, and never applies the resolved rule", async () => {
+    expect((await governOwnerMention(async () => nouls({ needs_me: 0.55 }), "drift", ["Raleigh: @drift and the release date?"])).outcome).toBe("run");
+  });
+  it("fails open to run", async () => {
+    const v = await governOwnerMention(async () => { throw new Error("Judge HTTP 500"); }, "drift", ["x"]);
+    expect(v.outcome).toBe("run");
+    expect(v.error).toContain("500");
   });
 });
 

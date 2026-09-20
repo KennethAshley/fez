@@ -86,7 +86,7 @@ import { memoryPromptParts, memoryStateFromHeads, type CoreMemoryState } from ".
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
 import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
-import { governAttention, governCompletion, governSteer, governThread, silentAccept } from "./governor.js";
+import { governAttention, governCompletion, governOwnerMention, governSteer, governThread, silentAccept } from "./governor.js";
 import { piSessionError } from "./pi-session-error.js";
 import { parseWake, wakeEvent } from "./wake.js";
 import { buildRoster, decideRoute, isRouted, routerCall } from "./guide-router.js";
@@ -1966,6 +1966,18 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
       // Owner messages and work-protocol events (assignments, results)
       // are never governed: those must run. Every verdict is logged with
       // its raw values so the thresholds can be calibrated from traffic.
+      // Owner acknowledgments: "thanks, that's all" used to cost a turn to
+      // say "glad it landed". One noul; below the bar, a 👍 instead of a
+      // reply. A wake is a summons by construction and is never judged.
+      if (governor && !doc && !completedRequest && !assignedRequest && event.pubkey === owner && !event.wake) {
+        const verdict = await governOwnerMention(governor, personaId!, recent.get(scope, `${who(event.pubkey)}: ${event.content}`));
+        console.log(JSON.stringify({ governor: verdict.outcome, stage: "owner", reason: verdict.reason, needsMe: verdict.needsMe,
+          latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+        if (verdict.outcome === "skip") {
+          await relay.publish(client.signEvent({ kind: KIND_REACTION, tags: [["e", event.id], ["h", channelId], ["p", event.pubkey]], content: "👍" })).catch(() => {});
+          return;
+        }
+      }
       if (governor && !doc && !completedRequest && !assignedRequest && event.pubkey !== owner && await isSibling(event.pubkey)) {
         const verdict = await governThread(governor, personaId!, recent.get(scope, `${who(event.pubkey)}: ${event.content}`));
         console.log(JSON.stringify({ governor: verdict.outcome, reason: verdict.reason, values: verdict.values,

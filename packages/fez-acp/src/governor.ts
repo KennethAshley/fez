@@ -107,6 +107,36 @@ export async function governThread(
   }
 }
 
+// ── owner acknowledgments ────────────────────────────────────────────
+
+export interface OwnerMentionVerdict { outcome: "run" | "skip"; reason: string; needsMe?: number; latencyMs: number; error?: string }
+
+/**
+ * Owner messages always ran — rightly, for anything that asks something.
+ * But "thanks, that's all I needed" cost a full turn to compose "glad it
+ * landed" (measured: 5.5 s, $0.19, then hidden by the attention tag).
+ * One noul, the same needs_me question the sibling governor asks; only
+ * the skip rule applies — an owner message is never "resolved away" and
+ * never escalated. Below the bar the agent reacts 👍 instead of replying.
+ */
+export async function governOwnerMention(
+  ask: (state: unknown, questions: Record<string, JudgeQuestion>) => Promise<JudgeResult>,
+  me: string,
+  lines: readonly string[],
+): Promise<OwnerMentionVerdict> {
+  const startedAt = Date.now();
+  try {
+    const { needs_me } = governorQuestions(me);
+    const result = await ask(governorState(lines), { needs_me });
+    const needsMe = nouls(result, ["needs_me"] as const).needs_me;
+    return needsMe < NEEDS_ME_BELOW
+      ? { outcome: "skip", reason: `acknowledgment, needs me ${needsMe.toFixed(2)}`, needsMe, latencyMs: Date.now() - startedAt }
+      : { outcome: "run", reason: `needs me ${needsMe.toFixed(2)}`, needsMe, latencyMs: Date.now() - startedAt };
+  } catch (error) {
+    return { outcome: "run", reason: "judge unavailable", latencyMs: Date.now() - startedAt, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 // ── completion stage ─────────────────────────────────────────────────
 
 export type CompletionOutcome = "accept" | "run";
