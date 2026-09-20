@@ -24,6 +24,14 @@ export interface TriggerDef {
   from?: string;
   /** message triggers: case-insensitive regex the content must match. */
   filter?: string;
+  /**
+   * message triggers: a statement the judge must find true of the
+   * message (probability ≥ `when_at`, default 0.8) — a filter by meaning
+   * where a regex would miss "can you look this over". Needs
+   * FEZ_JUDGE_URL/FEZ_JUDGE_KEY; a judge failure does not fire the run.
+   */
+  when?: string;
+  when_at?: number;
   /** reaction triggers: only this emoji fires (absent = any). */
   emoji?: string;
   /**
@@ -105,7 +113,36 @@ export interface WebhookStep extends StepBase {
   webhook: { url: string; method?: "GET" | "POST"; body?: string; timeout?: string };
 }
 
-export type StepDef = SayStep | WaitReactionStep | DelayStep | DmStep | ReactStep | WebhookStep;
+export interface JudgeStep extends StepBase {
+  /**
+   * Ask the judge one or more yes/no statements about the run so far
+   * (trigger text plus the latest thread message a wait_until observed).
+   * Each answer lands in a variable `judge.<name>` as a 0–1 probability
+   * for later `if:` conditions — the threshold is yours to write. A judge
+   * failure skips the step loudly; later conditions referencing the
+   * missing variables then skip too.
+   */
+  judge: { ask: Record<string, string> };
+}
+
+export interface WaitUntilStep extends StepBase {
+  /**
+   * Suspend the run until a message in the trigger's thread satisfies a
+   * statement (probability ≥ `at`, default 0.8) — "the reviewer signed
+   * off" without anyone remembering to react. `from` restricts the
+   * author like wait_reaction. The matching message becomes the anchor
+   * for later steps and fills `latest.text` / `latest.author_name`.
+   * On timeout the remaining steps are skipped and a notice is posted.
+   */
+  wait_until: { statement: string; at?: number; from?: string; timeout?: string };
+}
+
+export type StepDef = SayStep | WaitReactionStep | DelayStep | DmStep | ReactStep | WebhookStep | JudgeStep | WaitUntilStep;
+
+/** Does this workflow need the judge at all? (Startup refuses to load one without FEZ_JUDGE_URL/KEY.) */
+export function usesJudge(def: WorkflowDef): boolean {
+  return def.trigger.when !== undefined || def.steps.some((step) => isJudge(step) || isWaitUntil(step));
+}
 
 export interface WorkflowDef {
   name: string;
@@ -132,6 +169,16 @@ export function isReact(step: StepDef): step is ReactStep {
 }
 export function isWebhook(step: StepDef): step is WebhookStep {
   return typeof (step as WebhookStep).webhook === "object" && (step as WebhookStep).webhook !== null;
+}
+export function isJudge(step: StepDef): step is JudgeStep {
+  return typeof (step as JudgeStep).judge === "object" && (step as JudgeStep).judge !== null;
+}
+export function isWaitUntil(step: StepDef): step is WaitUntilStep {
+  return typeof (step as WaitUntilStep).wait_until === "object" && (step as WaitUntilStep).wait_until !== null;
+}
+
+function validateBar(value: unknown, label: string, fail: (msg: string) => never): void {
+  if (value !== undefined && (typeof value !== "number" || !(value > 0 && value <= 1))) fail(`${label} must be a number in (0, 1]`);
 }
 
 /** "30s" | "5m" | "24h" | "2d" -> milliseconds. */
@@ -160,6 +207,11 @@ function validate(def: unknown, file: string): WorkflowDef {
   const on = d.trigger!.on;
   if (on !== "message" && on !== "reaction" && on !== "schedule") fail(`trigger.on must be "message", "reaction", or "schedule"`);
   if (d.trigger!.filter) new RegExp(d.trigger!.filter); // throws on bad regex
+  if (d.trigger!.when !== undefined) {
+    if (on !== "message") fail(`"when" only applies to message triggers`);
+    if (typeof d.trigger!.when !== "string" || !d.trigger!.when.trim()) fail(`trigger.when must be a non-empty statement`);
+  }
+  validateBar(d.trigger!.when_at, "trigger.when_at", fail);
   if (on === "schedule") {
     const { cron, every } = d.trigger!;
     if (!cron === !every) fail(`schedule triggers need exactly one of "cron" or "every"`);
@@ -171,7 +223,7 @@ function validate(def: unknown, file: string): WorkflowDef {
   if (!Array.isArray(d.steps) || d.steps.length === 0) fail(`at least one step is required`);
   const stepIds = new Set<string>();
   for (const [i, step] of d.steps!.entries()) {
-    const s = step as Partial<SayStep & WaitReactionStep & DelayStep & DmStep & ReactStep & WebhookStep>;
+    const s = step as Partial<SayStep & WaitReactionStep & DelayStep & DmStep & ReactStep & WebhookStep & JudgeStep & WaitUntilStep>;
     if (typeof s.say === "string") {
       if (!s.say.trim()) fail(`step ${i + 1}: "say" must not be empty`);
     } else if (s.wait_reaction && typeof s.wait_reaction === "object") {
@@ -192,8 +244,22 @@ function validate(def: unknown, file: string): WorkflowDef {
       }
       if (w.method && w.method !== "GET" && w.method !== "POST") fail(`step ${i + 1}: webhook method must be GET or POST`);
       parseDuration(w.timeout, 0);
+    } else if (s.judge && typeof s.judge === "object") {
+      const ask = (s.judge as JudgeStep["judge"]).ask;
+      const entries = ask && typeof ask === "object" && !Array.isArray(ask) ? Object.entries(ask) : [];
+      if (entries.length < 1 || entries.length > 32) fail(`step ${i + 1}: judge.ask needs 1–32 named statements`);
+      for (const [name, statement] of entries) {
+        if (!/^[\w-]+$/.test(name)) fail(`step ${i + 1}: judge.ask name "${name}" must be alphanumeric/_/-`);
+        if (typeof statement !== "string" || !statement.trim()) fail(`step ${i + 1}: judge.ask.${name} must be a non-empty statement`);
+      }
+    } else if (s.wait_until && typeof s.wait_until === "object") {
+      const w = s.wait_until as WaitUntilStep["wait_until"];
+      if (typeof w.statement !== "string" || !w.statement.trim()) fail(`step ${i + 1}: wait_until needs a "statement"`);
+      validateBar(w.at, `step ${i + 1}: wait_until.at`, fail);
+      parseDuration(w.timeout, 0);
+      if (on === "schedule" && i === 0) fail(`step 1: a schedule run has no thread to wait on yet — put a "say" before the first wait_until`);
     } else {
-      fail(`step ${i + 1}: must be a "say", "wait_reaction", "delay", "dm", "react", or "webhook" step`);
+      fail(`step ${i + 1}: must be a "say", "wait_reaction", "delay", "dm", "react", "webhook", "judge", or "wait_until" step`);
     }
     if (s.id !== undefined) {
       if (typeof s.id !== "string" || !/^[\w-]+$/.test(s.id)) fail(`step ${i + 1}: "id" must be alphanumeric/_/-`);

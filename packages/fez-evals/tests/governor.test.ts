@@ -14,7 +14,9 @@ describe("governorDecision", () => {
   it.each([
     [{ needs_me: 0.9, resolved: 0.1, contradiction: 0.1 }, "run"],
     [{ needs_me: 0.2, resolved: 0.1, contradiction: 0.1 }, "skip"],
-    [{ needs_me: 0.9, resolved: 0.9, contradiction: 0.1 }, "skip"],
+    [{ needs_me: 0.9, resolved: 0.9, contradiction: 0.1 }, "run"],
+    [{ needs_me: 0.4, resolved: 0.9, contradiction: 0.1 }, "skip"],
+    [{ needs_me: 0.4, resolved: 0.5, contradiction: 0.1 }, "run"],
     [{ needs_me: 0.9, resolved: 0.1, contradiction: 0.9 }, "escalate"],
     [{ needs_me: 0.2, resolved: 0.9, contradiction: 0.9 }, "escalate"],
     [{ needs_me: 0.5, resolved: 0.5, contradiction: 0.5 }, "run"],

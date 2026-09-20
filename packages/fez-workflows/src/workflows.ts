@@ -11,13 +11,16 @@ import {
   KIND_MEMBERSHIP,
   KIND_REACTION,
   KIND_WORKFLOW_RUN,
+  ROSTER_D,
   resolveRelays,
   MAX_CHAIN_DEPTH,
 } from "@fezchat/protocol";
 import { Cron } from "croner";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
-import { loadDefs, isSay, isWait, isDelay, isDm, isReact, isWebhook, parseDuration, resolveTemplate, type WorkflowDef } from "./defs.js";
+import { loadDefs, isSay, isWait, isDelay, isDm, isReact, isWebhook, isJudge, isWaitUntil, usesJudge, parseDuration, resolveTemplate, type WorkflowDef } from "./defs.js";
 import { evalCondition, type ExprValue } from "./expr.js";
+import { DEFAULT_AT, judgeConfigFromEnv, judgeState, judgeStatements, judgeVars, type Ask } from "./judge.js";
+import { askJudge } from "../../fez-orchestrator/src/typesafe.js";
 
 /**
  * fez-workflows — Buzz's workflow engine (buzz-workflow crate),
@@ -68,6 +71,19 @@ async function main() {
     console.error(`No workflow definitions in ${dir} — add a .yaml file (see packages/fez-workflows/README.md)`);
     process.exit(1);
   }
+  // Judged conditions (when / judge / wait_until) go through the fez
+  // router's judge route with the same key routing uses. Refuse to start
+  // a workflow that needs it without it — a `when:` that can never fire
+  // would look like a workflow that simply never triggers.
+  const judgeConfig = judgeConfigFromEnv(process.env);
+  const needJudge = defs.filter(usesJudge).map((d) => d.name);
+  if (needJudge.length > 0 && !judgeConfig) {
+    console.error(`Workflows ${needJudge.join(", ")} use judged conditions — set FEZ_JUDGE_URL (router base, e.g. https://…/v1) and FEZ_JUDGE_KEY`);
+    process.exit(1);
+  }
+  const ask: Ask | undefined = judgeConfig
+    ? (state, questions) => askJudge(judgeConfig.url, judgeConfig.key, state, questions, { timeoutMs: 5000 })
+    : undefined;
 
   const client = new CapabilityClient({ relay: relayUrls, privateKey: loadServiceKey("workflows") });
   // Workflows watch h-tagged channel messages, and a membership-gated
@@ -105,16 +121,22 @@ async function main() {
     absorbAgent(event);
   }
 
+  // Membership is the workspace ROSTER — one owner-signed 47102 event
+  // tagged ["d", "roster"] that covers every channel. This service used
+  // to look for a roster per channel id, which flat workspaces never
+  // publish, so nothing was ever a member and no trigger could fire.
   const memberships = new Map<string, { createdAt: number; members: Set<string> }>();
   function absorbMembership(event: FezEvent): void {
-    const channelId = event.tags.find((t) => t[0] === "d")?.[1];
-    if (!channelId || !channels.includes(channelId)) return;
-    const existing = memberships.get(channelId);
-    if (existing && event.created_at < existing.createdAt) return;
+    if (event.tags.find((t) => t[0] === "d")?.[1] !== ROSTER_D) return;
+    if (owner && event.pubkey !== owner) return; // only the owner's roster counts
     const members = new Set<string>(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
-    memberships.set(channelId, { createdAt: event.created_at, members });
+    for (const channelId of channels) {
+      const existing = memberships.get(channelId);
+      if (existing && event.created_at < existing.createdAt) continue;
+      memberships.set(channelId, { createdAt: event.created_at, members });
+    }
   }
-  for (const event of await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": channels }])) absorbMembership(event);
+  for (const event of await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] }])) absorbMembership(event);
   for (const channelId of channels) {
     if (!memberships.get(channelId)?.members.has(myPubkey)) {
       console.warn(`⚠️  Not a member of channel ${channelId} — workflow messages will be dropped by other clients until the creator runs /invite ${myPubkey} bot`);
@@ -141,6 +163,20 @@ async function main() {
     resolve: (approver: string) => void;
   }
   const pendingApprovals: PendingApproval[] = [];
+
+  // Suspended wait_until steps: thread messages are judged against them.
+  // ponytail: in-memory only — a restart drops a pending wait_until (the
+  // run's remaining steps never fire); persist like SuspendedRun if that
+  // bites.
+  interface PendingJudgment {
+    rootId: string;
+    channelId: string;
+    allowedPubkey?: string; // undefined = any member of the channel
+    statement: string;
+    at: number;
+    resolve: (event: FezEvent, value: number) => void;
+  }
+  const pendingJudgments: PendingJudgment[] = [];
 
   const publishTrace = (
     def: WorkflowDef,
@@ -339,6 +375,69 @@ async function main() {
           publishTrace(def, runId, trigger, channelId, "failed", { step: stepNo, detail: reason.slice(0, 120) });
           return;
         }
+      } else if (isJudge(step)) {
+        // Judged values become variables for later `if:` conditions. A
+        // judge failure skips this step loudly; conditions that reference
+        // the missing variables then skip too (unknown variable = skip).
+        try {
+          const values = await judgeStatements(ask!, judgeState(vars), step.judge.ask);
+          Object.assign(vars, judgeVars(values));
+          output = JSON.stringify(values);
+          console.log(`   ⚖️  step ${stepNo}: ${Object.entries(values).map(([k, v]) => `${k}=${v.toFixed(2)}`).join(" ")}`);
+          publishTrace(def, runId, trigger, channelId, "step_done", { step: stepNo, judged: values });
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          console.log(`   ⤼  step ${stepNo}: skipped (judge error: ${reason})`);
+          publishTrace(def, runId, trigger, channelId, "step_skipped", { step: stepNo, detail: `judge error: ${reason.slice(0, 120)}` });
+          continue;
+        }
+      } else if (isWaitUntil(step)) {
+        const gate = step.wait_until;
+        if (!rootId) {
+          publishTrace(def, runId, trigger, channelId, "failed", { step: stepNo, detail: "no thread to wait on" });
+          return;
+        }
+        const allowedPubkey = gate.from && gate.from !== "any" ? resolvePrincipal(gate.from) : undefined;
+        if (gate.from && gate.from !== "any" && !allowedPubkey) {
+          console.error(`   ❌ step ${stepNo}: cannot resolve wait_until.from "${gate.from}" — run abandoned`);
+          publishTrace(def, runId, trigger, channelId, "failed", { step: stepNo, detail: "unresolvable wait_until.from" });
+          return;
+        }
+        const at = gate.at ?? DEFAULT_AT;
+        const threadRoot = rootId;
+        console.log(`   ⏸  step ${stepNo}: waiting until "${gate.statement}" ≥ ${at} (${gate.timeout ?? "24h"} timeout)`);
+        publishTrace(def, runId, trigger, channelId, "waiting_judgment", { step: stepNo, statement: gate.statement, at });
+        const settled = await new Promise<{ event: FezEvent; value: number } | undefined>((resolve) => {
+          const pending: PendingJudgment = {
+            rootId: threadRoot, channelId, allowedPubkey, statement: gate.statement, at,
+            resolve: (event, value) => { cleanup(); resolve({ event, value }); },
+          };
+          const timer = setTimeout(() => { cleanup(); resolve(undefined); }, parseDuration(gate.timeout, DEFAULT_APPROVAL_TIMEOUT_MS));
+          const cleanup = () => {
+            clearTimeout(timer);
+            const i = pendingJudgments.indexOf(pending);
+            if (i >= 0) pendingJudgments.splice(i, 1);
+          };
+          pendingJudgments.push(pending);
+        });
+        if (!settled) {
+          console.log(`   ⏱  step ${stepNo}: wait_until timed out — run abandoned`);
+          publishTrace(def, runId, trigger, channelId, "timeout", { step: stepNo });
+          void relay.publish(client.signEvent({
+            kind: KIND_CHANNEL_MESSAGE,
+            tags: [["h", channelId], ["e", rootId, "", "root"], ...(prevId ? [["e", prevId, "", "reply"]] : []), ["depth", String(triggerDepth + 1)]],
+            content: `⏱ workflow **${def.name}**: nothing in this thread satisfied "${gate.statement}" in time — remaining steps skipped.`,
+          })).catch(() => {});
+          return;
+        }
+        vars["latest.text"] = settled.event.content;
+        vars["latest.author"] = settled.event.pubkey;
+        vars["latest.author_name"] = pubkeyToName.get(settled.event.pubkey) ?? settled.event.pubkey.slice(0, 8);
+        vars["latest.id"] = settled.event.id;
+        prevId = settled.event.id;
+        output = settled.event.id;
+        console.log(`   ✅ step ${stepNo}: satisfied by ${vars["latest.author_name"]} (${settled.value.toFixed(2)})`);
+        publishTrace(def, runId, trigger, channelId, "step_done", { step: stepNo, value: settled.value, by: settled.event.pubkey });
       } else if (isWait(step)) {
         const gate = step.wait_reaction;
         if (!prevId) {
@@ -485,6 +584,22 @@ async function main() {
     if (!(memberships.get(channelId)?.members.has(event.pubkey) ?? false)) return;
     if (Number(event.tags.find((t) => t[0] === "depth")?.[1] ?? 0) >= MAX_CHAIN_DEPTH) return;
 
+    // Does this thread message settle a wait_until? Judged per pending
+    // gate; a failed judgment just leaves the gate armed for the next one.
+    if (event.kind === KIND_CHANNEL_MESSAGE && pendingJudgments.length > 0) {
+      const root = parseThreadRef(event.tags).rootId ?? event.id;
+      for (const pending of [...pendingJudgments]) {
+        if (pending.channelId !== channelId || pending.rootId !== root) continue;
+        if (pending.allowedPubkey && event.pubkey !== pending.allowedPubkey) continue;
+        void judgeStatements(ask!, { message: { author: pubkeyToName.get(event.pubkey) ?? event.pubkey.slice(0, 8), text: event.content } }, { until: pending.statement })
+          .then(({ until }) => {
+            console.log(JSON.stringify({ wait_until: pending.statement, value: until, bar: pending.at, event: event.id }));
+            if (until >= pending.at && pendingJudgments.includes(pending)) pending.resolve(event, until);
+          })
+          .catch((err) => console.warn(`⚠️  wait_until judgment failed (gate stays armed): ${err instanceof Error ? err.message : err}`));
+      }
+    }
+
     for (const def of defs) {
       if (!channelsByDef.get(def)!.includes(channelId)) continue;
       const trig = def.trigger;
@@ -500,7 +615,21 @@ async function main() {
       const key = `${def.name}:${event.id}`;
       if (seenTriggers.has(key)) continue;
       seenTriggers.add(key);
-      void runWorkflow(def, event, channelId).catch((err) => {
+      void (async () => {
+        // `when:` — the semantic filter. One judge call per candidate
+        // event; below the bar or on any judge failure the run does not
+        // fire, and the value is logged either way so the bar can be tuned.
+        if (trig.on === "message" && trig.when) {
+          const bar = trig.when_at ?? DEFAULT_AT;
+          let value: number | undefined, error: string | undefined;
+          try {
+            value = (await judgeStatements(ask!, { message: { author: pubkeyToName.get(event.pubkey) ?? event.pubkey.slice(0, 8), text: event.content } }, { when: trig.when })).when;
+          } catch (err) { error = err instanceof Error ? err.message : String(err); }
+          console.log(JSON.stringify({ workflow: def.name, when: trig.when, value, bar, event: event.id, ...(error ? { error } : {}) }));
+          if (value === undefined || value < bar) return;
+        }
+        await runWorkflow(def, event, channelId);
+      })().catch((err) => {
         console.error(`❌ ${def.name} run failed:`, err instanceof Error ? err.message : err);
       });
     }
@@ -509,7 +638,7 @@ async function main() {
   relay.subscribe(
     [
       { kinds: [KIND_CHANNEL_MESSAGE, KIND_REACTION], "#h": channels, since: Math.floor(Date.now() / 1000) },
-      { kinds: [KIND_MEMBERSHIP], "#d": channels, since: Math.floor(Date.now() / 1000) },
+      { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D], since: Math.floor(Date.now() / 1000) },
       { kinds: [KIND_AGENT_METADATA], since: Math.floor(Date.now() / 1000) },
     ],
     (event) => handleEvent(event)
