@@ -85,6 +85,8 @@ import { memoryPromptParts, memoryStateFromHeads, type CoreMemoryState } from ".
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
 import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
+import { governThread } from "./governor.js";
+import { askJudge, type JudgeQuestion } from "../../fez-orchestrator/src/typesafe.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { finalizeEvent } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
@@ -260,6 +262,14 @@ async function main() {
   // survives the cap wastes the budget on plumbing.
   const capReply = (text: string): string => capReplyPure(stripSelfAddress(stripHarnessNoise(text), personaId), maxReplyChars);
   const shareLevel = (persona.extra.shareLevel as string | undefined)?.trim();
+  // Thread governor: a fellow agent's mention is judged before it costs a
+  // harness turn (governor.ts). Same key as routing; the provider key
+  // stays on the router box. Unset = off, and nothing below changes.
+  const judgeUrl = process.env.FEZ_JUDGE_URL || (persona.extra.judge as string | undefined);
+  const judgeKey = process.env.FEZ_JUDGE_KEY || (persona.extra.judgeKey as string | undefined);
+  const governor = judgeUrl && judgeKey
+    ? (state: unknown, questions: Record<string, JudgeQuestion>) => askJudge(judgeUrl, judgeKey, state, questions, { timeoutMs: 4000 })
+    : undefined;
   // Resolve declared skills; the unresolved ones aren't silently dropped
   // — the agent is told about the gap so it can SAY SO when a task needs
   // one, instead of quietly faking its way through (the user's only
@@ -1899,6 +1909,29 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
       if (!completedRequest && triggerDepth >= MAX_CHAIN_DEPTH) {
         console.log(`⛔ Chain depth ${triggerDepth} ≥ ${MAX_CHAIN_DEPTH} — not responding (loop guard)`);
         return;
+      }
+
+      // Thread governor — only a plain mention from a verified sibling.
+      // Owner messages and work-protocol events (assignments, results)
+      // are never governed: those must run. Every verdict is logged with
+      // its raw values so the thresholds can be calibrated from traffic.
+      if (governor && !doc && !completedRequest && !assignedRequest && event.pubkey !== owner && await isSibling(event.pubkey)) {
+        const verdict = await governThread(governor, personaId!, recent.get(scope, `${who(event.pubkey)}: ${event.content}`));
+        console.log(JSON.stringify({ governor: verdict.outcome, reason: verdict.reason, values: verdict.values,
+          latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+        if (verdict.outcome === "skip") return;
+        if (verdict.outcome === "escalate") {
+          if (owner) {
+            const note = client.signEvent({
+              kind: KIND_CHANNEL_MESSAGE,
+              tags: [["h", channelId], ["e", triggerRoot ?? event.id, "", "root"], ["e", event.id, "", "reply"],
+                ["p", owner], ["depth", String(triggerDepth + 1)]],
+              content: `⚠️ ${who(event.pubkey)} and I seem to disagree in this thread (${verdict.reason}). Pausing until you weigh in.`,
+            });
+            await relay.publish(note).catch(() => {});
+          }
+          return;
+        }
       }
 
       const durable = !doc && (!!completedRequest || event.tags.some(t => t[0] === "task" && t[1] === myPubkey));
