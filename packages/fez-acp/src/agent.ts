@@ -269,8 +269,20 @@ async function main() {
   // Thread governor: a fellow agent's mention is judged before it costs a
   // harness turn (governor.ts). Same key as routing; the provider key
   // stays on the router box. Unset = off, and nothing below changes.
-  const judgeUrl = process.env.FEZ_JUDGE_URL || (persona.extra.judge as string | undefined);
-  const judgeKey = process.env.FEZ_JUDGE_KEY || (persona.extra.judgeKey as string | undefined);
+  // Jev is workspace-level: settings.json `judgeUrl`/`judgeKey` (what the
+  // desktop keeps) covers every persona, so a fresh workspace's starter team
+  // gets the room's judgment without anyone editing persona files. Env and
+  // per-persona fields still override. Found on the 2026-09-20 fresh start:
+  // the desktop passes no judge env and starter personas carry none, so the
+  // guide answered every question itself and no decision was ever made.
+  const settingsJudge = (() => {
+    try {
+      const s = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".fez", "settings.json"), "utf8")) as { judgeUrl?: unknown; judgeKey?: unknown };
+      return { url: typeof s.judgeUrl === "string" ? s.judgeUrl : undefined, key: typeof s.judgeKey === "string" ? s.judgeKey : undefined };
+    } catch { return { url: undefined, key: undefined }; }
+  })();
+  const judgeUrl = process.env.FEZ_JUDGE_URL || (persona.extra.judge as string | undefined) || settingsJudge.url;
+  const judgeKey = process.env.FEZ_JUDGE_KEY || (persona.extra.judgeKey as string | undefined) || settingsJudge.key;
   const governor = judgeUrl && judgeKey
     ? (state: unknown, questions: Record<string, JudgeQuestion>) => askJudge(judgeUrl, judgeKey, state, questions, { timeoutMs: 4000 })
     : undefined;
@@ -279,7 +291,8 @@ async function main() {
   // a model turn deciding who to summon. Same env/persona seam as the
   // standalone orchestrator; the router key falls back to the judge key,
   // since the hosted gateway serves both routes under one credential.
-  const routerUrl = process.env.FEZ_ORCHESTRATOR_URL || (persona.extra.url as string | undefined);
+  // The judge gateway also serves routing (/chat/completions), so the guide routes by default wherever a judge is configured.
+  const routerUrl = process.env.FEZ_ORCHESTRATOR_URL || (persona.extra.url as string | undefined) || judgeUrl;
   const routerModel = process.env.FEZ_ORCHESTRATOR_MODEL || "fez-router";
   const guideRoute = routerUrl
     ? routerCall(routerUrl, process.env.FEZ_ORCHESTRATOR_KEY || (persona.extra.key as string | undefined) || judgeKey)
