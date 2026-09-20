@@ -83,6 +83,14 @@ describe("judge helpers", () => {
     expect(() => evalCondition('judge.missing >= 0.8', vars)).toThrow(/unknown variable/);
   });
 
+  test("a deciding left operand does not leave the right operand unparsed", () => {
+    const vars = { a: 0.49, b: 0.02 };
+    expect(evalCondition("a >= 0.6 && b < 0.3", vars)).toBe(false);
+    expect(evalCondition("b < 0.3 || a >= 0.6", vars)).toBe(true);
+    expect(evalCondition("a >= 0.6 || b < 0.3", vars)).toBe(true);
+    expect(evalCondition("!(a >= 0.6) && b < 0.3 && a > 0", vars)).toBe(true);
+  });
+
   test("state carries the trigger and the latest observed message", () => {
     expect(judgeState({ "trigger.text": "find X", "trigger.author_name": "ken" })).toEqual({ trigger: { author: "ken", text: "find X" } });
     expect(judgeState({ "trigger.text": "find X", "trigger.author_name": "ken", "latest.text": "done", "latest.author_name": "quill" }))

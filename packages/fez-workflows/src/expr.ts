@@ -87,14 +87,24 @@ class Parser {
     return value;
   }
 
+  // The right operand is always PARSED: JS short-circuiting used to leave
+  // its tokens unconsumed whenever the left side decided the result, and
+  // the parser then reported "trailing input" — `false && x` and
+  // `true || x` both errored, and an erroring `if:` skips the step.
   private or(): ExprValue {
     let left = this.and();
-    while (this.takeOp("||")) left = truthy(left) || truthy(this.and());
+    while (this.takeOp("||")) {
+      const right = truthy(this.and());
+      left = truthy(left) || right;
+    }
     return left;
   }
   private and(): ExprValue {
     let left = this.unary();
-    while (this.takeOp("&&")) left = truthy(left) && truthy(this.unary());
+    while (this.takeOp("&&")) {
+      const right = truthy(this.unary());
+      left = truthy(left) && right;
+    }
     return left;
   }
   private unary(): ExprValue {
