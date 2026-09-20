@@ -662,12 +662,23 @@ function Shell({
       if (!meta?.live || msg.authorPk === client.pubkey) return;
       if (mutedRef.current.has(channelId)) return;
       const myName = client.displayName(client.pubkey);
+      const chName = client.state.workspace.channels.get(channelId)?.name;
       if (myName && new RegExp(`@${escapeRe(myName)}\\b`, "i").test(msg.content)) {
-        const chName = client.state.workspace.channels.get(channelId)?.name;
         notifyEvent({
           key: `ch:${channelId}`,
           kind: "mention",
           title: `${msg.authorName} mentioned you`,
+          body: msg.content,
+          label: chName ? `#${chName}` : "a channel",
+          target: { kind: "channel", id: channelId },
+        });
+      } else if (msg.attention === "now" && msg.mentionPks.includes(client.pubkey)) {
+        // An agent judged this reply as something you're waiting on: an
+        // answer, a question for you, a blocker. "later" and "none" stay quiet.
+        notifyEvent({
+          key: `ch:${channelId}`,
+          kind: "needs_action",
+          title: `${msg.authorName} has something for you`,
           body: msg.content,
           label: chName ? `#${chName}` : "a channel",
           target: { kind: "channel", id: channelId },

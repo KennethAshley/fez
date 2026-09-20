@@ -15,6 +15,8 @@ import Avatar from "./Avatar";
 const KIND_CHANNEL_MESSAGE = 47103;
 
 interface MentionRow {
+  /** Sender judged it worth reading but nothing waits on you. */
+  later: boolean;
   id: string;
   channelId: string;
     channelName: string;
@@ -64,7 +66,13 @@ export default function HomeView({
           const ref = channelId ? channels.get(channelId) : undefined;
           if (!channelId || !ref) return undefined;
           if (!client.state.isMember(event.pubkey)) return undefined;
+          // The sender's attention tag: "none" is a handoff line or an
+          // acknowledgment that only reached you via the thread's p-tag.
+          // Untagged (older agents, people) counts as now, as before.
+          const attention = event.tags.find((t) => t[0] === "attention")?.[1];
+          if (attention === "none") return undefined;
           return {
+            later: attention === "later",
             id: event.id,
             channelId,
             channelName: ref.name,
@@ -75,7 +83,7 @@ export default function HomeView({
           };
         })
         .filter((row): row is MentionRow => !!row)
-        .sort((a, b) => b.ts - a.ts)
+        .sort((a, b) => Number(a.later) - Number(b.later) || b.ts - a.ts) // what waits on you first, then newest
         .slice(0, 50);
       setMentions(rows);
     })();
@@ -122,7 +130,7 @@ export default function HomeView({
             <Avatar pk={row.pk} size={22} title={row.author} quip={false} />
             <span className="inbox-main">
               <span className="search-meta">
-                # {row.channelName} · <span className="inbox-author">{row.author}</span> · {when(row.ts)}
+                # {row.channelName} · <span className="inbox-author">{row.author}</span> · {when(row.ts)}{row.later && " · later"}
               </span>
               <span className="search-snippet">{row.snippet}</span>
             </span>

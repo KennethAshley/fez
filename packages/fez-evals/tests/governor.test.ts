@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  completionDecision, completionQuestions, governCompletion, silentAccept, governSteer, STATE_CHARS,
+  completionDecision, completionQuestions, governCompletion, silentAccept, governSteer, governAttention, STATE_CHARS,
   governThread, governorDecision, governorQuestions, governorState,
 } from "../../fez-acp/src/governor.js";
 import type { JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
@@ -124,6 +124,28 @@ describe("governSteer", () => {
     const v = await governSteer(async () => { throw new Error("Judge HTTP 502"); }, "x", "y");
     expect(v.outcome).toBe("steer");
     expect(v.error).toContain("502");
+  });
+});
+
+describe("governAttention", () => {
+  const answer = (needs: number, urgency: string) => async () => {
+    const r = nouls({ needs_owner: needs });
+    r.answers.urgency = { type: "choice", choice: urgency, confidence: 0.9, probabilities: { now: urgency === "now" ? 0.9 : 0.05, later: urgency === "later" ? 0.9 : 0.05, none: urgency === "none" ? 0.9 : 0.05 } };
+    return r;
+  };
+  it("an answer to the owner's question is now", async () => {
+    expect((await governAttention(answer(0.95, "now"), "Raleigh", "what is the latest Bun?", "Bun 1.4.2, shipped Sept 5.")).level).toBe("now");
+  });
+  it("a handoff line is none, whatever the urgency answer says", async () => {
+    expect((await governAttention(answer(0.08, "now"), "Raleigh", "what is the latest Bun?", "@drift (from Raleigh) what is the latest Bun?")).level).toBe("none");
+  });
+  it("useful but not awaited is later", async () => {
+    expect((await governAttention(answer(0.8, "later"), "Raleigh", "x", "FYI the docs moved.")).level).toBe("later");
+  });
+  it("fails open to now", async () => {
+    const v = await governAttention(async () => { throw new Error("Judge HTTP 503"); }, "Raleigh", "x", "y");
+    expect(v.level).toBe("now");
+    expect(v.error).toContain("503");
   });
 });
 

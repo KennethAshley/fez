@@ -373,6 +373,8 @@ export interface Msg {
   media?: MediaAttachment[];
   /** Posted by a workflow (its name) — render as system output, not as the signer speaking. */
   workflow?: string;
+  /** The sender's judgment of whether the owner needs to read this: now, later, or none. Absent = now (older agents). */
+  attention?: "now" | "later" | "none";
 }
 
 export interface Job {
@@ -2698,7 +2700,9 @@ export class FezClient {
     const parentId = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
     const rootId = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? parentId;
     const workflow = event.tags.find((t) => t[0] === "workflow")?.[1];
+    const attention = event.tags.find((t) => t[0] === "attention")?.[1];
     return {
+      ...(attention === "now" || attention === "later" || attention === "none" ? { attention } : {}),
       id: event.id,
       authorPk: event.pubkey,
       authorName: this.displayName(event.pubkey),

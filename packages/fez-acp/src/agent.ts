@@ -86,7 +86,7 @@ import { memoryPromptParts, memoryStateFromHeads, type CoreMemoryState } from ".
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
 import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
-import { governCompletion, governSteer, governThread, silentAccept } from "./governor.js";
+import { governAttention, governCompletion, governSteer, governThread, silentAccept } from "./governor.js";
 import { piSessionError } from "./pi-session-error.js";
 import { parseWake, wakeEvent } from "./wake.js";
 import { buildRoster, decideRoute, isRouted, routerCall } from "./guide-router.js";
@@ -2461,6 +2461,20 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
           resolve: async name => resolveAgentName(name, profiles), isWorker: checkedSibling,
         });
         const handingOff = outgoingTags.some(t => t[0] === "task");
+        // Attention stage: does the owner need to read this? Every reply
+        // to the owner's message is p-tagged to them, so without this the
+        // inbox is every reply. Handoffs are never for the owner; model
+        // replies are judged; anything else (no judge, no owner) reads as
+        // "now", which is what the inbox assumed before.
+        if (!doc && owner) {
+          const attention = routed || handingOff ? "none"
+            : governor ? await governAttention(governor, who(owner), event.content, reply).then(v => {
+                console.log(JSON.stringify({ governor: v.level, stage: "attention", reason: v.reason, values: v.values, latencyMs: v.latencyMs, error: v.error, event: event.id }));
+                return v.level;
+              })
+            : "now";
+          outgoingTags.push(["attention", attention]);
+        }
         if (handingOff && triggerDepth + 1 >= MAX_CHAIN_DEPTH) throw new Error("Handoff reached the agent chain limit; no further worker was summoned.");
         if (assignedRequest && !handingOff) {
           const summary = `No terminal result was submitted with fez_complete_work. The last reply is unverified:\n${rawReply}`.slice(0, 8000);

@@ -250,6 +250,61 @@ export async function governSteer(
   }
 }
 
+// ── attention stage: does this reply need the owner ─────────────────
+
+export type Attention = "now" | "later" | "none";
+export interface AttentionVerdict { level: Attention; reason: string; values?: { needs_owner: number; urgency: string }; latencyMs: number; error?: string }
+
+/**
+ * Every agent reply to the owner's message is p-tagged to the owner by
+ * the thread rules, so the inbox was every reply — handoff lines,
+ * acknowledgments, steps toward an answer. The tag says which ones the
+ * owner actually needs to read, and how soon. Fails open to "now": on a
+ * judge problem everything shows, as before.
+ */
+export const NEEDS_OWNER_AT = 0.6;
+
+export function attentionQuestions(owner: string): Record<"needs_owner" | "urgency", JudgeQuestion> {
+  return {
+    needs_owner: {
+      type: "noul",
+      instructions: { owner, question: "Does `reply` give `owner` something to read or act on — an answer to `request`, a decision to make, a blocker, or a result they asked for?" },
+      criteria: {
+        true: "It delivers an answer, a result, a question for the owner, or news of a blocker.",
+        false: "It is an acknowledgment, a status note, a handoff to another agent, or an intermediate step with nothing for the owner yet.",
+      },
+    },
+    urgency: {
+      type: "choice",
+      instructions: "If `owner` should see `reply`, how soon?",
+      criteria: {
+        now: "it answers what they asked, asks them something, or reports a blocker — they are waiting on it",
+        later: "useful to read at some point, nothing waits on them",
+        none: "nothing for the owner in it",
+      },
+    },
+  };
+}
+
+export async function governAttention(
+  ask: (state: unknown, questions: Record<string, JudgeQuestion>) => Promise<JudgeResult>,
+  owner: string,
+  request: string,
+  reply: string,
+): Promise<AttentionVerdict> {
+  const startedAt = Date.now();
+  try {
+    const result = await ask({ request: request.slice(0, STATE_CHARS), reply: reply.slice(0, STATE_CHARS) }, attentionQuestions(owner));
+    const { needs_owner } = nouls(result, ["needs_owner"] as const);
+    const urgencyAnswer = result.answers.urgency;
+    const urgency = urgencyAnswer?.type === "choice" ? urgencyAnswer.choice : "now";
+    const level: Attention = needs_owner < NEEDS_OWNER_AT ? "none" : urgency === "later" ? "later" : "now";
+    return { level, reason: `needs owner ${needs_owner.toFixed(2)}, urgency ${urgency}`, values: { needs_owner, urgency }, latencyMs: Date.now() - startedAt };
+  } catch (error) {
+    return { level: "now", reason: "judge unavailable", latencyMs: Date.now() - startedAt, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /**
  * The judge-unsure fallback runs the model to decide; when it accepts it
  * replies with the single word ACCEPTED and the agent posts nothing (the
