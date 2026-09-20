@@ -33,6 +33,22 @@ interface TurnRec {
   ts: number;
 }
 
+/** One call the room made (encrypted to the owner, same kind as turn metrics, `decision` set). */
+interface DecisionRec {
+  agent: string;
+  /** stage: route, mention, owner, busy, completion, attention, narration, deliverable */
+  decision: string;
+  outcome: string;
+  reason?: string;
+  value?: number;
+  values?: Record<string, number | string> | number[];
+  confidence?: number;
+  latencyMs?: number;
+  error?: string;
+  event?: string;
+  channel?: string;
+  ts: number;
+}
 interface MsgRec {
   id: string;
   authorPk: string;
@@ -62,6 +78,7 @@ export default function PulseView({
   onWatch: (agent: string) => void;
 }) {
   const [turns, setTurns] = useState<TurnRec[]>();
+  const [decisions, setDecisions] = useState<DecisionRec[]>();
   const [channelDays, setChannelDays] = useState<Map<string, Map<string, number>>>();
   const [messages, setMessages] = useState<MsgRec[]>();
 
@@ -70,14 +87,19 @@ export default function PulseView({
     void (async () => {
       const events = await wire.query([{ kinds: [KIND_TURN_METRIC], "#p": [client.pubkey], since, limit: 5000 }]);
       const records: TurnRec[] = [];
+      const calls: DecisionRec[] = [];
       for (const event of events) {
         try {
-          const metric = JSON.parse(await wire.decrypt(event.pubkey, event.content)) as TurnRec;
-          if (metric.agent && metric.ts) records.push(metric);
+          const metric = JSON.parse(await wire.decrypt(event.pubkey, event.content)) as TurnRec & Partial<DecisionRec>;
+          if (!metric.agent || !metric.ts) continue;
+          // Governor decisions ride the same kind with `decision` set — the room's calls, not turns.
+          if (metric.decision) calls.push(metric as DecisionRec);
+          else records.push(metric);
         } catch { /* not addressed to us */ }
       }
       records.sort((a, b) => a.ts - b.ts);
       setTurns(records);
+      setDecisions(calls.sort((a, b) => b.ts - a.ts));
 
       const channels: { id: string; name: string }[] = [...client.state.workspace.channels.values()]
         .map((channel) => ({ id: channel.id, name: channel.name }));
@@ -356,6 +378,9 @@ export default function PulseView({
             </div>
           )}
         </div>
+
+        {/* ── the room's decisions: what Jev decided, with the numbers ── */}
+        <DecisionsSection decisions={decisions} now={now} />
 
         {/* ── fleet chart, over a window that fits the data ── */}
         {(turns?.length ?? 0) === 0 ? (
@@ -815,4 +840,80 @@ function ago(deltaMs: number): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+/** Stage keys as the runtime logs them → what a person calls that decision. */
+const STAGE_LABEL: Record<string, string> = {
+  route: "who takes it", mention: "sibling mention", owner: "owner mention", busy: "mid-turn message",
+  completion: "result accepted?", attention: "needs you?", narration: "answer vs process", deliverable: "reply as result",
+};
+
+/** The value worth showing next to an outcome: the one the threshold was applied to. */
+function decisionNumber(d: DecisionRec): string {
+  if (typeof d.value === "number") return d.value.toFixed(2);
+  if (typeof d.confidence === "number") return d.confidence.toFixed(2);
+  if (d.values && !Array.isArray(d.values)) {
+    const first = Object.entries(d.values).find(([, v]) => typeof v === "number");
+    if (first) return `${first[0]} ${(first[1] as number).toFixed(2)}`;
+  }
+  return "";
+}
+
+/**
+ * The room's decisions — every Jev call the agents made, tallied per stage
+ * for the last day, then the latest ones with their numbers. This is the
+ * calibration surface: a wrong call shows up here with the value it was
+ * decided on, and that value is what moves a threshold.
+ */
+function DecisionsSection({ decisions, now }: { decisions: DecisionRec[] | undefined; now: number }) {
+  const dayAgo = now - DAY_MS;
+  const recent = (decisions ?? []).filter((d) => d.ts >= dayAgo);
+  const tallies = useMemo(() => {
+    const byStage = new Map<string, { outcomes: Map<string, number>; latency: number[]; total: number }>();
+    for (const d of recent) {
+      let row = byStage.get(d.decision);
+      if (!row) byStage.set(d.decision, (row = { outcomes: new Map(), latency: [], total: 0 }));
+      row.total++;
+      row.outcomes.set(d.outcome, (row.outcomes.get(d.outcome) ?? 0) + 1);
+      if (typeof d.latencyMs === "number") row.latency.push(d.latencyMs);
+    }
+    return [...byStage.entries()].sort((a, b) => b[1].total - a[1].total);
+  }, [recent]);
+  if (!decisions) return null;
+  return (
+    <div className="pulse-section">
+      <div className="pulse-section-head"><span>decisions · last 24h</span></div>
+      {recent.length === 0 ? (
+        <div className="pane-empty">no decisions yet — as agents route, accept, and filter, each call lands here with its number</div>
+      ) : (
+        <>
+          <div className="live-feed">
+            {tallies.map(([stage, row]) => {
+              const median = row.latency.length ? [...row.latency].sort((a, b) => a - b)[Math.floor(row.latency.length / 2)] : undefined;
+              return (
+                <div key={stage} className="live-row lr-turn">
+                  <span className="pulse-event-agent">{STAGE_LABEL[stage] ?? stage}</span>
+                  <span className="pulse-event-text">
+                    {[...row.outcomes.entries()].sort((a, b) => b[1] - a[1]).map(([o, n]) => `${n} ${o}`).join(" · ")}
+                    {median !== undefined && ` · ${median < 1000 ? `${median}ms` : `${(median / 1000).toFixed(1)}s`}`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="live-feed">
+            {recent.slice(0, 20).map((d, i) => (
+              <div key={`${d.ts}-${i}`} className={`live-row lr-turn${d.error ? " lr-failed" : ""}`} title={d.reason ?? ""}>
+                <span className="pulse-time">{ago(now - d.ts)}</span>
+                <span className="pulse-event-agent">@{d.agent}</span>
+                <span className="pulse-event-text">
+                  {STAGE_LABEL[d.decision] ?? d.decision} → <b>{d.outcome}</b>{decisionNumber(d) && ` · ${decisionNumber(d)}`}{d.error ? " · judge unavailable" : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }

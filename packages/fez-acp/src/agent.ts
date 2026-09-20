@@ -1266,6 +1266,24 @@ async function main() {
   // cost data to the relay. Usage figures come only from what the harness
   // actually surfaced (fail-closed: absent, never estimated).
   let turnUsage: { inputTokens?: number; outputTokens?: number; costUsd?: number } | undefined;
+  /**
+   * One governor decision: the plain-text log line as before, plus an
+   * owner-encrypted metric on the turn-metric kind (with `decision` set)
+   * so Pulse can tally the room's calls per stage and show the numbers
+   * next to the outcomes. Reading those numbers is how the bars move.
+   */
+  const logDecision = (rec: Record<string, unknown>) => {
+    console.log(JSON.stringify(rec));
+    if (!owner) return;
+    void relay
+      .publish(client.signEvent({
+        kind: KIND_TURN_METRIC,
+        tags: [["p", owner], ["agent", personaId!]],
+        content: client.encryptTo(owner, JSON.stringify({ agent: personaId, decision: rec.stage ?? "route", outcome: rec.governor, ...rec, ts: Date.now() })),
+      }))
+      .catch(() => {});
+  };
+
   const publishTurnMetric = (scope: string, status: string, startedAtMs: number, replyChars: number, trigger?: string) => {
     // The tally moves whether or not there is an owner to report to —
     // enforcement must not depend on visibility.
@@ -1971,8 +1989,8 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
       // reply. A wake is a summons by construction and is never judged.
       if (governor && !doc && !completedRequest && !assignedRequest && event.pubkey === owner && !event.wake) {
         const verdict = await governOwnerMention(governor, personaId!, recent.get(scope, `${who(event.pubkey)}: ${event.content}`));
-        console.log(JSON.stringify({ governor: verdict.outcome, stage: "owner", reason: verdict.reason, needsMe: verdict.needsMe,
-          latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+        logDecision({ governor: verdict.outcome, stage: "owner", reason: verdict.reason, value: verdict.needsMe,
+          latencyMs: verdict.latencyMs, error: verdict.error, event: event.id, channel: channelId });
         if (verdict.outcome === "skip") {
           await relay.publish(client.signEvent({ kind: KIND_REACTION, tags: [["e", event.id], ["h", channelId], ["p", event.pubkey]], content: "👍" })).catch(() => {});
           return;
@@ -1980,8 +1998,8 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
       }
       if (governor && !doc && !completedRequest && !assignedRequest && event.pubkey !== owner && await isSibling(event.pubkey)) {
         const verdict = await governThread(governor, personaId!, recent.get(scope, `${who(event.pubkey)}: ${event.content}`));
-        console.log(JSON.stringify({ governor: verdict.outcome, reason: verdict.reason, values: verdict.values,
-          latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+        logDecision({ governor: verdict.outcome, stage: "mention", reason: verdict.reason, values: verdict.values,
+          latencyMs: verdict.latencyMs, error: verdict.error, event: event.id, channel: channelId });
         if (verdict.outcome === "skip") return;
         if (verdict.outcome === "escalate") {
           if (owner) {
@@ -2039,8 +2057,8 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
           : undefined;
         const verdict = await governCompletion(governor, personaId!, worker, completedRequest.content, event.content, rootAsk,
           recent.get(scope, `${worker}: ${event.content}`));
-        console.log(JSON.stringify({ governor: verdict.outcome, stage: "completion", reason: verdict.reason, values: verdict.values,
-          latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+        logDecision({ governor: verdict.outcome, stage: "completion", reason: verdict.reason, values: verdict.values,
+          latencyMs: verdict.latencyMs, error: verdict.error, event: event.id, channel: channelId });
         if (verdict.outcome === "accept") {
           try {
             const prior = await relay.query([{ kinds: [KIND_CHIT], authors: [myPubkey], "#e": [event.id] }]).catch(() => []);
@@ -2092,8 +2110,8 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         // instead of throwing a running turn away. Fails open to steer.
         if (steer && governor && activeTrigger) {
           const verdict = await governSteer(governor, activeTrigger.content, event.content);
-          console.log(JSON.stringify({ governor: verdict.outcome, stage: "busy", reason: verdict.reason, value: verdict.value,
-            latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+          logDecision({ governor: verdict.outcome, stage: "busy", reason: verdict.reason, value: verdict.value,
+            latencyMs: verdict.latencyMs, error: verdict.error, event: event.id, channel: channelId });
           steer = verdict.outcome === "steer" && steerable();
           // The turn may have finished while the judge answered — then this message simply dispatches.
           parked = busy || (dispatching && !redispatch);
@@ -2413,9 +2431,9 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
             }).catch((error: unknown) => ({ skipped: `roster/router failure: ${error instanceof Error ? error.message : String(error)}` }))
           : undefined;
         const routed = isRouted(routeOutcome) ? routeOutcome : undefined;
-        if (routeOutcome) console.log(JSON.stringify(routed
-          ? { governor: "route", agent: routed.agent.name, confidence: routed.confidence, reason: routed.reason, event: event.id }
-          : { governor: "route-skip", ...routeOutcome, event: event.id }));
+        if (routeOutcome) logDecision(routed
+          ? { governor: "route", stage: "route", agent: routed.agent.name, confidence: routed.confidence, reason: `${routed.reason} → ${routed.agent.name}`, event: event.id, channel: channelId }
+          : { governor: "route-skip", stage: "route", ...routeOutcome, reason: (routeOutcome as { skipped?: string }).skipped, event: event.id, channel: channelId });
         publishObserver({ type: "turn", status: "started", ...(triggerRoot ? { root: triggerRoot } : {}) });
         const onUpdate = makeOnUpdate();
         inputOrigin = doc ? undefined : { kind: "channel", channelId, rootId: triggerRoot ?? event.id, messageId: replyTo ?? event.id };
@@ -2462,7 +2480,7 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         if (!doc && !routed && governor) {
           const n = await governNarration(governor, event.content, reply);
           if (n.dropped > 0 || n.error) {
-            console.log(JSON.stringify({ governor: n.dropped > 0 ? "trimmed" : "kept", stage: "narration", kept: n.kept, dropped: n.dropped, values: n.values, latencyMs: n.latencyMs, error: n.error, event: event.id }));
+            logDecision({ governor: n.dropped > 0 ? "trimmed" : "kept", stage: "narration", reason: `${n.kept} kept, ${n.dropped} dropped`, kept: n.kept, dropped: n.dropped, values: n.values, latencyMs: n.latencyMs, error: n.error, event: event.id, channel: channelId });
           }
           reply = n.reply;
         }
@@ -2490,7 +2508,7 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         if (!doc && owner) {
           const attention = routed || handingOff ? "none"
             : governor ? await governAttention(governor, who(owner), event.content, reply).then(v => {
-                console.log(JSON.stringify({ governor: v.level, stage: "attention", reason: v.reason, values: v.values, latencyMs: v.latencyMs, error: v.error, event: event.id }));
+                logDecision({ governor: v.level, stage: "attention", reason: v.reason, values: v.values, latencyMs: v.latencyMs, error: v.error, event: event.id, channel: channelId });
                 return v.level;
               })
             : "now";
@@ -2503,8 +2521,8 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
           // cost the requester a model turn to relay. Fails open to the error.
           const verdict = governor ? await governDeliverable(governor, assignedRequest.content, reply)
             : { outcome: "error" as const, reason: "no judge", latencyMs: 0 };
-          console.log(JSON.stringify({ governor: verdict.outcome, stage: "deliverable", reason: verdict.reason, value: verdict.value,
-            latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+          logDecision({ governor: verdict.outcome, stage: "deliverable", reason: verdict.reason, value: verdict.value,
+            latencyMs: verdict.latencyMs, error: verdict.error, event: event.id, channel: channelId });
           const delivered = verdict.outcome === "result";
           const summary = delivered ? reply.slice(0, 8000)
             : `No terminal result was submitted with fez_complete_work. The last reply is unverified:\n${rawReply}`.slice(0, 8000);
