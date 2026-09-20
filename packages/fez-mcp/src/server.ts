@@ -284,7 +284,11 @@ server.registerTool("fez_complete_work", {
     // The answer lands where the question came from: if the owner started
     // this thread and someone else delegated to me, tag the owner too, with
     // an attention level (judged for a success, "now" for an error).
-    const rootId = request.tags.find(t => t[0] === "e" && t[3] === "root")?.[1] ?? request.id;
+    // A handoff replying to a top-level message carries only a "reply" marker
+    // (the reply IS the root); parseThreadRef folds that in. Reading the
+    // "root" marker alone made the handoff itself the root, signed by the
+    // requester, so the owner never matched (found live in the fresh workspace).
+    const rootId = parseThreadRef(request.tags).rootId ?? request.id;
     const root = rootId === request.id ? request : (await relay.query([{ kinds: [47103], ids: [rootId] }]).catch(() => []))[0];
     if (root && owner && root.pubkey === owner && request.pubkey !== owner) {
       const level: Attention = result.status !== "success" ? "now"
