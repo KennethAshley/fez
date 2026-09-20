@@ -1339,13 +1339,57 @@ fn dependent_agents(home: &std::path::Path, workspace_removed: bool, skills: &[S
 /// Uninstall an extension: delete its part files from every ~/.fez dir and
 /// drop it from settings.json. `name` is the de-scoped base (git, kanban) —
 /// tolerate a `fez-` prefix so a `fez link`-era file (fez-git.js) also goes.
+/// Every name an install may be recorded under: as given, with the `fez-`
+/// prefix, and without it. The gallery strips the prefix before calling
+/// remove, while a linked package is recorded under its full name.
+fn extension_name_candidates(name: &str) -> Vec<String> {
+    let bare = name.trim_start_matches("fez-");
+    let mut out: Vec<String> = Vec::new();
+    for cand in [name.to_string(), format!("fez-{bare}"), bare.to_string()] {
+        if !out.contains(&cand) {
+            out.push(cand);
+        }
+    }
+    out
+}
+
+/// Forget an extension in settings: its grant, background opt-in, version and
+/// skill entry. Returns the bins it installed so their files go too.
+fn forget_extension_settings(json: &mut serde_json::Value, name: &str) -> Vec<String> {
+    let mut bins_to_remove: Vec<String> = Vec::new();
+    let Some(obj) = json.as_object_mut() else { return bins_to_remove };
+    for cand in extension_name_candidates(name) {
+        let cand = cand.as_str();
+        if let Some(perms) = obj.get_mut("extensionPermissions").and_then(|v| v.as_object_mut()) {
+            perms.remove(cand);
+        }
+        if let Some(bg) = obj.get_mut("backgroundExtensions").and_then(|v| v.as_array_mut()) {
+            bg.retain(|v| v.as_str() != Some(cand));
+        }
+        if let Some(vers) = obj.get_mut("extensionVersions").and_then(|v| v.as_object_mut()) {
+            vers.remove(cand);
+        }
+        if let Some(mcp) = obj.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
+            mcp.remove(cand);
+        }
+        if let Some(bins) = obj.get_mut("extensionBins").and_then(|v| v.as_object_mut()) {
+            if let Some(list) = bins.remove(cand) {
+                if let Some(list) = list.as_array() {
+                    bins_to_remove.extend(list.iter().filter_map(|v| v.as_str().map(String::from)));
+                }
+            }
+        }
+    }
+    bins_to_remove
+}
+
 #[tauri::command]
 fn remove_extension(name: String) -> Result<String, String> {
     if name.is_empty() || name.len() > 128 || !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')) {
         return Err("not a valid extension name".to_string());
     }
     let home = fez_home()?;
-    let candidates = [name.clone(), format!("fez-{name}"), name.trim_start_matches("fez-").to_string()];
+    let candidates = extension_name_candidates(&name);
     let mut removed: Vec<String> = Vec::new();
 
     // Modern path: packages/<base>/package.json is the package's own record
@@ -1379,32 +1423,7 @@ fn remove_extension(name: String) -> Result<String, String> {
     // Drop the recorded permission grant + background opt-in, and collect
     // the bins this package installed so their files go too.
     let mut bins_to_remove: Vec<String> = Vec::new();
-    update_settings(|json| {
-        if let Some(obj) = json.as_object_mut() {
-            for cand in [name.as_str(), name.trim_start_matches("fez-")] {
-                if let Some(perms) = obj.get_mut("extensionPermissions").and_then(|v| v.as_object_mut()) {
-                    perms.remove(cand);
-                }
-                if let Some(bg) = obj.get_mut("backgroundExtensions").and_then(|v| v.as_array_mut()) {
-                    bg.retain(|v| v.as_str() != Some(cand));
-                }
-                if let Some(vers) = obj.get_mut("extensionVersions").and_then(|v| v.as_object_mut()) {
-                    vers.remove(cand);
-                }
-                if let Some(mcp) = obj.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
-                    mcp.remove(cand);
-                }
-                if let Some(bins) = obj.get_mut("extensionBins").and_then(|v| v.as_object_mut()) {
-                    if let Some(list) = bins.remove(cand) {
-                        if let Some(list) = list.as_array() {
-                            bins_to_remove
-                                .extend(list.iter().filter_map(|v| v.as_str().map(String::from)));
-                        }
-                    }
-                }
-            }
-        }
-    })?;
+    update_settings(|json| bins_to_remove = forget_extension_settings(json, &name))?;
     for cmd in &bins_to_remove {
         if !package_install::safe_bin_name(cmd) {
             continue;
@@ -3183,5 +3202,36 @@ mod self_tag_tests {
         )
         .expect("sign");
         assert_eq!(event.tags.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod remove_extension_settings_tests {
+    use super::{extension_name_candidates, forget_extension_settings};
+
+    #[test]
+    fn candidates_cover_the_prefixed_and_bare_names() {
+        assert_eq!(extension_name_candidates("browser"), vec!["browser", "fez-browser"]);
+        assert_eq!(extension_name_candidates("fez-browser"), vec!["fez-browser", "browser"]);
+    }
+
+    /// The gallery strips `fez-` before calling remove, but a linked package's
+    /// skill is recorded under its full name — found live: `fez-browser` stayed
+    /// in mcpServers after "browser" was uninstalled, pointing at a dist that
+    /// was gone.
+    #[test]
+    fn uninstall_by_bare_name_forgets_the_prefixed_skill_entry() {
+        let mut settings = serde_json::json!({
+            "extensionPermissions": { "browser": ["ui"] },
+            "backgroundExtensions": ["fez-browser"],
+            "mcpServers": { "fez-browser": { "command": "node" }, "browser-use": { "command": "node" } },
+            "extensionBins": { "fez-browser": ["fez-browser"] }
+        });
+        let bins = forget_extension_settings(&mut settings, "browser");
+        assert_eq!(bins, vec!["fez-browser"]);
+        assert!(settings["extensionPermissions"].get("browser").is_none());
+        assert_eq!(settings["backgroundExtensions"], serde_json::json!([]));
+        assert!(settings["mcpServers"].get("fez-browser").is_none(), "prefixed skill entry must go");
+        assert!(settings["mcpServers"].get("browser-use").is_some(), "a different package stays");
     }
 }
