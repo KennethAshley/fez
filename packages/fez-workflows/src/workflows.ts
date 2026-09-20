@@ -164,10 +164,9 @@ async function main() {
   }
   const pendingApprovals: PendingApproval[] = [];
 
-  // Suspended wait_until steps: thread messages are judged against them.
-  // ponytail: in-memory only — a restart drops a pending wait_until (the
-  // run's remaining steps never fire); persist like SuspendedRun if that
-  // bites.
+  // Armed wait_until gates: thread messages are judged against them. The
+  // durable record is the SuspendedRun (judgment set); this is the live
+  // handle settleJudgment parks on, re-created on rehydration.
   interface PendingJudgment {
     rootId: string;
     channelId: string;
@@ -208,7 +207,7 @@ async function main() {
   interface SuspendedRun {
     workflow: string;
     runId: string;
-    stepIndex: number; // the wait_reaction step we're parked on
+    stepIndex: number; // the wait_reaction / wait_until step we're parked on
     anchorId: string;
     emoji: string;
     from?: string;
@@ -218,7 +217,9 @@ async function main() {
     prevId?: string;
     triggerDepth: number;
     channelId: string;
-    }
+    /** Present for a wait_until gate: the statement a thread message must satisfy. */
+    judgment?: { statement: string; at: number };
+  }
   const stateFile = process.env.FEZ_WORKFLOWS_STATE || path.join(os.homedir(), ".fez", "workflows-state.json");
   let suspended: SuspendedRun[] = [];
   try {
@@ -404,40 +405,20 @@ async function main() {
           return;
         }
         const at = gate.at ?? DEFAULT_AT;
-        const threadRoot = rootId;
+        const susp: SuspendedRun = {
+          workflow: def.name, runId, stepIndex: index, anchorId: prevId ?? rootId, emoji: "", from: gate.from,
+          deadline: Date.now() + parseDuration(gate.timeout, DEFAULT_APPROVAL_TIMEOUT_MS),
+          vars, rootId, prevId, triggerDepth, channelId, judgment: { statement: gate.statement, at },
+        };
         console.log(`   ⏸  step ${stepNo}: waiting until "${gate.statement}" ≥ ${at} (${gate.timeout ?? "24h"} timeout)`);
         publishTrace(def, runId, trigger, channelId, "waiting_judgment", { step: stepNo, statement: gate.statement, at });
-        const settled = await new Promise<{ event: FezEvent; value: number } | undefined>((resolve) => {
-          const pending: PendingJudgment = {
-            rootId: threadRoot, channelId, allowedPubkey, statement: gate.statement, at,
-            resolve: (event, value) => { cleanup(); resolve({ event, value }); },
-          };
-          const timer = setTimeout(() => { cleanup(); resolve(undefined); }, parseDuration(gate.timeout, DEFAULT_APPROVAL_TIMEOUT_MS));
-          const cleanup = () => {
-            clearTimeout(timer);
-            const i = pendingJudgments.indexOf(pending);
-            if (i >= 0) pendingJudgments.splice(i, 1);
-          };
-          pendingJudgments.push(pending);
-        });
-        if (!settled) {
-          console.log(`   ⏱  step ${stepNo}: wait_until timed out — run abandoned`);
-          publishTrace(def, runId, trigger, channelId, "timeout", { step: stepNo });
-          void relay.publish(client.signEvent({
-            kind: KIND_CHANNEL_MESSAGE,
-            tags: [["h", channelId], ["e", rootId, "", "root"], ...(prevId ? [["e", prevId, "", "reply"]] : []), ["depth", String(triggerDepth + 1)]],
-            content: `⏱ workflow **${def.name}**: nothing in this thread satisfied "${gate.statement}" in time — remaining steps skipped.`,
-          })).catch(() => {});
-          return;
-        }
-        vars["latest.text"] = settled.event.content;
-        vars["latest.author"] = settled.event.pubkey;
-        vars["latest.author_name"] = pubkeyToName.get(settled.event.pubkey) ?? settled.event.pubkey.slice(0, 8);
-        vars["latest.id"] = settled.event.id;
+        suspended.push(susp);
+        saveSuspended();
+        const settled = await settleJudgment(def, susp);
+        if (!settled) return; // timed out — settleJudgment already traced + noticed
         prevId = settled.event.id;
         output = settled.event.id;
         console.log(`   ✅ step ${stepNo}: satisfied by ${vars["latest.author_name"]} (${settled.value.toFixed(2)})`);
-        publishTrace(def, runId, trigger, channelId, "step_done", { step: stepNo, value: settled.value, by: settled.event.pubkey });
       } else if (isWait(step)) {
         const gate = step.wait_reaction;
         if (!prevId) {
@@ -474,6 +455,61 @@ async function main() {
     }
     console.log(`🏁 ${def.name} run ${runId.slice(0, 8)} done`);
     publishTrace(def, runId, trigger, channelId, "done");
+  }
+
+  /**
+   * Park on a suspended wait_until until a thread message satisfies its
+   * statement, or the deadline passes. Same shape as settleGate: shared by
+   * the live path and boot-time rehydration, so a restart re-arms the wait
+   * with its remaining timeout instead of dropping the run. On success the
+   * matching message fills the `latest.*` variables in susp.vars.
+   */
+  async function settleJudgment(def: WorkflowDef, susp: SuspendedRun): Promise<{ event: FezEvent; value: number } | undefined> {
+    const dropSusp = () => {
+      const i = suspended.indexOf(susp);
+      if (i >= 0) suspended.splice(i, 1);
+      saveSuspended();
+    };
+    const judgment = susp.judgment!;
+    const allowedPubkey = susp.from && susp.from !== "any" ? resolvePrincipal(susp.from) : undefined;
+    if (susp.from && susp.from !== "any" && !allowedPubkey) {
+      console.error(`   ❌ ${def.name}: cannot resolve wait_until.from "${susp.from}" — run abandoned`);
+      publishTrace(def, susp.runId, undefined, susp.channelId, "failed", { step: susp.stepIndex + 1, detail: "unresolvable wait_until.from" });
+      dropSusp();
+      return undefined;
+    }
+    const threadRoot = susp.rootId ?? susp.anchorId;
+    const remainingMs = Math.max(0, susp.deadline - Date.now());
+    const settled = await new Promise<{ event: FezEvent; value: number } | undefined>((resolve) => {
+      const pending: PendingJudgment = {
+        rootId: threadRoot, channelId: susp.channelId, allowedPubkey, statement: judgment.statement, at: judgment.at,
+        resolve: (event, value) => { cleanup(); resolve({ event, value }); },
+      };
+      const timer = setTimeout(() => { cleanup(); resolve(undefined); }, remainingMs);
+      const cleanup = () => {
+        clearTimeout(timer);
+        const i = pendingJudgments.indexOf(pending);
+        if (i >= 0) pendingJudgments.splice(i, 1);
+      };
+      pendingJudgments.push(pending);
+    });
+    dropSusp();
+    if (!settled) {
+      console.log(`   ⏱  ${def.name}: wait_until timed out — run abandoned`);
+      publishTrace(def, susp.runId, undefined, susp.channelId, "timeout", { step: susp.stepIndex + 1 });
+      void relay.publish(client.signEvent({
+        kind: KIND_CHANNEL_MESSAGE,
+        tags: [["h", susp.channelId], ["e", threadRoot, "", "root"], ...(susp.prevId ? [["e", susp.prevId, "", "reply"]] : []), ["depth", String(susp.triggerDepth + 1)]],
+        content: `⏱ workflow **${def.name}**: nothing in this thread satisfied "${judgment.statement}" in time — remaining steps skipped.`,
+      })).catch(() => {});
+      return undefined;
+    }
+    susp.vars["latest.text"] = settled.event.content;
+    susp.vars["latest.author"] = settled.event.pubkey;
+    susp.vars["latest.author_name"] = pubkeyToName.get(settled.event.pubkey) ?? settled.event.pubkey.slice(0, 8);
+    susp.vars["latest.id"] = settled.event.id;
+    publishTrace(def, susp.runId, undefined, susp.channelId, "step_done", { step: susp.stepIndex + 1, value: settled.value, by: settled.event.pubkey });
+    return settled;
   }
 
   /**
@@ -546,14 +582,23 @@ async function main() {
       saveSuspended();
       continue;
     }
-    console.log(`♻️  re-arming suspended ${susp.workflow} run ${susp.runId.slice(0, 8)} (gate at step ${susp.stepIndex + 1})`);
+    console.log(`♻️  re-arming suspended ${susp.workflow} run ${susp.runId.slice(0, 8)} (${susp.judgment ? "wait_until" : "gate"} at step ${susp.stepIndex + 1})`);
     void (async () => {
-      const approver = await settleGate(def, susp);
-      if (!approver) return;
-      const vars = { ...susp.vars, approved_by: pubkeyToName.get(approver) ?? approver.slice(0, 8) };
+      let vars: Record<string, ExprValue>;
+      let prevId = susp.prevId;
+      if (susp.judgment) {
+        const settled = await settleJudgment(def, susp);
+        if (!settled) return;
+        vars = susp.vars; // settleJudgment filled latest.*
+        prevId = settled.event.id;
+      } else {
+        const approver = await settleGate(def, susp);
+        if (!approver) return;
+        vars = { ...susp.vars, approved_by: pubkeyToName.get(approver) ?? approver.slice(0, 8) };
+      }
       await executeSteps(
         def,
-        { runId: susp.runId, vars, rootId: susp.rootId, prevId: susp.prevId, triggerDepth: susp.triggerDepth, channelId: susp.channelId },
+        { runId: susp.runId, vars, rootId: susp.rootId, prevId, triggerDepth: susp.triggerDepth, channelId: susp.channelId },
         susp.stepIndex + 1
       );
     })().catch((err) => console.error(`❌ resumed ${susp.workflow} failed:`, err instanceof Error ? err.message : err));

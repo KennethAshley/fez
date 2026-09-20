@@ -101,8 +101,8 @@ steps:
 - `wait_until:` suspends until a message in the thread satisfies the
   statement; the match becomes the anchor for later steps and fills
   `{{latest.text}}`, `{{latest.author_name}}`, `{{latest.id}}`. Timeout
-  skips the rest and posts a notice. Pending waits are in-memory; a
-  restart drops them.
+  skips the rest and posts a notice. Pending waits persist like approval
+  gates and re-arm after a restart with their remaining timeout.
 
 ## Run
 
