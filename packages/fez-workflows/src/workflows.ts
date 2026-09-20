@@ -11,6 +11,7 @@ import {
   KIND_MEMBERSHIP,
   KIND_REACTION,
   KIND_WORKFLOW_RUN,
+  ROSTER_D,
   resolveRelays,
   MAX_CHAIN_DEPTH,
 } from "@fezchat/protocol";
@@ -120,16 +121,22 @@ async function main() {
     absorbAgent(event);
   }
 
+  // Membership is the workspace ROSTER — one owner-signed 47102 event
+  // tagged ["d", "roster"] that covers every channel. This service used
+  // to look for a roster per channel id, which flat workspaces never
+  // publish, so nothing was ever a member and no trigger could fire.
   const memberships = new Map<string, { createdAt: number; members: Set<string> }>();
   function absorbMembership(event: FezEvent): void {
-    const channelId = event.tags.find((t) => t[0] === "d")?.[1];
-    if (!channelId || !channels.includes(channelId)) return;
-    const existing = memberships.get(channelId);
-    if (existing && event.created_at < existing.createdAt) return;
+    if (event.tags.find((t) => t[0] === "d")?.[1] !== ROSTER_D) return;
+    if (owner && event.pubkey !== owner) return; // only the owner's roster counts
     const members = new Set<string>(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
-    memberships.set(channelId, { createdAt: event.created_at, members });
+    for (const channelId of channels) {
+      const existing = memberships.get(channelId);
+      if (existing && event.created_at < existing.createdAt) continue;
+      memberships.set(channelId, { createdAt: event.created_at, members });
+    }
   }
-  for (const event of await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": channels }])) absorbMembership(event);
+  for (const event of await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] }])) absorbMembership(event);
   for (const channelId of channels) {
     if (!memberships.get(channelId)?.members.has(myPubkey)) {
       console.warn(`⚠️  Not a member of channel ${channelId} — workflow messages will be dropped by other clients until the creator runs /invite ${myPubkey} bot`);
@@ -631,7 +638,7 @@ async function main() {
   relay.subscribe(
     [
       { kinds: [KIND_CHANNEL_MESSAGE, KIND_REACTION], "#h": channels, since: Math.floor(Date.now() / 1000) },
-      { kinds: [KIND_MEMBERSHIP], "#d": channels, since: Math.floor(Date.now() / 1000) },
+      { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D], since: Math.floor(Date.now() / 1000) },
       { kinds: [KIND_AGENT_METADATA], since: Math.floor(Date.now() / 1000) },
     ],
     (event) => handleEvent(event)
