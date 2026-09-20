@@ -17,8 +17,14 @@ import { agentTool, explicitActor, fleetQuestion, isSmallTalk, noneTool, routerB
 
 export interface RosterAgent { pubkey: string; name: string; about?: string; skills?: string[]; tasks?: string[]; routable: boolean; updatedAt: number }
 
-/** Route only when the hosted router is at least this sure. Below it, the model decides. */
-export const ROUTE_AT = 0.8;
+/**
+ * Route only when the hosted router is at least this sure; below it the
+ * model decides. Deliberately low: the 97-case battery routed 96/97 with
+ * no bar at all and its one wrong pick scored 0.82, so confidence barely
+ * separates right from wrong picks. With eight routable agents a correct
+ * pick landed at 0.77 live. This bar only rejects near-uniform spreads.
+ */
+export const ROUTE_AT = 0.5;
 const NAME_RE = /^[\w-]{1,32}$/;
 
 /** Newest 47000 announcement per pubkey, excluding the guide itself. */
@@ -60,6 +66,10 @@ export interface RouterAnswer { choice?: string; confidence?: number }
 export type RouterCall = (body: object) => Promise<RouterAnswer>;
 
 export interface RouteDecision { agent: RosterAgent; reply: string; confidence?: number; reason: "explicit" | "router" }
+/** Why the model ran instead — logged so the bar and prelayers can be tuned from real traffic. */
+export interface RouteSkip { skipped: string; choice?: string; confidence?: number }
+export type RouteOutcome = RouteDecision | RouteSkip;
+export const isRouted = (o: RouteOutcome | undefined): o is RouteDecision => !!o && "agent" in o;
 
 /** Strip the guide's own @name(s) from the request so the forwarded words are the user's task. */
 export function cleanRequest(text: string, guideNames: string[]): string {
@@ -76,13 +86,14 @@ export function cleanRequest(text: string, guideNames: string[]): string {
  */
 export async function decideRoute(opts: {
   text: string; guideNames: string[]; asker: string; roster: RosterAgent[]; call: RouterCall; model: string;
-}): Promise<RouteDecision | undefined> {
+}): Promise<RouteOutcome> {
   const cleaned = cleanRequest(opts.text, opts.guideNames);
   const candidates = routable(opts.roster);
-  if (!cleaned || candidates.length === 0) return undefined;
-  if (isSmallTalk(cleaned)) return undefined;
+  if (!cleaned) return { skipped: "empty request" };
+  if (candidates.length === 0) return { skipped: "no routable agents" };
+  if (isSmallTalk(cleaned)) return { skipped: "small talk" };
   const names = candidates.map((a) => a.name);
-  if (fleetQuestion(cleaned, names)) return undefined;
+  if (fleetQuestion(cleaned, names)) return { skipped: "fleet question" };
   const handoff = (agent: RosterAgent) => `@${agent.name} (from ${opts.asker}) ${cleaned}`;
   const explicit = explicitActor(cleaned, names);
   if (explicit) {
@@ -92,9 +103,11 @@ export async function decideRoute(opts: {
   let answer: RouterAnswer;
   try {
     answer = await opts.call(routerBody("tools", opts.model, scrubNames(cleaned, names), [...candidates.map(agentTool), noneTool()]));
-  } catch { return undefined; }
+  } catch (error) { return { skipped: `router error: ${error instanceof Error ? error.message : String(error)}` }; }
   const agent = candidates.find((a) => a.name === answer.choice);
-  if (!agent || answer.confidence === undefined || answer.confidence < ROUTE_AT) return undefined;
+  if (!agent) return { skipped: answer.choice === "nobody" ? "nobody fits" : `unknown pick ${answer.choice ?? "(none)"}`, ...answer };
+  if (answer.confidence === undefined) return { skipped: "no confidence reported", ...answer };
+  if (answer.confidence < ROUTE_AT) return { skipped: `confidence below ${ROUTE_AT}`, ...answer };
   return { agent, reply: handoff(agent), confidence: answer.confidence, reason: "router" };
 }
 

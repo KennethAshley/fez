@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { ROUTE_AT, buildRoster, cleanRequest, decideRoute, routable, type RosterAgent } from "../../fez-acp/src/guide-router.js";
+import { ROUTE_AT, buildRoster, cleanRequest, decideRoute, isRouted, routable, type RosterAgent } from "../../fez-acp/src/guide-router.js";
 
 const ann = (pubkey: string, meta: Record<string, unknown>, created_at = 1) => ({ pubkey, kind: 47000, created_at, content: JSON.stringify(meta) });
 const roster: RosterAgent[] = buildRoster([
@@ -50,15 +50,17 @@ describe("decideRoute", () => {
     ["nobody", { choice: "nobody", confidence: 0.99 }],
     ["an unknown name", { choice: "ghost", confidence: 0.99 }],
   ])("falls back to the model on %s", async (_label, answer) => {
-    expect(await decideRoute({ ...base, text: "@fez summarize the release notes", call: async () => answer })).toBeUndefined();
+    const outcome = await decideRoute({ ...base, text: "@fez summarize the release notes", call: async () => answer });
+    expect(isRouted(outcome)).toBe(false);
+    expect((outcome as { skipped: string }).skipped).toBeTruthy();
   });
 
   test("small talk, fleet questions, router errors and empty rosters run the model", async () => {
     const boom = async () => { throw new Error("router HTTP 502"); };
-    expect(await decideRoute({ ...base, text: "@fez hey there!", call: boom })).toBeUndefined();
-    expect(await decideRoute({ ...base, text: "@fez what can drift do?", call: boom })).toBeUndefined();
-    expect(await decideRoute({ ...base, text: "@fez deploy the site", call: boom })).toBeUndefined();
-    expect(await decideRoute({ ...base, roster: [], text: "@fez deploy the site", call: async () => ({ choice: "drift", confidence: 1 }) })).toBeUndefined();
+    expect(await decideRoute({ ...base, text: "@fez hey there!", call: boom })).toEqual({ skipped: "small talk" });
+    expect(await decideRoute({ ...base, text: "@fez what can drift do?", call: boom })).toEqual({ skipped: "fleet question" });
+    expect((await decideRoute({ ...base, text: "@fez deploy the site", call: boom }) as { skipped: string }).skipped).toMatch(/router error/);
+    expect(await decideRoute({ ...base, roster: [], text: "@fez deploy the site", call: async () => ({ choice: "drift", confidence: 1 }) })).toEqual({ skipped: "no routable agents" });
   });
 
   test("cleanRequest strips only the guide's names", () => {

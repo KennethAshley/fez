@@ -87,7 +87,7 @@ import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillF
 import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
 import { governCompletion, governThread } from "./governor.js";
-import { buildRoster, decideRoute, routerCall } from "./guide-router.js";
+import { buildRoster, decideRoute, isRouted, routerCall } from "./guide-router.js";
 import { askJudge, type JudgeQuestion } from "../../fez-orchestrator/src/typesafe.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { finalizeEvent } from "nostr-tools/pure";
@@ -2353,13 +2353,16 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         // templated handoff becomes this turn's reply and rides the normal
         // publish path below (p/task tags, handoff inbox, recent context),
         // so downstream sees exactly what a model-written handoff would be.
-        const routed = guideRoute && !doc && !completedRequest && !assignedRequest && steering.length === 0
+        const routeOutcome = guideRoute && !doc && !completedRequest && !assignedRequest && steering.length === 0
           ? await decideRoute({
               text: event.content, guideNames: [personaId!, ...(persona.aliases ?? [])], asker: who(event.pubkey), model: routerModel, call: guideRoute,
               roster: buildRoster(await agentProfiles([...workspace.workspace.members.keys()].filter(pk => workspace.isMember(pk)), checkedWorkEvents), myPubkey),
-            }).catch(() => undefined)
+            }).catch((error: unknown) => ({ skipped: `roster/router failure: ${error instanceof Error ? error.message : String(error)}` }))
           : undefined;
-        if (routed) console.log(JSON.stringify({ governor: "route", agent: routed.agent.name, confidence: routed.confidence, reason: routed.reason, event: event.id }));
+        const routed = isRouted(routeOutcome) ? routeOutcome : undefined;
+        if (routeOutcome) console.log(JSON.stringify(routed
+          ? { governor: "route", agent: routed.agent.name, confidence: routed.confidence, reason: routed.reason, event: event.id }
+          : { governor: "route-skip", ...routeOutcome, event: event.id }));
         publishObserver({ type: "turn", status: "started", ...(triggerRoot ? { root: triggerRoot } : {}) });
         const onUpdate = makeOnUpdate();
         inputOrigin = doc ? undefined : { kind: "channel", channelId, rootId: triggerRoot ?? event.id, messageId: event.id };
