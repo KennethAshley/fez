@@ -175,3 +175,13 @@ export async function governCompletion(
       error: error instanceof Error ? error.message : String(error) };
   }
 }
+
+/**
+ * The judge-unsure fallback runs the model to decide; when it accepts it
+ * replies with the single word ACCEPTED and the agent posts nothing (the
+ * chit is the record). Tolerates punctuation and markdown around the word;
+ * anything more is a real reply and gets published.
+ */
+export function silentAccept(reply: string): boolean {
+  return /^\W*accepted\W*$/i.test(reply.trim());
+}

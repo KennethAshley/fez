@@ -4518,6 +4518,7 @@ button.ucard-name:hover { text-decoration: underline; }
 }
 .msg-role.owner { color: var(--brand); border: 1px solid #6b3410; background: #3a2113; }
 .msg-role.admin { color: var(--yellow); border: 1px solid #665c1e; background: #3a3418; }
+.msg-role.system { color: #a3a3a3; border: 1px solid #3f3f46; background: #27272a; text-transform: none; letter-spacing: 0; }
 
 /* ── guest threads: the stall counter ─────────────────────────────────
  * A guest thread is a conversation at a market stall — open air, public,

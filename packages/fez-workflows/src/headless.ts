@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { FezExtensionAPI, ScheduledTaskContext } from "../../fez-extension-api/src/headless.js";
-import { KIND_CHANNEL } from "../../../src/protocol/kinds.js";
+import { KIND_CHANNEL, KIND_OBSERVER_CONTROL } from "../../../src/protocol/kinds.js";
 import { loadDefs, usesJudge } from "./defs.js";
 import { judgeConfigFromEnv, type Ask } from "./judge.js";
 import { askJudge } from "../../fez-orchestrator/src/typesafe.js";
@@ -60,6 +60,11 @@ async function start(ctx: ScheduledTaskContext): Promise<EngineHandle | undefine
       sendDm: async (to, text) => {
         if (!dm) throw new Error("this host cannot send DMs");
         await dm(to, text);
+      },
+      // This host IS the owner, so its control frames are the ones agents
+      // accept — the standalone service (its own key) offers no `control`.
+      control: async (to, frame) => {
+        await nostr.publish({ kind: KIND_OBSERVER_CONTROL, tags: [["p", to]], content: nostr.encrypt(to, JSON.stringify(frame)) });
       },
     },
     owner: ctx.ownerPubkey,

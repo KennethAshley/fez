@@ -371,6 +371,8 @@ export interface Msg {
   /** NIP-92 attachments declared on the event. Present so a renderer can
    *  trust the sender's MIME instead of guessing from the URL. */
   media?: MediaAttachment[];
+  /** Posted by a workflow (its name) — render as system output, not as the signer speaking. */
+  workflow?: string;
 }
 
 export interface Job {
@@ -2695,6 +2697,7 @@ export class FezClient {
     const media = parseImeta(event.tags);
     const parentId = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
     const rootId = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? parentId;
+    const workflow = event.tags.find((t) => t[0] === "workflow")?.[1];
     return {
       id: event.id,
       authorPk: event.pubkey,
@@ -2705,6 +2708,7 @@ export class FezClient {
       ts: event.created_at,
       mentionPks: event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
       ...(media.length ? { media } : {}),
+      ...(workflow ? { workflow } : {}),
     };
   }
 

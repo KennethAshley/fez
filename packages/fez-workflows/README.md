@@ -81,14 +81,16 @@ steps:
         worth_summary: "a one-sentence version would help the person who asked"
         blocker: "the message reports a blocker"
     id: check
-  - say: "@writer one sentence for the asker, please: {{trigger.text}}"
+  - wake:
+      agent: writer
+      # The agent already sees the thread; point at the answer rather than pasting it.
+      text: "@writer one sentence for the asker summarizing the answer just above — the sentence only, no questions."
     if: 'judge.worth_summary >= 0.6 && judge.blocker < 0.3'
   - wait_until:
       statement: "the message is a one-sentence plain-language summary, not a question or an acknowledgment"
       from: writer        # optional; default any member
       timeout: 10m        # default 24h
       at: 0.8             # default 0.8
-  - say: "✅ follow-up done — {{latest.author_name}}'s sentence is above."
 ```
 
 - `when:` filters message triggers by meaning where a regex would miss
@@ -103,6 +105,22 @@ steps:
   `{{latest.text}}`, `{{latest.author_name}}`, `{{latest.id}}`. Timeout
   skips the rest and posts a notice. Pending waits persist like approval
   gates and re-arm after a restart with their remaining timeout.
+
+## Silent summons
+
+Coordination should not read as conversation. `wake:` starts an agent's
+turn in the trigger's thread without posting anything: the templated
+`text` travels to the agent as an owner-encrypted control frame (kind
+20005, the same pipe as cancel) and the agent replies in the thread as if
+the owner had asked. Prefer it to `say: "@agent …"` whenever the message
+exists only to summon. Only the desktop's in-app host can send one — it
+runs as the owner, and agents accept a wake only from their owner — so
+the standalone service fails such a run instead of posting a summons.
+
+Anything a workflow does say (approval requests, timeout notices) carries
+a `["workflow", <name>]` tag; the desktop renders those as **fez
+workflows** with the workflow's name as a badge, never as the signer
+speaking.
 
 ## Run
 

@@ -137,7 +137,19 @@ export interface WaitUntilStep extends StepBase {
   wait_until: { statement: string; at?: number; from?: string; timeout?: string };
 }
 
-export type StepDef = SayStep | WaitReactionStep | DelayStep | DmStep | ReactStep | WebhookStep | JudgeStep | WaitUntilStep;
+export interface WakeStep extends StepBase {
+  /**
+   * Start an agent's turn in the trigger's thread WITHOUT posting a
+   * message: an owner-encrypted control frame (kind 20005) carries the
+   * templated `text` to the agent as an invisible owner mention, and the
+   * agent replies in the thread as usual. Coordination stays out of the
+   * reading experience. Only an owner-identity host (the desktop's
+   * background worker) can send one; the standalone service fails the run.
+   */
+  wake: { agent: string; text: string };
+}
+
+export type StepDef = SayStep | WaitReactionStep | DelayStep | DmStep | ReactStep | WebhookStep | JudgeStep | WaitUntilStep | WakeStep;
 
 /** Does this workflow need the judge at all? (Startup refuses to load one without FEZ_JUDGE_URL/KEY.) */
 export function usesJudge(def: WorkflowDef): boolean {
@@ -175,6 +187,9 @@ export function isJudge(step: StepDef): step is JudgeStep {
 }
 export function isWaitUntil(step: StepDef): step is WaitUntilStep {
   return typeof (step as WaitUntilStep).wait_until === "object" && (step as WaitUntilStep).wait_until !== null;
+}
+export function isWake(step: StepDef): step is WakeStep {
+  return typeof (step as WakeStep).wake === "object" && (step as WakeStep).wake !== null;
 }
 
 function validateBar(value: unknown, label: string, fail: (msg: string) => never): void {
@@ -223,7 +238,7 @@ function validate(def: unknown, file: string): WorkflowDef {
   if (!Array.isArray(d.steps) || d.steps.length === 0) fail(`at least one step is required`);
   const stepIds = new Set<string>();
   for (const [i, step] of d.steps!.entries()) {
-    const s = step as Partial<SayStep & WaitReactionStep & DelayStep & DmStep & ReactStep & WebhookStep & JudgeStep & WaitUntilStep>;
+    const s = step as Partial<SayStep & WaitReactionStep & DelayStep & DmStep & ReactStep & WebhookStep & JudgeStep & WaitUntilStep & WakeStep>;
     if (typeof s.say === "string") {
       if (!s.say.trim()) fail(`step ${i + 1}: "say" must not be empty`);
     } else if (s.wait_reaction && typeof s.wait_reaction === "object") {
@@ -258,8 +273,12 @@ function validate(def: unknown, file: string): WorkflowDef {
       validateBar(w.at, `step ${i + 1}: wait_until.at`, fail);
       parseDuration(w.timeout, 0);
       if (on === "schedule" && i === 0) fail(`step 1: a schedule run has no thread to wait on yet — put a "say" before the first wait_until`);
+    } else if (s.wake && typeof s.wake === "object") {
+      const w = s.wake as WakeStep["wake"];
+      if (typeof w.agent !== "string" || !w.agent.trim() || typeof w.text !== "string" || !w.text.trim()) fail(`step ${i + 1}: wake needs "agent" and "text"`);
+      if (on === "schedule" && i === 0) fail(`step 1: a schedule run has no thread to wake an agent into — put a "say" before the first wake`);
     } else {
-      fail(`step ${i + 1}: must be a "say", "wait_reaction", "delay", "dm", "react", "webhook", "judge", or "wait_until" step`);
+      fail(`step ${i + 1}: must be a "say", "wait_reaction", "delay", "dm", "react", "webhook", "judge", "wait_until", or "wake" step`);
     }
     if (s.id !== undefined) {
       if (typeof s.id !== "string" || !/^[\w-]+$/.test(s.id)) fail(`step ${i + 1}: "id" must be alphanumeric/_/-`);

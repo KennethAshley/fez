@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  completionDecision, completionQuestions, governCompletion,
+  completionDecision, completionQuestions, governCompletion, silentAccept,
   governThread, governorDecision, governorQuestions, governorState,
 } from "../../fez-acp/src/governor.js";
 import type { JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
@@ -88,5 +88,14 @@ describe("governCompletion", () => {
     const verdict = await governCompletion(async () => { throw new Error("Judge HTTP 504"); }, "drift", "quill", "b", "r", []);
     expect(verdict.outcome).toBe("run");
     expect(verdict.error).toContain("504");
+  });
+});
+
+describe("silent accept (judge-unsure fallback)", () => {
+  it("recognizes the bare token with stray punctuation or markdown", () => {
+    for (const reply of ["ACCEPTED", "accepted.", "**ACCEPTED**", "  Accepted!\n"]) expect(silentAccept(reply)).toBe(true);
+  });
+  it("treats anything more than the token as a real reply", () => {
+    for (const reply of ["Accepted — see drift's message above.", "Not accepted: the date is missing.", ""]) expect(silentAccept(reply)).toBe(false);
   });
 });
