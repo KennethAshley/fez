@@ -8,7 +8,7 @@ import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFoll
 import { DEFAULT_DISPLAY, loadDisplayPrefs, saveDisplayPrefs, type DisplayPrefs } from "./display-prefs";
 import { version } from "../package.json";
 import { ExtensionPanel } from "./SkillsView";
-import { EnvKeyStatus, SkillSecretsSection } from "./SkillSecrets";
+import { SkillSecretsSection } from "./SkillSecrets";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { flash } from "./toast";
 import { relayRaw, setRelays } from "./relay";
@@ -487,16 +487,6 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
               : "Unclaimed — nobody has taken ownership of this relay yet."
           }
           control={<span className="set-value">{client.state.workspace.name}</span>}
-        />
-        {/* The room's judgment. Every routing, acceptance, and attention call
-            goes to Jev; with your own TypeSafe key it goes there directly and
-            no fez server is involved. Write-only into the keychain, read by
-            agents at spawn. */}
-        <Row
-          stacked
-          label="room judgment (Jev)"
-          desc="Your TypeSafe API key. The room uses it to decide who takes a mention, whether a result is complete, and what needs you — in under a second, for fractions of a cent. Without a key, agents still work; the room stops making calls and you manage the team by hand. Get one at typesafe.ai; restart agents after saving."
-          control={<EnvKeyStatus skill="typesafe" envKey="TYPESAFE_API_KEY" plaintext={false} editable onSaved={() => flash("TypeSafe key saved — restart your agents to pick it up")} />}
         />
         {/* A relay IS a workspace, so changing this is not a setting in
             the ordinary sense — it moves you somewhere else. Saying so

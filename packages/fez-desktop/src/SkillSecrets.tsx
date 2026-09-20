@@ -268,7 +268,9 @@ function EnvEditor({
  * key set here reaches the orchestrator whether it runs from the app or
  * the terminal.
  */
-const FEZ_SERVICE_KEYS: SkillConfig = { env: { FEZ_ORCHESTRATOR_KEY: "" } };
+// TYPESAFE_API_KEY is the room's judgment (Jev): with it, routing, acceptance,
+// and attention calls go to TypeSafe directly and no fez server is involved.
+const FEZ_SERVICE_KEYS: SkillConfig = { env: { TYPESAFE_API_KEY: "", FEZ_ORCHESTRATOR_KEY: "" } };
 
 /**
  * One service, one keycard. A native <details>: the summary is the card
@@ -401,7 +403,7 @@ export function SkillSecretsSection({ onNotice }: { onNotice: (text: string) => 
         <SecretCard
           skill="fez"
           title="service keys"
-          hint="keys fez's own services read — the orchestrator's router bearer, and whatever lands here"
+          hint="keys fez's own services read — TYPESAFE_API_KEY is the room's judgment (who takes a mention, is a result done, what needs you; get one at typesafe.ai), FEZ_ORCHESTRATOR_KEY a hosted router's bearer"
           config={FEZ_SERVICE_KEYS}
           onNotice={onNotice}
         />

@@ -282,10 +282,11 @@ async function main() {
       return { url: typeof s.judgeUrl === "string" ? s.judgeUrl : undefined, key: typeof s.judgeKey === "string" ? s.judgeKey : undefined };
     } catch { return { url: undefined, key: undefined }; }
   })();
-  // Bring your own key: a TypeSafe key saved in Settings (keychain, account
-  // typesafe.TYPESAFE_API_KEY) makes the room's judgment work with no fez
-  // gateway at all — the transport switches to TypeSafe's API directly.
-  const ownTypeSafeKey = process.env.TYPESAFE_API_KEY || keychainSecret("typesafe", "TYPESAFE_API_KEY");
+  // Bring your own key: a TypeSafe key saved in Settings → secrets → fez
+  // service keys (keychain account fez.TYPESAFE_API_KEY) makes the room's
+  // judgment work with no fez gateway — the transport switches to
+  // TypeSafe's API directly.
+  const ownTypeSafeKey = process.env.TYPESAFE_API_KEY || keychainSecret("fez", "TYPESAFE_API_KEY");
   const judgeUrl = process.env.FEZ_JUDGE_URL || (persona.extra.judge as string | undefined) || settingsJudge.url || (ownTypeSafeKey ? TYPESAFE_DIRECT_URL : undefined);
   const judgeKey = process.env.FEZ_JUDGE_KEY || (persona.extra.judgeKey as string | undefined) || settingsJudge.key || ownTypeSafeKey;
   const governor = judgeUrl && judgeKey

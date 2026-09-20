@@ -35,7 +35,7 @@ function judgeFromSettings(): { url: string; key: string } | undefined {
     if (fromSettings) return fromSettings;
   } catch { /* no settings file */ }
   // Bring your own key: the TypeSafe key saved in Settings (keychain) — the same fallback the agent runtime uses.
-  const own = keychainSecret("typesafe", "TYPESAFE_API_KEY");
+  const own = keychainSecret("fez", "TYPESAFE_API_KEY");
   return own ? { url: TYPESAFE_DIRECT_URL, key: own } : undefined;
 }
 
