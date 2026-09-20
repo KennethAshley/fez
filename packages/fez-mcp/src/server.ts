@@ -75,6 +75,25 @@ const sign = (tmpl: { kind: number; tags: string[][]; content: string; created_a
     secret
   );
 
+/**
+ * Publish an owner question ONCE. A harness that times out a blocking
+ * tool call (pi's MCP adapter: 60 s by default) makes the model retry,
+ * and each retry used to post the same question again — the owner saw
+ * three copies of one prompt. If this agent already asked the identical
+ * question in this channel within the hour, re-attach to that message
+ * and keep polling its reactions instead.
+ */
+async function askOnce(tmpl: { kind: number; tags: string[][]; content: string }, channelId: string, tag: string) {
+  const prior = (await relay.query([{ kinds: [47103], authors: [myPubkey], "#h": [channelId], "#t": [tag],
+    since: Math.floor(Date.now() / 1000) - 3600 }]).catch(() => []))
+    .filter(e => e.content === tmpl.content)
+    .sort((a, b) => b.created_at - a.created_at)[0];
+  if (prior) return prior;
+  const ask = sign(tmpl);
+  await relay.publish(ask);
+  return ask;
+}
+
 /** Channel roster — the voter roll for quorum gates and polls. */
 async function channelMembers(channelId: string): Promise<Set<string>> {
   const events = await relay.query([{ kinds: [47102], "#d": [channelId] }]).catch(() => []);
@@ -305,12 +324,11 @@ server.registerTool(
     // Quorum is OWNER-AUTHORED config (persona approvalQuorum → this env),
     // never the agent's choice — an agent must not pick its own electorate.
     const quorum = Number(process.env.FEZ_APPROVAL_QUORUM) >= 1 ? Number(process.env.FEZ_APPROVAL_QUORUM) : undefined;
-    const ask = sign({
+    const ask = await askOnce({
       kind: 47103,
       tags: [["h", ref.channelId], ["t", "approval-request"], ["p", owner]],
       content: `⛔ approval needed: ${action}\n(react ✅ to approve, ❌ to deny${quorum ? ` — ${quorum} member approval${quorum === 1 ? "" : "s"} suffice` : ""})`,
-    });
-    await relay.publish(ask);
+    }, ref.channelId, "approval-request");
     const members = quorum ? await channelMembers(ref.channelId) : new Set<string>();
     const deadline = Date.now() + Math.min(timeoutS ?? 300, 3600) * 1000;
     while (Date.now() < deadline) {
@@ -349,12 +367,11 @@ server.registerTool(
       ...options.map((option, i) => `${OPTION_EMOJI[i]} ${option.label}${option.recommended ? " (recommended)" : ""}`),
       "(asking my owner — react with the number to answer)",
     ];
-    const ask = sign({
+    const ask = await askOnce({
       kind: 47103,
       tags: [["h", ref.channelId], ["t", "choice-request"], ["p", owner]],
       content: lines.join("\n"),
-    });
-    await relay.publish(ask);
+    }, ref.channelId, "choice-request");
     const emojis = OPTION_EMOJI.slice(0, options.length);
     const deadline = Date.now() + Math.min(timeoutS ?? 600, 3600) * 1000;
     while (Date.now() < deadline) {
