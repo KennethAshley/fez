@@ -12,7 +12,7 @@ import {
 } from "../../../src/protocol/kinds.js";
 import { MAX_CHAIN_DEPTH } from "../../../src/protocol/limits.js";
 import { parseThreadRef } from "../../fez-client/src/thread-ref.js";
-import { isSay, isWait, isDelay, isDm, isReact, isWebhook, isJudge, isWaitUntil, parseDuration, resolveTemplate, type WorkflowDef } from "./defs.js";
+import { isSay, isWait, isDelay, isDm, isReact, isWebhook, isJudge, isWaitUntil, isWake, parseDuration, resolveTemplate, type WorkflowDef } from "./defs.js";
 import { evalCondition, type ExprValue } from "./expr.js";
 import { DEFAULT_AT, judgeState, judgeStatements, judgeVars, type Ask } from "./judge.js";
 
@@ -56,6 +56,12 @@ export interface EngineNostr {
   subscribe(filters: Record<string, unknown>[], handler: (event: FezEvent) => void): () => void;
   query(filters: Record<string, unknown>[]): Promise<FezEvent[]>;
   sendDm(to: string, text: string, depth: number): Promise<void>;
+  /**
+   * Send an owner-encrypted control frame (kind 20005) to an agent — the
+   * `wake:` step's silent summons. Only an owner-identity host can offer
+   * this: agents authorize a frame by decrypting it under the owner key.
+   */
+  control?(to: string, frame: Record<string, unknown>): Promise<void>;
 }
 
 export interface EngineOptions {
@@ -290,6 +296,7 @@ export async function startWorkflowEngine(opts: EngineOptions): Promise<EngineHa
             ...(rootId ? [["e", rootId, "", "root"]] : []),
             ...(prevId ? [["e", prevId, "", "reply"]] : []),
             ["depth", String(triggerDepth + 1)],
+            ["workflow", def.name], // clients render these as system output, not as the signer speaking
             ...mentions.map((pk) => ["p", pk]),
           ],
           content: text,
@@ -299,6 +306,26 @@ export async function startWorkflowEngine(opts: EngineOptions): Promise<EngineHa
         output = event.id;
         console.log(`   💬 step ${stepNo}: ${text.slice(0, 70)}`);
         publishTrace(def, runId, trigger, channelId, "step_done", { step: stepNo });
+      } else if (isWake(step)) {
+        // The silent summons: an owner-encrypted control frame starts the
+        // agent's turn in this thread and nothing is posted. Only an
+        // owner-identity host can send one (agents authorize by decrypting
+        // under the owner key), so the standalone service fails the run
+        // loudly instead of quietly falling back to a visible summons.
+        const to = resolvePrincipal(step.wake.agent);
+        const problem = !to ? `cannot resolve agent "${step.wake.agent}"`
+          : !nostr.control ? "this host cannot wake agents (needs the owner identity — run inside the desktop)"
+          : !rootId ? "no thread to wake into" : undefined;
+        if (problem) {
+          console.error(`   ❌ step ${stepNo}: ${problem} — run abandoned`);
+          publishTrace(def, runId, trigger, channelId, "failed", { step: stepNo, detail: problem.slice(0, 120) });
+          return;
+        }
+        const text = resolveTemplate(step.wake.text, vars as never);
+        await nostr.control!(to!, { cmd: "wake", ts: Date.now(), channel: channelId, root: rootId!, reply: prevId ?? rootId!, depth: triggerDepth + 1, text });
+        output = to!;
+        console.log(`   ⏰ step ${stepNo}: woke ${step.wake.agent} — ${text.slice(0, 60)}`);
+        publishTrace(def, runId, trigger, channelId, "step_done", { step: stepNo, woke: to });
       } else if (isDelay(step)) {
         const ms = parseDuration(step.delay, 0);
         console.log(`   ⏳ step ${stepNo}: delay ${step.delay}`);
@@ -476,7 +503,7 @@ export async function startWorkflowEngine(opts: EngineOptions): Promise<EngineHa
       publishTrace(def, susp.runId, undefined, susp.channelId, "timeout", { step: susp.stepIndex + 1 });
       void publish({
         kind: KIND_CHANNEL_MESSAGE,
-        tags: [["h", susp.channelId], ["e", threadRoot, "", "root"], ...(susp.prevId ? [["e", susp.prevId, "", "reply"]] : []), ["depth", String(susp.triggerDepth + 1)]],
+        tags: [["h", susp.channelId], ["e", threadRoot, "", "root"], ...(susp.prevId ? [["e", susp.prevId, "", "reply"]] : []), ["depth", String(susp.triggerDepth + 1)], ["workflow", def.name]],
         content: `⏱ workflow **${def.name}**: nothing in this thread satisfied "${judgment.statement}" in time — remaining steps skipped.`,
       }).catch(() => {});
       return undefined;
@@ -535,6 +562,7 @@ export async function startWorkflowEngine(opts: EngineOptions): Promise<EngineHa
           ...(susp.rootId ? [["e", susp.rootId, "", "root"]] : []),
           ["e", susp.anchorId, "", "reply"],
           ["depth", String(susp.triggerDepth + 1)],
+          ["workflow", def.name],
         ],
         content: `⏱ workflow **${def.name}**: approval (${susp.emoji}) timed out — remaining steps skipped.`,
       }).catch(() => {});

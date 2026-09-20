@@ -3673,8 +3673,10 @@ function Bubble({
       {cardAt && <UserCard pk={msg.authorPk} at={cardAt} client={client} onProfile={() => onAuthor?.()} onClose={() => setCardAt(null)} />}
       <div className="bubble-head">
         <HoverCard client={client} pk={msg.authorPk} onProfile={onAuthor}>
-          <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
+          <button className="author" title="profile" onClick={onAuthor}>{msg.workflow ? "fez workflows" : msg.authorName}</button>
         </HoverCard>
+        {/* A workflow's post is the system speaking, whoever signed it — never "You". */}
+        {msg.workflow && <span className="msg-role system" title={`posted by the ${msg.workflow} workflow`}>{msg.workflow}</span>}
         {(() => {
           // Authority visible at a glance — owner/admin badge next to the
           // name. Workspace rank stays out of DMs: a private conversation

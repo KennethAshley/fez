@@ -87,6 +87,7 @@ import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillF
 import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
 import { governCompletion, governThread } from "./governor.js";
+import { parseWake, wakeEvent } from "./wake.js";
 import { buildRoster, decideRoute, isRouted, routerCall } from "./guide-router.js";
 import { askJudge, type JudgeQuestion } from "../../fez-orchestrator/src/typesafe.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
@@ -1313,7 +1314,9 @@ async function main() {
 
   // ── Observer CONTROL (kind 20005) — the reverse pipe: owner-encrypted
   // ephemeral commands. Decryption under the owner conversation key IS the
-  // authorization; the ±60s freshness window stops replays. v1: cancel.
+  // authorization; the ±60s freshness window stops replays. Commands:
+  // cancel (abort the in-flight turn) and wake (start a turn in a thread
+  // with no visible message — the workflow engine's silent summons).
   let cancelRequested = false;
   if (owner) {
     relay.subscribe([{ kinds: [KIND_OBSERVER_CONTROL], "#p": [myPubkey] }], (event) => {
@@ -1328,6 +1331,14 @@ async function main() {
           } else {
             console.log("⏹ cancel received — no turn in flight");
           }
+        } else if (frame.cmd === "wake") {
+          const wake = parseWake(frame, channels);
+          if (typeof wake === "string") {
+            console.log(`⏭ wake ignored: ${wake}`);
+            return;
+          }
+          console.log(`⏰ owner wake in thread ${wake.root.slice(0, 8)}: ${wake.text.slice(0, 70)}`);
+          void runtimeRefresh.run(() => handleChannelMessage(wakeEvent(wake, owner, myPubkey)));
         }
       } catch { /* not from our owner — ignore */ }
     });
@@ -1558,7 +1569,9 @@ async function main() {
   // global list. Draining a scope takes EVERYTHING ready and merges it
   // into one coherent turn. Transient turn failures requeue with a
   // backoff ladder (5s → 30s → 120s) before dead-lettering loudly.
-  type ChEvent = { id: string; pubkey: string; created_at: number; content: string; tags: string[][] };
+  type ChEvent = { id: string; pubkey: string; created_at: number; content: string; tags: string[][];
+    /** Set on a synthetic wake event: the real message the reply must answer (the event's own id is not on the relay). */
+    wake?: string };
   type DocTurn = { rootId: string; anchor: string; anchorContext?: string; slug?: string; writerPk?: string };
   interface ChannelTurnOptions {
     redispatch?: boolean;
@@ -1874,6 +1887,10 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
       if (!channelId || event.pubkey === myPubkey) return;
       if (!redispatch && seenEventIds.has(event.id)) return;
       seenEventIds.add(event.id);
+      // A wake (wake.ts): the owner's encrypted summons, already addressed
+      // to me; its id is synthetic, so the reply answers the real message.
+      const replyTo = event.wake;
+      const addressed = replyTo !== undefined;
       if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
 
       if (!workspace.isMember(event.pubkey)) {
@@ -1901,7 +1918,7 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         console.error("Result lookup pending:", error);
         return;
       }
-      if (isResult ? !completedRequest : !isMention(event)) {
+      if (isResult ? !completedRequest : !(addressed || isMention(event))) {
         if (workInbox.get(event.id)?.state === "queued") {
           workInbox.queued(event.id, attempts, Date.now() + 30_000);
           console.warn(`Pending work ${event.id} waiting for its original assignment`);
@@ -1987,9 +2004,10 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
       // Completion stage of the governor: a worker's successful result for
       // work I assigned at the top of a chain. If the judge is confident
       // the result satisfies the brief and the requester needs nothing
-      // more, accept it (signed chit) and close out with one templated
-      // line — no model turn. Error results, nested chains, and anything
-      // short of the bar run the full completion turn as before.
+      // more, accept it with a signed chit and nothing else — no model
+      // turn, no close-out line (the chit is the record; the "✓ Accepted"
+      // message it used to post was thread clutter). Error results, nested
+      // chains, and anything short of the bar run the full completion turn.
       if (governor && completedRequest && !assignedRequest && workResult(event, completedRequest) === "success") {
         const worker = who(event.pubkey);
         const verdict = await governCompletion(governor, personaId!, worker, completedRequest.content, event.content,
@@ -2003,17 +2021,8 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
               await relay.publish(client.signEvent(acceptWork(event, completedRequest, myPubkey,
                 `Auto-accepted: the judge rated the result as satisfying the brief (${verdict.values!.satisfies.toFixed(2)}).`)));
             }
-            const requester = completedRequest.tags.find(t => t[0] === "p")?.[1];
-            const closeOut = client.signEvent({
-              kind: KIND_CHANNEL_MESSAGE,
-              content: `✓ Accepted ${worker}'s result — see their message above.`,
-              tags: [["h", channelId], ["e", triggerRoot ?? event.id, "", "root"], ["e", event.id, "", "reply"],
-                ...(requester && requester !== event.pubkey ? [["p", requester]] : []), ["depth", String(triggerDepth + 1)]],
-            });
-            const outgoing = workInbox.delivery(event.id, () => closeOut);
-            await relay.publish(outgoing);
             workInbox.finish(event.id);
-            recent.add(scope, outgoing.id, `${who(outgoing.pubkey)}: ${outgoing.content}`);
+            console.log(`✓ accepted ${worker}'s result — chit only, no message`);
             return;
           } catch (error) {
             console.error("Auto-accept failed; running the completion turn instead:", error);
@@ -2142,7 +2151,7 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         : [
             ["h", channelId],
             ...(triggerRoot ? [["e", triggerRoot, "", "root"]] : []),
-            ["e", event.id, "", "reply"],
+            ["e", replyTo ?? event.id, "", "reply"],
             ["p", event.pubkey],
             ["depth", String(triggerDepth + 1)],
           ];
@@ -2365,7 +2374,7 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
           : { governor: "route-skip", ...routeOutcome, event: event.id }));
         publishObserver({ type: "turn", status: "started", ...(triggerRoot ? { root: triggerRoot } : {}) });
         const onUpdate = makeOnUpdate();
-        inputOrigin = doc ? undefined : { kind: "channel", channelId, rootId: triggerRoot ?? event.id, messageId: event.id };
+        inputOrigin = doc ? undefined : { kind: "channel", channelId, rootId: triggerRoot ?? event.id, messageId: replyTo ?? event.id };
         const rawReply = routed?.reply ?? await promptSession(
           scope,
           withNotice(buildPrompt, attachmentPrompt(event)),
@@ -2399,8 +2408,9 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         const profiles = !doc && addressees(reply).length ? await agentProfiles(
           [...workspace.workspace.members.keys()].filter(pk => workspace.isMember(pk)), checkedWorkEvents,
         ) : [];
+        // A wake's source id is synthetic: thread the reply from the real message it answers.
         const outgoingTags = doc ? [...replyTags, ...mentioned] : await agentMessageTags(reply, {
-          channel: channelId, sender: myPubkey, owner, source: event,
+          channel: channelId, sender: myPubkey, owner, source: replyTo ? { ...event, id: replyTo } : event,
           resolve: async name => resolveAgentName(name, profiles), isWorker: checkedSibling,
         });
         const handingOff = outgoingTags.some(t => t[0] === "task");

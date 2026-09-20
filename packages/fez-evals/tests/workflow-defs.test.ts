@@ -24,7 +24,7 @@ trigger: { on: message, filter: "deploy" }
 `;
 
 describe("workflow definition vocabulary", () => {
-  test("all six step types validate", () => {
+  test("all seven plain step types validate", () => {
     const defs = loadYaml(`${base}
 steps:
   - say: "starting {{trigger.author_name}}"
@@ -34,9 +34,21 @@ steps:
   - dm: { to: owner, message: "run {{steps.kickoff.output}} underway" }
   - webhook: { url: "https://example.com/hook", body: '{"msg":"{{trigger.text}}"}', timeout: 5s, id: hook }
   - wait_reaction: { emoji: "👍", from: owner, timeout: 1h }
+  - wake: { agent: writer, text: "one sentence please: {{trigger.text}}" }
 `);
     expect(defs).toHaveLength(1);
-    expect(defs[0].steps).toHaveLength(6);
+    expect(defs[0].steps).toHaveLength(7);
+  });
+
+  test.each([
+    ["a wake without text", `steps:\n  - wake: { agent: writer }`, /agent.*text/],
+    ["a wake without an agent", `steps:\n  - wake: { text: "hi" }`, /agent.*text/],
+  ])("rejects %s", (_label, body, pattern) => {
+    expect(() => loadYaml(`${base}${body}\n`)).toThrow(pattern);
+  });
+
+  test("a schedule run cannot wake before it has a thread", () => {
+    expect(() => loadYaml(`name: t\nchannel: general\ntrigger: { on: schedule, every: 1h }\nsteps:\n  - wake: { agent: writer, text: "hi" }\n`)).toThrow(/no thread to wake/);
   });
 
   test("webhook url templating is rejected — channel text can't steer destinations", () => {
