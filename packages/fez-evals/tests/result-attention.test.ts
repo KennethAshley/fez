@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { ownerResultTags } from "../../fez-mcp/src/result-attention.js";
+import { ownerResultTags } from "../../fez-client/src/work-completion.js";
 
 const OWNER = "o".repeat(64), FEZ = "f".repeat(64);
 

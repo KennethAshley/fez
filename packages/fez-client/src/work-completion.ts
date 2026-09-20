@@ -53,6 +53,21 @@ export function completeWork(request: WorkEvent, worker: string, opts: {
   ] };
 }
 
+/**
+ * A result is addressed to the requester — the agent that handed the work
+ * over — so when the owner asked @fez and fez delegated to drift, the owner's
+ * inbox never saw drift's answer: only fez was p-tagged, and fez accepted
+ * with a silent chit. When the owner started the thread and the requester
+ * is someone else, the result also tags the owner with an attention level,
+ * so the answer lands where the question came from. Shared by the MCP
+ * result tool and the runtime's fallback error result.
+ */
+export function ownerResultTags(opts: { rootAuthor: string | undefined; requester: string; owner: string | undefined; level: "now" | "later" | "none" }): string[][] {
+  const { rootAuthor, requester, owner, level } = opts;
+  if (!owner || rootAuthor !== owner || requester === owner) return [];
+  return [["p", owner], ["attention", level]];
+}
+
 /** Build an unsigned acceptance after the caller verifies the signed inputs
  * and checks the deliverable. Acceptance belongs to the requester, never to
  * the worker; the chit records that judgment, not independent quality proof. */

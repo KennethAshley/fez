@@ -77,7 +77,7 @@ import path from "node:path";
 import { addressees, isAddressedTo, withoutRepeatSummons } from "./addressing.js";
 import { workHistory } from "./work-history.js";
 import { DurableWork, workDirectory } from "../../../src/shared/durable-work.js";
-import { acceptWork, completeWork, workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
+import { acceptWork, completeWork, ownerResultTags, workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
 import { agentMessageTags, HANDOFF_BRIEF_LIMIT, resolveAgentName, agentProfiles } from "../../fez-client/src/agent-mentions.js";
 import { EvaluationError, evaluationExecutableAvailable, evaluationReady, evaluationRuntime, assertEvaluationToolsUnchanged, readEvaluationRequest, runEvaluation } from "./evaluation.js";
 import { runMeteredHire } from "./hire-usage.js";
@@ -2490,8 +2490,13 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         if (handingOff && triggerDepth + 1 >= MAX_CHAIN_DEPTH) throw new Error("Handoff reached the agent chain limit; no further worker was summoned.");
         if (assignedRequest && !handingOff) {
           const summary = `No terminal result was submitted with fez_complete_work. The last reply is unverified:\n${rawReply}`.slice(0, 8000);
-          const result = workInbox.delivery(assignedRequest.id, () => client.signEvent(completeWork(assignedRequest!, myPubkey,
-            { status: "error", summary, capability: "handoff", artifacts: [] })));
+          const template = completeWork(assignedRequest!, myPubkey, { status: "error", summary, capability: "handoff", artifacts: [] });
+          // Same rule as the MCP result tool: an owner who started the thread hears about it directly.
+          if (owner && assignedRequest.pubkey !== owner) {
+            const rootEvent = triggerRoot ? (await relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], ids: [triggerRoot] }]).catch(() => []))[0] : undefined;
+            template.tags.push(...ownerResultTags({ rootAuthor: rootEvent?.pubkey, requester: assignedRequest.pubkey, owner, level: "now" }));
+          }
+          const result = workInbox.delivery(assignedRequest.id, () => client.signEvent(template));
           await relay.publish(result);
           if (durable) workInbox.finish(event.id);
           recent.add(scope, result.id, `${who(result.pubkey)}: ${result.content}`);

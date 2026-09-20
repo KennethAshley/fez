@@ -11,7 +11,7 @@ import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
 import { gateOwnerQuestion } from "./owner-gate.js";
 import { askJudge } from "../../fez-orchestrator/src/typesafe.js";
 import { governAttention, type Attention } from "../../fez-acp/src/governor.js";
-import { ownerResultTags } from "./result-attention.js";
+import { ownerResultTags } from "../../fez-client/src/work-completion.js";
 import { attachedSkills, loadSkillBody } from "./skills.js";
 import { registerConnectionTools } from "./connections.js";
 import { DurableWork, workDirectory } from "../../../src/shared/durable-work.js";
