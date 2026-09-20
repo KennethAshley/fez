@@ -294,7 +294,13 @@ async function main() {
   // The judge gateway also serves routing (/chat/completions), so the guide routes by default wherever a judge is configured.
   const routerUrl = process.env.FEZ_ORCHESTRATOR_URL || (persona.extra.url as string | undefined) || judgeUrl;
   const routerModel = process.env.FEZ_ORCHESTRATOR_MODEL || "fez-router";
-  const guideRoute = routerUrl
+  // Only the GUIDE routes. With the router defaulting to the judge gateway,
+  // every persona would otherwise try to hand the owner's mention to a
+  // teammate instead of doing the work (seen: drift consulted the router
+  // on a question addressed to drift). A persona is the guide when it says
+  // so (`guide: true`), carries the orchestrator alias, or set its own router url.
+  const isGuide = String(persona.extra.guide) === "true" || (persona.aliases ?? []).includes("orchestrator") || !!persona.extra.url;
+  const guideRoute = routerUrl && isGuide
     ? routerCall(routerUrl, process.env.FEZ_ORCHESTRATOR_KEY || (persona.extra.key as string | undefined) || judgeKey)
     : undefined;
   // Resolve declared skills; the unresolved ones aren't silently dropped

@@ -119,11 +119,31 @@ export function buildFezPersonaMd(harness: string, model?: string, provider?: st
     "and must never ask for wallet access, and \"blocked on payment\" is never\n" +
     "true. Propose even when the agent is offline (say so in the why; the\n" +
     "hire waits).\n";
+  // What the guide must know cold. Found on a fresh workspace: asked how to
+  // invite someone, the guide said invites "aren't exposed to my tools" —
+  // it had no idea the composer has slash commands.
+  const basicsParagraph =
+    "\nFez basics you know cold (this is the product you are the guide for):\n" +
+    "- A workspace is one relay. Channels, threads, and DMs live on it; the workspace owner's key is the authority.\n" +
+    "- Composer slash commands: /invite <name|pubkey> [role] invites a member (creator only); /kick, /ban, /unban manage\n" +
+    "  membership; /dm <name> opens a direct message; /join <channel> hops by name; /watch <agent> shows an agent's live\n" +
+    "  activity; /agents, /pulse, /home, /doc, /mute (this channel), /status [text], /name <text>, /remind <30s|10m|2h> [note],\n" +
+    "  /schedule <10m|2h> <text>. Type / in the composer to see the list.\n" +
+    "- Agents are personas: one markdown file each in ~/.fez/personas, edited in Agents → edit agent (harness, model,\n" +
+    "  description, tools). Mention an agent to give it work; the room routes @fez tasks to the right agent, checks\n" +
+    "  results, and accepts them without ceremony.\n" +
+    "- Extensions and skills install with `fez install <npm package>`; the Agents page shows what each persona has attached.\n" +
+    "- Automations live in ~/.fez/workflows as YAML and run inside the desktop.\n" +
+    "When a how-to question is about a person doing something in the app, answer with the command or the click; never\n" +
+    "say a feature \"isn't exposed to my tools\".\n\n" +
+    "An @mention in your reply is a handoff: the room turns it into an assignment and that agent starts working. When\n" +
+    "you are only describing a teammate (\"drift searches the web\"), write the name without the @.\n";
   return (
-    `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\nmcpServers: [bazaar=npm:@fezchat/bazaar]\n` +
+    `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\nguide: true\nmcpServers: [bazaar=npm:@fezchat/bazaar]\n` +
     `description: your guide to fez — ask how anything works, or hand over a task and the right agent gets it\n---\n` +
     `You are @fez, the guide for this fez workspace. Answer questions about fez\n` +
     `plainly; for tasks, name the persona best suited and offer to bring it in.\n` +
+    basicsParagraph +
     marketParagraph
   );
 }
