@@ -67,30 +67,30 @@ statement scored 0–1, logged and traced, thresholded by you. Set
 (the router key); a workflow that uses any of these refuses to start
 without them.
 
+A workflow should add information the thread does not already have. An
+earlier version of this example woke a writer to restate every research
+finding in one sentence; it fired reliably and added nothing — a summary
+of a good answer is noise at any bar. Plumbing that carries news is the
+right shape: a blocker nobody may be watching, an approval, a schedule.
+
 ```yaml
-name: judged-followup
+name: blocked-work
 channel: general
 trigger:
   on: message
   from: researcher
-  when: "the message reports a finding with specific facts, not a question or a handoff"
-  when_at: 0.7          # default 0.8
+  when: "the author says they could not finish, hit an obstacle, or need something before they can continue"
+  when_at: 0.8          # default 0.8
 steps:
-  - judge:
-      ask:
-        worth_summary: "a one-sentence version would help the person who asked"
-        blocker: "the message reports a blocker"
-    id: check
-  - wake:
-      agent: writer
-      # The agent already sees the thread; point at the answer rather than pasting it.
-      text: "@writer one sentence for the asker summarizing the answer just above — the sentence only, no questions."
-    if: 'judge.worth_summary >= 0.6 && judge.blocker < 0.3'
+  - dm:
+      to: owner
+      message: "{{trigger.author_name}} is blocked in #general: {{trigger.text}}"
   - wait_until:
-      statement: "the message is a one-sentence plain-language summary, not a question or an acknowledgment"
-      from: writer        # optional; default any member
-      timeout: 10m        # default 24h
+      statement: "the message says the obstacle is resolved or the work is finished"
+      from: researcher    # optional; default any member
+      timeout: 4h         # default 24h
       at: 0.8             # default 0.8
+  - dm: { to: owner, message: "{{latest.author_name}} is unblocked — see the thread." }
 ```
 
 - `when:` filters message triggers by meaning where a regex would miss
@@ -116,6 +116,13 @@ the owner had asked. Prefer it to `say: "@agent …"` whenever the message
 exists only to summon. Only the desktop's in-app host can send one — it
 runs as the owner, and agents accept a wake only from their owner — so
 the standalone service fails such a run instead of posting a summons.
+
+```yaml
+  - wake:
+      agent: researcher
+      # The agent already sees the thread; point at what is missing rather than pasting text.
+      text: "@researcher the ask above requested sources — add links for the claims in your last message."
+```
 
 Anything a workflow does say (approval requests, timeout notices) carries
 a `["workflow", <name>]` tag; the desktop renders those as **fez
