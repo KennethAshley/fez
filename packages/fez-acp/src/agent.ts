@@ -43,6 +43,7 @@ import {
   KIND_OBSERVER_CONTROL,
   KIND_TURN_METRIC,
   KIND_REACTION,
+  KIND_CHIT,
   KIND_TYPING,
   KIND_PRESENCE,
   KIND_GIFT_WRAP,
@@ -76,7 +77,7 @@ import path from "node:path";
 import { addressees, isAddressedTo, withoutRepeatSummons } from "./addressing.js";
 import { workHistory } from "./work-history.js";
 import { DurableWork, workDirectory } from "../../../src/shared/durable-work.js";
-import { completeWork, workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
+import { acceptWork, completeWork, workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
 import { agentMessageTags, HANDOFF_BRIEF_LIMIT, resolveAgentName, agentProfiles } from "../../fez-client/src/agent-mentions.js";
 import { EvaluationError, evaluationExecutableAvailable, evaluationReady, evaluationRuntime, assertEvaluationToolsUnchanged, readEvaluationRequest, runEvaluation } from "./evaluation.js";
 import { runMeteredHire } from "./hire-usage.js";
@@ -85,7 +86,7 @@ import { memoryPromptParts, memoryStateFromHeads, type CoreMemoryState } from ".
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
 import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
-import { governThread } from "./governor.js";
+import { governCompletion, governThread } from "./governor.js";
 import { askJudge, type JudgeQuestion } from "../../fez-orchestrator/src/typesafe.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { finalizeEvent } from "nostr-tools/pure";
@@ -1958,6 +1959,43 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
           scheduleDrain(30_000);
           console.error("Prior delivery lookup pending:", error);
           return;
+        }
+      }
+
+      // Completion stage of the governor: a worker's successful result for
+      // work I assigned at the top of a chain. If the judge is confident
+      // the result satisfies the brief and the requester needs nothing
+      // more, accept it (signed chit) and close out with one templated
+      // line — no model turn. Error results, nested chains, and anything
+      // short of the bar run the full completion turn as before.
+      if (governor && completedRequest && !assignedRequest && workResult(event, completedRequest) === "success") {
+        const worker = who(event.pubkey);
+        const verdict = await governCompletion(governor, personaId!, worker, completedRequest.content, event.content,
+          recent.get(scope, `${worker}: ${event.content}`));
+        console.log(JSON.stringify({ governor: verdict.outcome, stage: "completion", reason: verdict.reason, values: verdict.values,
+          latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+        if (verdict.outcome === "accept") {
+          try {
+            const prior = await relay.query([{ kinds: [KIND_CHIT], authors: [myPubkey], "#e": [event.id] }]).catch(() => []);
+            if (!prior.some(e => e.tags.some(t => t[0] === "p" && t[1] === event.pubkey))) {
+              await relay.publish(client.signEvent(acceptWork(event, completedRequest, myPubkey,
+                `Auto-accepted: the judge rated the result as satisfying the brief (${verdict.values!.satisfies.toFixed(2)}).`)));
+            }
+            const requester = completedRequest.tags.find(t => t[0] === "p")?.[1];
+            const closeOut = client.signEvent({
+              kind: KIND_CHANNEL_MESSAGE,
+              content: `✓ Accepted ${worker}'s result — see their message above.`,
+              tags: [["h", channelId], ["e", triggerRoot ?? event.id, "", "root"], ["e", event.id, "", "reply"],
+                ...(requester && requester !== event.pubkey ? [["p", requester]] : []), ["depth", String(triggerDepth + 1)]],
+            });
+            const outgoing = workInbox.delivery(event.id, () => closeOut);
+            await relay.publish(outgoing);
+            workInbox.finish(event.id);
+            recent.add(scope, outgoing.id, `${who(outgoing.pubkey)}: ${outgoing.content}`);
+            return;
+          } catch (error) {
+            console.error("Auto-accept failed; running the completion turn instead:", error);
+          }
         }
       }
       const deferDurable = () => {

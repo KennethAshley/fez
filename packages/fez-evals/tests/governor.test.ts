@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { governThread, governorDecision, governorQuestions, governorState } from "../../fez-acp/src/governor.js";
+import {
+  completionDecision, completionQuestions, governCompletion,
+  governThread, governorDecision, governorQuestions, governorState,
+} from "../../fez-acp/src/governor.js";
 import type { JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
 
-const result = (values: { needs_me: number; resolved: number; contradiction: number }): JudgeResult => ({
+const nouls = (values: Record<string, number>): JudgeResult => ({
   model: "jev-1.13.0", inputTokens: 10, outputTokens: 3,
-  answers: {
-    needs_me: { type: "noul", noul: values.needs_me },
-    resolved: { type: "noul", noul: values.resolved },
-    contradiction: { type: "noul", noul: values.contradiction },
-  },
+  answers: Object.fromEntries(Object.entries(values).map(([k, v]) => [k, { type: "noul", noul: v }])),
 });
 
 describe("governorDecision", () => {
@@ -49,7 +48,7 @@ describe("governorState", () => {
 
 describe("governThread", () => {
   it("returns the decision with the raw values for calibration logging", async () => {
-    const verdict = await governThread(async () => result({ needs_me: 0.1, resolved: 0.2, contradiction: 0.0 }), "drift", ["quill: thanks!"]);
+    const verdict = await governThread(async () => nouls({ needs_me: 0.1, resolved: 0.2, contradiction: 0.0 }), "drift", ["quill: thanks!"]);
     expect(verdict).toMatchObject({ outcome: "skip", values: { needs_me: 0.1, resolved: 0.2, contradiction: 0 } });
     expect(typeof verdict.latencyMs).toBe("number");
   });
@@ -57,5 +56,35 @@ describe("governThread", () => {
     const verdict = await governThread(async () => { throw new Error("Judge HTTP 503"); }, "drift", ["quill: thanks!"]);
     expect(verdict.outcome).toBe("run");
     expect(verdict.error).toContain("503");
+  });
+});
+
+describe("completionDecision", () => {
+  it.each([
+    [{ satisfies: 0.95, owner_needs_more: 0.1 }, "accept"],
+    [{ satisfies: 0.95, owner_needs_more: 0.5 }, "run"],
+    [{ satisfies: 0.8, owner_needs_more: 0.1 }, "run"],
+    [{ satisfies: 0.86, owner_needs_more: 0.1 }, "accept"],
+    [{ satisfies: 0.3, owner_needs_more: 0.9 }, "run"],
+  ])("%o → %s", (values, outcome) => {
+    expect(completionDecision(values).outcome).toBe(outcome);
+  });
+});
+
+describe("governCompletion", () => {
+  it("sends brief, result and thread as state and names both agents", async () => {
+    let seen: { state: unknown; questions: Record<string, unknown> } | undefined;
+    const verdict = await governCompletion(async (state, questions) => { seen = { state, questions }; return nouls({ satisfies: 0.97, owner_needs_more: 0.05 }); },
+      "drift", "quill", "summarize X in two sentences", "X is ... Y is ...", ["Raleigh: @drift ...", "drift: @quill ...", "quill: X is ... Y is ..."]);
+    expect(verdict.outcome).toBe("accept");
+    expect(seen?.state).toMatchObject({ brief: "summarize X in two sentences", result: "X is ... Y is ..." });
+    expect((seen?.state as { thread: string[] }).thread).toHaveLength(3);
+    expect(Object.keys(seen!.questions)).toEqual(["satisfies", "owner_needs_more"]);
+    expect(JSON.stringify(completionQuestions("drift", "quill"))).toContain("quill");
+  });
+  it("fails open to the full completion turn on a judge error", async () => {
+    const verdict = await governCompletion(async () => { throw new Error("Judge HTTP 504"); }, "drift", "quill", "b", "r", []);
+    expect(verdict.outcome).toBe("run");
+    expect(verdict.error).toContain("504");
   });
 });

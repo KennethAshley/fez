@@ -1,10 +1,15 @@
 /**
- * Thread governor: before a fellow agent's mention costs a harness turn,
- * ask the judge three yes/no questions about the thread and decide
+ * Thread governor: before a fellow agent's message costs a harness turn,
+ * ask the judge a few yes/no questions about the thread and decide
  * whether the turn is worth running. Pure logic here; agent.ts wires it
  * to the relay and the judge. Fails open — any judge problem runs the
  * turn exactly as before, so the governor can only remove turns that
  * would have been noise, never block work.
+ *
+ * Two stages:
+ *  - mention:    a plain sibling mention → run / skip / escalate
+ *  - completion: a worker's successful result for work I assigned →
+ *                accept (chit + one templated line, no model turn) / run
  */
 import type { JudgeQuestion, JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
 
@@ -67,6 +72,16 @@ export function governorDecision(values: GovernorValues): { outcome: GovernorOut
   return { outcome: "run", reason: `needs me ${values.needs_me.toFixed(2)}` };
 }
 
+function nouls<K extends string>(result: JudgeResult, names: readonly K[]): Record<K, number> {
+  const out = {} as Record<K, number>;
+  for (const name of names) {
+    const answer = result.answers[name];
+    if (answer?.type !== "noul") throw new Error(`governor: missing noul ${name}`);
+    out[name] = answer.noul;
+  }
+  return out;
+}
+
 export async function governThread(
   ask: (state: unknown, questions: Record<string, JudgeQuestion>) => Promise<JudgeResult>,
   me: string,
@@ -75,13 +90,77 @@ export async function governThread(
   const startedAt = Date.now();
   try {
     const result = await ask(governorState(lines), governorQuestions(me));
-    const noul = (name: keyof GovernorValues): number => {
-      const answer = result.answers[name];
-      if (answer?.type !== "noul") throw new Error(`governor: missing noul ${name}`);
-      return answer.noul;
-    };
-    const values = { needs_me: noul("needs_me"), resolved: noul("resolved"), contradiction: noul("contradiction") };
+    const values = nouls(result, ["needs_me", "resolved", "contradiction"] as const);
     return { ...governorDecision(values), values, latencyMs: Date.now() - startedAt };
+  } catch (error) {
+    return { outcome: "run", reason: "judge unavailable", latencyMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// ── completion stage ─────────────────────────────────────────────────
+
+export type CompletionOutcome = "accept" | "run";
+export interface CompletionValues { satisfies: number; owner_needs_more: number }
+export interface CompletionVerdict {
+  outcome: CompletionOutcome;
+  reason: string;
+  values?: CompletionValues;
+  latencyMs: number;
+  error?: string;
+}
+
+// ponytail: same story — priors, logged, calibrate later. Acceptance is
+// the one place the judge makes a call the model used to make, so the
+// bar is deliberately high and anything short of it runs the turn.
+export const ACCEPT_AT = 0.85;
+export const OWNER_NEEDS_MORE_BELOW = 0.3;
+
+export function completionQuestions(me: string, worker: string): Record<"satisfies" | "owner_needs_more", JudgeQuestion> {
+  return {
+    // Wording chosen against five live cases (2026-09-20): substance-only
+    // scored the two correct results 0.89/0.94 and every bad one ≤ 0.04;
+    // wordings that let format count dragged a correct result to 0.57.
+    satisfies: {
+      type: "noul",
+      instructions: {
+        requester: me, worker,
+        question: "Does `result` state every point `brief` asked `worker` to cover, consistent with the facts in `brief`?",
+        ignore: "sentence count, headings, phrasing, and any extra correct detail",
+      },
+      criteria: {
+        true: "All requested points are stated and match the brief's facts.",
+        false: "A requested point is absent or contradicts the brief, or the worker asked a question or reported a blocker instead.",
+      },
+    },
+    owner_needs_more: {
+      type: "noul",
+      instructions: "Does the person who originally asked (see the start of `thread`) still need information that is not already in `result`?",
+    },
+  };
+}
+
+export function completionDecision(values: CompletionValues): { outcome: CompletionOutcome; reason: string } {
+  if (values.satisfies >= ACCEPT_AT && values.owner_needs_more < OWNER_NEEDS_MORE_BELOW) {
+    return { outcome: "accept", reason: `satisfies ${values.satisfies.toFixed(2)}, owner needs more ${values.owner_needs_more.toFixed(2)}` };
+  }
+  return { outcome: "run", reason: `satisfies ${values.satisfies.toFixed(2)}, owner needs more ${values.owner_needs_more.toFixed(2)}` };
+}
+
+export async function governCompletion(
+  ask: (state: unknown, questions: Record<string, JudgeQuestion>) => Promise<JudgeResult>,
+  me: string,
+  worker: string,
+  brief: string,
+  result: string,
+  lines: readonly string[],
+): Promise<CompletionVerdict> {
+  const startedAt = Date.now();
+  try {
+    const state = { brief: brief.slice(0, STATE_CHARS), result: result.slice(0, STATE_CHARS), ...governorState(lines) };
+    const answers = await ask(state, completionQuestions(me, worker));
+    const values = nouls(answers, ["satisfies", "owner_needs_more"] as const);
+    return { ...completionDecision(values), values, latencyMs: Date.now() - startedAt };
   } catch (error) {
     return { outcome: "run", reason: "judge unavailable", latencyMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error) };
