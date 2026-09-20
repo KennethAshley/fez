@@ -3,6 +3,9 @@
  * The router's authenticated, rate-limited front door. TypeSafe selects
  * agents; local llama-server covers service failures and richer request
  * shapes. Both return the existing OpenAI-compatible tool-call contract.
+ * `/v1/judge` passes arbitrary noul/choice/score questions through to
+ * TypeSafe for agents that hold only the router key — no fallback, no
+ * generation; a failure is the caller's cue to behave as before.
  * Build through deploy-router.sh: it bundles the shared TypeScript client.
  *
  * Env:
@@ -12,6 +15,7 @@
  *   TYPESAFE_API_KEY enables TypeSafe as the primary routing model
  *   TYPESAFE_MODEL  pinned model (default jev-1.13.0)
  *   TYPESAFE_TIMEOUT_MS time before local fallback (default 2000)
+ *   JUDGE_TIMEOUT_MS  judge route timeout, no fallback (default 5000)
  *   RATE_PER_MIN    requests per IP per minute (default 20)
  *   RATE_BURST      concurrent in-flight requests per IP (default 2)
  *   MAX_TOKENS      hard output cap (default 96)
@@ -19,7 +23,7 @@
  */
 import http from "node:http";
 import { randomUUID } from "node:crypto";
-import { chooseTypeSafeRoute } from "../../packages/fez-orchestrator/src/typesafe.js";
+import { chooseTypeSafeRoute, judge, validateJudgeQuestions } from "../../packages/fez-orchestrator/src/typesafe.js";
 import { ROUTER_SYSTEM } from "../../packages/fez-orchestrator/src/route-logic.js";
 
 const PORT = Number(process.env.PORT || 8081);
@@ -28,6 +32,7 @@ const API_KEY = process.env.ROUTER_API_KEY || "";
 const TYPESAFE_KEY = process.env.TYPESAFE_API_KEY || "";
 const TYPESAFE_MODEL = process.env.TYPESAFE_MODEL || "jev-1.13.0";
 const TYPESAFE_TIMEOUT_MS = Number(process.env.TYPESAFE_TIMEOUT_MS || 2000);
+const JUDGE_TIMEOUT_MS = Number(process.env.JUDGE_TIMEOUT_MS || 5000);
 const RATE_PER_MIN = Number(process.env.RATE_PER_MIN || 20);
 const RATE_BURST = Number(process.env.RATE_BURST || 2);
 const MAX_TOKENS = Number(process.env.MAX_TOKENS || 96);
@@ -107,6 +112,43 @@ function routingInput(body) {
   return { message: users[0].content, criteria };
 }
 
+/**
+ * Generic judgment. The body is TypeSafe's own shape (state + questions)
+ * and the reply is TypeSafe's own answers, validated on the way back so
+ * a caller never sees a partial or mistyped result. Deliberately no
+ * llama fallback: a small chat model can't produce calibrated
+ * probabilities, and a caller that can't get a judgment keeps doing what
+ * it did before there was one.
+ */
+async function handleJudge(res, ip, body) {
+  if (!TYPESAFE_KEY) return fail(res, 503, "judge unavailable: TypeSafe is not configured", "api_error");
+  if (body.state === undefined || body.state === null) return fail(res, 400, "state is required", "invalid_request_error");
+  try {
+    validateJudgeQuestions(body.questions);
+  } catch (err) {
+    return fail(res, 400, err?.message || "invalid questions", "invalid_request_error");
+  }
+  inflight.set(ip, (inflight.get(ip) || 0) + 1);
+  const startedAt = Date.now();
+  const names = Object.keys(body.questions);
+  try {
+    const result = await judge(TYPESAFE_KEY, body.state, body.questions, { model: TYPESAFE_MODEL, timeoutMs: JUDGE_TIMEOUT_MS });
+    res.setHeader("X-Fez-Judge-Model", result.model);
+    logRoute({ route: "judge", questions: names, inputTokens: result.inputTokens, outputTokens: result.outputTokens,
+      latencyMs: Date.now() - startedAt });
+    return json(res, 200, { model: result.model, answers: result.answers,
+      usage: { input_tokens: result.inputTokens, output_tokens: result.outputTokens } });
+  } catch (err) {
+    const timedOut = err?.name === "TimeoutError" || err?.name === "AbortError";
+    logRoute({ route: "judge", questions: names, error: err?.message || String(err), latencyMs: Date.now() - startedAt });
+    return fail(res, timedOut ? 504 : 502, timedOut ? "judge timed out" : "judge upstream unavailable", "api_error");
+  } finally {
+    const now = (inflight.get(ip) || 1) - 1;
+    if (now <= 0) inflight.delete(ip);
+    else inflight.set(ip, now);
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -119,7 +161,8 @@ const server = http.createServer(async (req, res) => {
   // because this box is a routing appliance, not a public playground.
   const isModels = path === "/v1/models" || path === "/models";
   const isChat = path === "/v1/chat/completions" || path === "/chat/completions";
-  if (!isModels && !isChat) return fail(res, 404, `no route for ${path}`, "invalid_request_error");
+  const isJudge = path === "/v1/judge" || path === "/judge";
+  if (!isModels && !isChat && !isJudge) return fail(res, 404, `no route for ${path}`, "invalid_request_error");
 
   if (API_KEY) {
     const auth = req.headers.authorization || "";
@@ -175,6 +218,8 @@ const server = http.createServer(async (req, res) => {
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) return fail(res, 400, "body must be an object", "invalid_request_error");
 
+  if (isJudge) return handleJudge(res, ip, body);
+
   // The clamps. max_tokens is a ceiling, not an override — a caller
   // asking for less is honoured. Streaming is refused rather than
   // silently dropped: a router returns one tool call, and a client that
@@ -195,8 +240,9 @@ const server = http.createServer(async (req, res) => {
         const picked = body.tools.find(t => t.function.name === decision.choice).function;
         const args = picked.parameters.properties?.task ? { task: input.message } : {};
         res.setHeader("X-Fez-Router-Backend", "typesafe");
+        res.setHeader("X-Fez-Router-Confidence", String(decision.confidence));
         logRoute({ backend: "typesafe", agent: decision.choice, confidence: decision.confidence,
-          latencyMs: Date.now() - startedAt });
+          probabilities: decision.probabilities, latencyMs: Date.now() - startedAt });
         return json(res, 200, { id: `chatcmpl-${randomUUID()}`, object: "chat.completion",
           created: Math.floor(Date.now() / 1000), model: TYPESAFE_MODEL,
           choices: [{ index: 0, message: { role: "assistant", content: null, tool_calls: [
