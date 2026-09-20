@@ -30,7 +30,7 @@ const PI_VERSION = "0.84.2"; // @earendil-works/pi-coding-agent
 const PI_ACP_VERSION = "0.0.33"; // pi-acp (the ACP↔pi-rpc bridge)
 // The bundle's identity: any shipped binary changing must change this
 // string, or installed apps skip the recopy.
-const BUNDLE_VERSION = `${PI_VERSION}+svc29`; // svc29: shared browser turn lifecycle and no duplicate peer summons
+const BUNDLE_VERSION = `${PI_VERSION}+svc31`; // svc31: fez-agent with judge governor + completion auto-accept, token log line (svc30 was a local-only build)
 const PI_REPO = "https://github.com/earendil-works/pi.git";
 // Pin a tag or commit SHA for reproducibility. Defaults to the release
 // tag matching PI_VERSION (the version check below still guards a tag
