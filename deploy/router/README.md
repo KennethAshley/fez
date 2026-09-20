@@ -106,8 +106,29 @@ Qwen as the primary model without changing client configuration.
 
 `/health` reports the configured primary model, not a provider availability probe.
 Authenticated completions include `X-Fez-Router-Backend: typesafe` or `local` to
-show which backend actually answered. `/v1/models` keeps the stable `fez-router`
-alias and remains available during a local-model outage when TypeSafe is enabled.
+show which backend actually answered, and `X-Fez-Router-Confidence` when TypeSafe
+did. `/v1/models` keeps the stable `fez-router` alias and remains available
+during a local-model outage when TypeSafe is enabled.
+
+## Judge route
+
+`POST /v1/judge` passes TypeSafe's own `{ state, questions }` shape through to
+Jev and returns its `answers` and `usage` unchanged. Question types are `noul`,
+`choice`, and `score`; at most 32 questions per call; same bearer key and
+per-IP limit as routing. There is no local fallback: a 5xx means the caller
+should do whatever it did before it had a judge. `JUDGE_TIMEOUT_MS` (default
+5000) bounds the call. Each call logs question names, tokens, and latency,
+never content.
+
+Agents reach it through `askJudge` in the orchestrator's TypeSafe client. The
+first consumer is the thread governor in fez-acp: a persona with
+`judge: <router url>/v1` and `judgeKey: <router key>` in its frontmatter (or
+`FEZ_JUDGE_URL` / `FEZ_JUDGE_KEY` in the environment) asks three yes/no
+questions before a fellow agent's mention costs a harness turn, and skips
+turns that would only acknowledge or re-answer a resolved thread. The
+governor never applies to the owner's messages or to assignment/result
+events, and a judge failure runs the turn as before. Raise `RATE_PER_MIN`
+on the box once agents use it; routing traffic alone was sized for 20/min.
 
 ## Operating it
 

@@ -43,6 +43,7 @@ import {
   KIND_OBSERVER_CONTROL,
   KIND_TURN_METRIC,
   KIND_REACTION,
+  KIND_CHIT,
   KIND_TYPING,
   KIND_PRESENCE,
   KIND_GIFT_WRAP,
@@ -76,7 +77,7 @@ import path from "node:path";
 import { addressees, isAddressedTo, withoutRepeatSummons } from "./addressing.js";
 import { workHistory } from "./work-history.js";
 import { DurableWork, workDirectory } from "../../../src/shared/durable-work.js";
-import { completeWork, workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
+import { acceptWork, completeWork, workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
 import { agentMessageTags, HANDOFF_BRIEF_LIMIT, resolveAgentName, agentProfiles } from "../../fez-client/src/agent-mentions.js";
 import { EvaluationError, evaluationExecutableAvailable, evaluationReady, evaluationRuntime, assertEvaluationToolsUnchanged, readEvaluationRequest, runEvaluation } from "./evaluation.js";
 import { runMeteredHire } from "./hire-usage.js";
@@ -85,6 +86,8 @@ import { memoryPromptParts, memoryStateFromHeads, type CoreMemoryState } from ".
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
 import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
+import { governCompletion, governThread } from "./governor.js";
+import { askJudge, type JudgeQuestion } from "../../fez-orchestrator/src/typesafe.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { finalizeEvent } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
@@ -260,6 +263,14 @@ async function main() {
   // survives the cap wastes the budget on plumbing.
   const capReply = (text: string): string => capReplyPure(stripSelfAddress(stripHarnessNoise(text), personaId), maxReplyChars);
   const shareLevel = (persona.extra.shareLevel as string | undefined)?.trim();
+  // Thread governor: a fellow agent's mention is judged before it costs a
+  // harness turn (governor.ts). Same key as routing; the provider key
+  // stays on the router box. Unset = off, and nothing below changes.
+  const judgeUrl = process.env.FEZ_JUDGE_URL || (persona.extra.judge as string | undefined);
+  const judgeKey = process.env.FEZ_JUDGE_KEY || (persona.extra.judgeKey as string | undefined);
+  const governor = judgeUrl && judgeKey
+    ? (state: unknown, questions: Record<string, JudgeQuestion>) => askJudge(judgeUrl, judgeKey, state, questions, { timeoutMs: 4000 })
+    : undefined;
   // Resolve declared skills; the unresolved ones aren't silently dropped
   // — the agent is told about the gap so it can SAY SO when a task needs
   // one, instead of quietly faking its way through (the user's only
@@ -1239,6 +1250,10 @@ async function main() {
     // The tally moves whether or not there is an owner to report to —
     // enforcement must not depend on visibility.
     if (turnUsage?.costUsd) recordSpend(turnUsage.costUsd);
+    // Plain-text twin of the encrypted metric, so tokens per turn can be
+    // read straight from the agent log without the owner's key.
+    console.log(JSON.stringify({ turn: status, agent: personaId, durationMs: Date.now() - startedAtMs, replyChars,
+      ...(turnUsage ?? {}), ...(trigger ? { event: trigger } : {}) }));
     if (!owner) return;
     void relay
       .publish(
@@ -1901,6 +1916,29 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         return;
       }
 
+      // Thread governor — only a plain mention from a verified sibling.
+      // Owner messages and work-protocol events (assignments, results)
+      // are never governed: those must run. Every verdict is logged with
+      // its raw values so the thresholds can be calibrated from traffic.
+      if (governor && !doc && !completedRequest && !assignedRequest && event.pubkey !== owner && await isSibling(event.pubkey)) {
+        const verdict = await governThread(governor, personaId!, recent.get(scope, `${who(event.pubkey)}: ${event.content}`));
+        console.log(JSON.stringify({ governor: verdict.outcome, reason: verdict.reason, values: verdict.values,
+          latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+        if (verdict.outcome === "skip") return;
+        if (verdict.outcome === "escalate") {
+          if (owner) {
+            const note = client.signEvent({
+              kind: KIND_CHANNEL_MESSAGE,
+              tags: [["h", channelId], ["e", triggerRoot ?? event.id, "", "root"], ["e", event.id, "", "reply"],
+                ["p", owner], ["depth", String(triggerDepth + 1)]],
+              content: `⚠️ ${who(event.pubkey)} and I seem to disagree in this thread (${verdict.reason}). Pausing until you weigh in.`,
+            });
+            await relay.publish(note).catch(() => {});
+          }
+          return;
+        }
+      }
+
       const durable = !doc && (!!completedRequest || event.tags.some(t => t[0] === "task" && t[1] === myPubkey));
       if (durable) {
         const prior = workInbox.get(event.id);
@@ -1925,6 +1963,43 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
           scheduleDrain(30_000);
           console.error("Prior delivery lookup pending:", error);
           return;
+        }
+      }
+
+      // Completion stage of the governor: a worker's successful result for
+      // work I assigned at the top of a chain. If the judge is confident
+      // the result satisfies the brief and the requester needs nothing
+      // more, accept it (signed chit) and close out with one templated
+      // line — no model turn. Error results, nested chains, and anything
+      // short of the bar run the full completion turn as before.
+      if (governor && completedRequest && !assignedRequest && workResult(event, completedRequest) === "success") {
+        const worker = who(event.pubkey);
+        const verdict = await governCompletion(governor, personaId!, worker, completedRequest.content, event.content,
+          recent.get(scope, `${worker}: ${event.content}`));
+        console.log(JSON.stringify({ governor: verdict.outcome, stage: "completion", reason: verdict.reason, values: verdict.values,
+          latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+        if (verdict.outcome === "accept") {
+          try {
+            const prior = await relay.query([{ kinds: [KIND_CHIT], authors: [myPubkey], "#e": [event.id] }]).catch(() => []);
+            if (!prior.some(e => e.tags.some(t => t[0] === "p" && t[1] === event.pubkey))) {
+              await relay.publish(client.signEvent(acceptWork(event, completedRequest, myPubkey,
+                `Auto-accepted: the judge rated the result as satisfying the brief (${verdict.values!.satisfies.toFixed(2)}).`)));
+            }
+            const requester = completedRequest.tags.find(t => t[0] === "p")?.[1];
+            const closeOut = client.signEvent({
+              kind: KIND_CHANNEL_MESSAGE,
+              content: `✓ Accepted ${worker}'s result — see their message above.`,
+              tags: [["h", channelId], ["e", triggerRoot ?? event.id, "", "root"], ["e", event.id, "", "reply"],
+                ...(requester && requester !== event.pubkey ? [["p", requester]] : []), ["depth", String(triggerDepth + 1)]],
+            });
+            const outgoing = workInbox.delivery(event.id, () => closeOut);
+            await relay.publish(outgoing);
+            workInbox.finish(event.id);
+            recent.add(scope, outgoing.id, `${who(outgoing.pubkey)}: ${outgoing.content}`);
+            return;
+          } catch (error) {
+            console.error("Auto-accept failed; running the completion turn instead:", error);
+          }
         }
       }
       const deferDurable = () => {
@@ -2120,7 +2195,7 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
           const memory = memoryPromptParts(await coreMemoryState());
           const sourceNotice = `Current source message ID: ${event.id}; channel: ${untrustedValue(channelId)}; author: ${event.pubkey}${event.pubkey === owner ? " (your owner)" : ""}.`;
           const workNotice = (completedRequest
-            ? `Delegated result ${event.id} for request ${completedRequest.id}: ${workResult(event, completedRequest)}. Check the deliverable against the original request: ${untrustedValue(completedRequest.content)}. If it meets the request, call fez_accept_work with resultId=${event.id} and a note naming what you actually checked. Then deliver the outcome to the original user. Submission alone is not acceptance. Do not @mention the worker to acknowledge it.`
+            ? `Delegated result ${event.id} for request ${completedRequest.id}: ${workResult(event, completedRequest)}. Check the deliverable against the original request: ${untrustedValue(completedRequest.content)}. If it meets the request, call fez_accept_work with resultId=${event.id} and a note naming what you actually checked. Then close out to the original user in one sentence: say the result is accepted and point them to the worker's message. Do not restate the deliverable; they can already see it. Submission alone is not acceptance. Do not @mention the worker to acknowledge it.`
             : !doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey)
               ? `Assigned work requestId=${event.id}. When finished, call fez_complete_work with this requestId, status success or error, summary, capability, and artifact URLs/event ids. The summary is the actual reply delivered to the requester: include your full answer or deliverable and useful details, not a report about answering them (say "Hello!" rather than "Greeted the user"). This publishes your result automatically; do not put the answer in a separate message after the tool, or send a separate callback or acceptance. Report blockers as error, never as success.`
               : "") + (completedRequest && assignedRequest
@@ -2170,7 +2245,7 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
             `- Doc comments: a native document turn already includes its prior discussion, and your normal reply is posted into its root — do not call fez_comment_reply there. Use fez_doc_comments and fez_comment_reply only for a thread you discover outside a native document turn. Resolve only when the request is actually done.`,
             UNTRUSTED_CONTENT_NOTICE,
             ...(persona.harness === "pi" && mcpServers.length > 0
-              ? [`- MCP tools: your attached tools (${mcpServers.map((m) => m.name).join(", ")}) live behind the \`mcp\` proxy, not as direct functions. To use one, first call mcp({ search: "<capability>" }) to find the exact tool name (search by what you want to DO — "search", "fetch", "pay" — not by your query text), then call it. Don't reach for shell curl/wget when a tool exists; discover it through mcp first.`]
+              ? [`- MCP tools: your attached tools (${mcpServers.map((m) => m.name).join(", ")}) live behind the \`mcp\` proxy, not as direct functions. To use one, first call mcp({ search: "<capability>" }) to find the exact tool name (search by what you want to DO — "search", "fetch", "pay" — not by your query text), then call it. Don't reach for shell curl/wget when a tool exists; discover it through mcp first. The fez tools need no search — call them through the fez proxy with the exact parameter names, e.g. mcp__fez({ tool: "fez_ask_owner", args: { channel: "<channel id from the source notice>", question: "…", options: [{ label: "…" }, { label: "…", recommended: true }] } }) — args is an object and options are objects, never bare strings; a wrong shape costs a full extra model call.`]
               : []),
             `- Names: everyone in a channel appears by their name, not a key. An @mention only reaches someone if you use that NAME — writing @ followed by a hex id reaches nobody, notifies nobody, and merely looks like it worked. If all you can see for someone is a short hex id they have no name published; refer to them without an @.`,
             `- Handoffs: address @name only when that agent must act. Write a fresh self-contained brief: task, relevant facts, constraints, expected result, and message/document/artifact references. Keep it under ${HANDOFF_BRIEF_LIMIT} characters. Never copy transcripts, private memory, or nested briefs. Use fez_read_message with an exact ID to fetch only needed excerpts; documents have their own read tools. Your normal reply creates the handoff; if using fez_send_message, supply replyTo with the current source message ID. Send once, then wait for the signed result. References to teammates, thanks, and acknowledgments use names WITHOUT @. Conditional downstream handoffs wait until their condition is met.`,
