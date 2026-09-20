@@ -58,6 +58,52 @@ trigger:
 - Reaction triggers (`on: reaction`, optional `emoji:`) fire runs from
   reactions — "when someone 🚀s a message, do X".
 
+## Judged conditions
+
+The skeleton stays deterministic; the fez router's judge (TypeSafe Jev,
+`/v1/judge`) answers the yes/no questions inside it. Every judgment is a
+statement scored 0–1, logged and traced, thresholded by you. Set
+`FEZ_JUDGE_URL` (router base, e.g. `https://…/v1`) and `FEZ_JUDGE_KEY`
+(the router key); a workflow that uses any of these refuses to start
+without them.
+
+```yaml
+name: judged-followup
+channel: general
+trigger:
+  on: message
+  from: researcher
+  when: "the message reports a finding with specific facts, not a question or a handoff"
+  when_at: 0.7          # default 0.8
+steps:
+  - judge:
+      ask:
+        worth_summary: "a one-sentence version would help the person who asked"
+        blocker: "the message reports a blocker"
+    id: check
+  - say: "@writer one sentence for the asker, please: {{trigger.text}}"
+    if: 'judge.worth_summary >= 0.6 && judge.blocker < 0.3'
+  - wait_until:
+      statement: "the message is a one-sentence plain-language summary, not a question or an acknowledgment"
+      from: writer        # optional; default any member
+      timeout: 10m        # default 24h
+      at: 0.8             # default 0.8
+  - say: "✅ follow-up done — {{latest.author_name}}'s sentence is above."
+```
+
+- `when:` filters message triggers by meaning where a regex would miss
+  "can you look this over". One judge call per candidate; below the bar
+  or on a judge failure the run does not fire, and the value is logged.
+- `judge:` scores named statements about the run so far (trigger text
+  plus the latest message a `wait_until` observed) into `judge.<name>`
+  variables for later `if:` conditions. A judge failure skips the step,
+  and conditions naming the missing variables then skip too.
+- `wait_until:` suspends until a message in the thread satisfies the
+  statement; the match becomes the anchor for later steps and fills
+  `{{latest.text}}`, `{{latest.author_name}}`, `{{latest.id}}`. Timeout
+  skips the rest and posts a notice. Pending waits are in-memory; a
+  restart drops them.
+
 ## Run
 
 ```bash
