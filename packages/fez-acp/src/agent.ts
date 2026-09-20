@@ -368,6 +368,8 @@ async function main() {
         { name: "FEZ_AGENT_PERSONA", value: personaId },
         { name: "FEZ_RELAY", value: relayUrls.join(",") },
         ...(owner ? [{ name: "FEZ_AGENT_OWNER", value: owner }] : []),
+        // The owner-question gate in fez-mcp judges through the same route.
+        ...(judgeUrl && judgeKey ? [{ name: "FEZ_JUDGE_URL", value: judgeUrl }, { name: "FEZ_JUDGE_KEY", value: judgeKey }] : []),
         ...(Number(persona.extra.approvalQuorum) >= 1
           ? [{ name: "FEZ_APPROVAL_QUORUM", value: String(Number(persona.extra.approvalQuorum)) }]
           : []),

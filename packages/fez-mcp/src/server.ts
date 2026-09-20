@@ -8,6 +8,8 @@ import { WorkspaceState } from "../../fez-client/src/workspace-state.js";
 import { LESSON_PREFIX, parseLesson } from "../../fez-client/src/lessons.js";
 import type { WireEvent } from "../../fez-client/src/index.js";
 import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
+import { gateOwnerQuestion } from "./owner-gate.js";
+import { askJudge } from "../../fez-orchestrator/src/typesafe.js";
 import { attachedSkills, loadSkillBody } from "./skills.js";
 import { registerConnectionTools } from "./connections.js";
 import { DurableWork, workDirectory } from "../../../src/shared/durable-work.js";
@@ -62,6 +64,9 @@ if (!keyHex) {
 const secret = Uint8Array.from(Buffer.from(keyHex, "hex"));
 const myPubkey = getPublicKey(secret);
 const owner = process.env.FEZ_AGENT_OWNER;
+// Same judge the agent uses (fez-acp forwards its persona's judge config).
+const judgeUrl = process.env.FEZ_JUDGE_URL;
+const judgeKey = process.env.FEZ_JUDGE_KEY;
 const relayUrls = resolveRelays();
 
 const relay = new RelayConnection({
@@ -362,6 +367,17 @@ server.registerTool(
     if (!owner) return text("NO OWNER configured — you cannot ask; decide conservatively or stop.");
     const ref = await resolveChannel(channel);
     if ("error" in ref) return text(ref.error);
+    // Presentation choices never reach the owner (owner-gate.ts). The
+    // verdict is logged with its value either way so the bar can be tuned.
+    if (judgeUrl && judgeKey) {
+      const verdict = await gateOwnerQuestion(
+        (state, questions) => askJudge(judgeUrl, judgeKey, state, questions, { timeoutMs: 4000 }), question, options);
+      console.error(JSON.stringify({ ownerGate: verdict.outcome, value: verdict.value, pick: verdict.pick, latencyMs: verdict.latencyMs,
+        ...(verdict.error ? { error: verdict.error } : {}), question: question.slice(0, 120) }));
+      if (verdict.outcome === "self") {
+        return text(`DECIDE THIS YOURSELF — it is a presentation choice (wording, tone, format, or length), which is your call, not the owner's (judge ${verdict.value!.toFixed(2)}). Go with "${verdict.pick}" and continue. Do not ask the owner about presentation again.`);
+      }
+    }
     const lines = [
       `❓ choose: ${question}`,
       ...options.map((option, i) => `${OPTION_EMOJI[i]} ${option.label}${option.recommended ? " (recommended)" : ""}`),
