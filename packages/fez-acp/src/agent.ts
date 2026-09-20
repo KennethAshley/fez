@@ -86,7 +86,8 @@ import { memoryPromptParts, memoryStateFromHeads, type CoreMemoryState } from ".
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
 import { bindMcpPersona, fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
-import { governCompletion, governThread, silentAccept } from "./governor.js";
+import { governCompletion, governSteer, governThread, silentAccept } from "./governor.js";
+import { piSessionError } from "./pi-session-error.js";
 import { parseWake, wakeEvent } from "./wake.js";
 import { buildRoster, decideRoute, isRouted, routerCall } from "./guide-router.js";
 import { askJudge, type JudgeQuestion } from "../../fez-orchestrator/src/typesafe.js";
@@ -1513,7 +1514,12 @@ async function main() {
         // pi prints a provider refusal (402, 401…) to stderr and returns nothing; carry it so the
         // classifier and the activity feed see the reason instead of "empty reply".
         const tail = pooled.session.lastStderr?.().trim() ?? "";
-        throw new Error(`transient: harness returned an empty reply${tail ? ` (stderr: …${tail.slice(-300)})` : ""}`);
+        // A bodiless refusal (Chutes 402, seen live) never reaches stderr: pi
+        // writes it to its session log. Read it so a billing failure is not
+        // retried three times as "provider down".
+        const logged = !tail && persona?.harness === "pi" ? piSessionError(workDir) : undefined;
+        const detail = tail ? ` (stderr: …${tail.slice(-300)})` : logged ? ` (provider said: ${logged})` : "";
+        throw new Error(`transient: harness returned an empty reply${detail}`);
       }
       pooled.primed = true;
       pooled.turns++;
@@ -1743,6 +1749,11 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
   let activeDurableWork: string | undefined;
   let turnKind: "ch" | "dm" | "reflection" | undefined; // steering is channel-only; owner cancel applies to every turn
   let activeScope: string | undefined;
+  /** The message the in-flight channel turn is answering — what a mid-turn mention is judged against (steer or queue). */
+  let activeTrigger: ChEvent | undefined;
+  /** Last owner escalation per failure class — one DM an hour, not one per retry. */
+  const escalatedAt = new Map<string, number>();
+  const ESCALATION_WINDOW_MS = 3_600_000;
   let turnAcceptsSteering = false;
   const steerMessages: { event: ChEvent; doc?: DocTurn }[] = [];
 
@@ -2061,20 +2072,37 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
       // Mid-turn mentions: STEER (default — cancel the in-flight turn and
       // restart with the new message woven in) or QUEUE (process after).
       if (busy || (dispatching && !redispatch)) {
-        if (!durable && !activeDurableWork && !completedRequest && onBusy === "steer" && turnController && turnKind === "ch" && activeScope === scope && turnAcceptsSteering && !cancelRequested) {
-          steerMessages.push(...steering.map(event => ({ event })), { event, doc });
-          console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
-          turnController.abort();
-        } else {
-          enqueue({ scope, kind: "ch", chEvent: event, doc, steering, attempts, notBefore: 0 });
+        const steerable = () => !durable && !activeDurableWork && !completedRequest && onBusy === "steer" && !!turnController && turnKind === "ch" && activeScope === scope && turnAcceptsSteering && !cancelRequested;
+        let steer = steerable();
+        let parked = true;
+        // Busy stage of the governor: does the new message bear on the work
+        // in flight? "Actually, just the version" steers; "thanks!" queues
+        // instead of throwing a running turn away. Fails open to steer.
+        if (steer && governor && activeTrigger) {
+          const verdict = await governSteer(governor, activeTrigger.content, event.content);
+          console.log(JSON.stringify({ governor: verdict.outcome, stage: "busy", reason: verdict.reason, value: verdict.value,
+            latencyMs: verdict.latencyMs, error: verdict.error, event: event.id }));
+          steer = verdict.outcome === "steer" && steerable();
+          // The turn may have finished while the judge answered — then this message simply dispatches.
+          parked = busy || (dispatching && !redispatch);
         }
-        return;
+        if (parked) {
+          if (steer) {
+            steerMessages.push(...steering.map(event => ({ event })), { event, doc });
+            console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
+            turnController!.abort();
+          } else {
+            enqueue({ scope, kind: "ch", chEvent: event, doc, steering, attempts, notBefore: 0 });
+          }
+          return;
+        }
       }
 
       if (durable) workInbox.running(event.id);
       activeDurableWork = durable ? event.id : undefined;
       busy = true;
       activeScope = scope;
+      activeTrigger = event;
       turnController = new AbortController();
       turnKind = "ch";
       turnAcceptsSteering = true;
@@ -2584,6 +2612,15 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
               })
             )
             .catch(() => {});
+          // Escalate to the owner: a thread notice reaches whoever is watching
+          // that thread, which for a delegated turn is nobody. One DM per
+          // failure class per hour names the agent, the cause, and the fix.
+          // No judge here — the classifier already knows what code can know.
+          const failureClass = classifyTurnError(err);
+          if (owner && failureClass !== "aborted" && Date.now() - (escalatedAt.get(failureClass) ?? 0) > ESCALATION_WINDOW_MS) {
+            escalatedAt.set(failureClass, Date.now());
+            void sendDmReply([owner], `⚠️ ${personaId} can't finish turns (${failureClass}): ${reason.slice(0, 200)}${hint}`, 1).catch(() => {});
+          }
         }
       } finally {
         // Buzz's ReactionGuard shape: status reactions clear on every exit
@@ -2593,6 +2630,7 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         turnController = undefined;
         turnKind = undefined;
         activeScope = undefined;
+        activeTrigger = undefined;
         activeDurableWork = undefined;
         turnAcceptsSteering = false;
         inputOrigin = undefined;

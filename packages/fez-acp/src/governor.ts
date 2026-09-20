@@ -206,6 +206,50 @@ export async function governCompletion(
   }
 }
 
+// ── busy stage: steer or queue ───────────────────────────────────────
+
+export type SteerOutcome = "steer" | "queue";
+export interface SteerVerdict { outcome: SteerOutcome; reason: string; value?: number; latencyMs: number; error?: string }
+
+/**
+ * A mention that lands mid-turn in the same thread used to steer every
+ * time: abort the in-flight turn and restart with the new message woven
+ * in. Fine for "actually, make it two sentences"; wasteful for "thanks!"
+ * or an aside, which threw away a running turn to answer nothing. The
+ * judge decides whether the new message bears on the work in flight.
+ */
+export const STEER_AT = 0.7;
+
+export function steerQuestions(): Record<"changes_work", JudgeQuestion> {
+  return {
+    changes_work: {
+      type: "noul",
+      instructions: "Does `new_message` change, correct, add to, or cancel the work described in `in_flight`?",
+      criteria: {
+        true: "It gives new requirements, corrects a fact, narrows or widens the task, or asks to stop — the in-flight work should restart with it.",
+        false: "It is thanks, an acknowledgment, a reaction, an unrelated aside, or a question the in-flight work will already answer.",
+      },
+    },
+  };
+}
+
+/** Fails open to steer — today's behavior — so a judge problem never leaves a real correction waiting behind a stale turn. */
+export async function governSteer(
+  ask: (state: unknown, questions: Record<string, JudgeQuestion>) => Promise<JudgeResult>,
+  inFlight: string,
+  newMessage: string,
+): Promise<SteerVerdict> {
+  const startedAt = Date.now();
+  try {
+    const result = await ask({ in_flight: inFlight.slice(0, STATE_CHARS), new_message: newMessage.slice(0, STATE_CHARS) }, steerQuestions());
+    const { changes_work } = nouls(result, ["changes_work"] as const);
+    const outcome: SteerOutcome = changes_work >= STEER_AT ? "steer" : "queue";
+    return { outcome, reason: `changes work ${changes_work.toFixed(2)}`, value: changes_work, latencyMs: Date.now() - startedAt };
+  } catch (error) {
+    return { outcome: "steer", reason: "judge unavailable", latencyMs: Date.now() - startedAt, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /**
  * The judge-unsure fallback runs the model to decide; when it accepts it
  * replies with the single word ACCEPTED and the agent posts nothing (the

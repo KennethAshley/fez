@@ -994,7 +994,8 @@ export type TurnErrorKind = "auth" | "billing" | "aborted" | "transient" | "fata
 // Provider refused for money, not for a blip. Matched with context (a
 // status prefix or the named phrase), never as a bare 402 — see the 5xx
 // note in classifyTurnError.
-const BILLING = /HTTP 402|status 402|\b402 Payment|Payment Required|quota exceeded|insufficient (?:credits?|balance|funds)|account balance|out of credits?|no credits? (?:left|remaining)/i;
+// "402 status code (no body)" is what pi records for a bodiless Chutes refusal (seen live 2026-09-20).
+const BILLING = /HTTP 402|status 402|\b402 status|\b402 Payment|Payment Required|quota exceeded|insufficient (?:credits?|balance|funds)|account balance|out of credits?|no credits? (?:left|remaining)/i;
 
 /** The provider's own sentence, without its payment instructions. */
 export function providerRefusal(err: unknown): string {

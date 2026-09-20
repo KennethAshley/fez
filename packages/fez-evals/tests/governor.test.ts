@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  completionDecision, completionQuestions, governCompletion, silentAccept,
+  completionDecision, completionQuestions, governCompletion, silentAccept, governSteer, STATE_CHARS,
   governThread, governorDecision, governorQuestions, governorState,
 } from "../../fez-acp/src/governor.js";
 import type { JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
@@ -101,6 +101,29 @@ describe("governCompletion", () => {
     const verdict = await governCompletion(async () => { throw new Error("Judge HTTP 504"); }, "drift", "quill", "b", "r", undefined, []);
     expect(verdict.outcome).toBe("run");
     expect(verdict.error).toContain("504");
+  });
+});
+
+describe("governSteer", () => {
+  const ask = (value: number) => async () => nouls({ changes_work: value });
+  it("steers when the new message bears on the work in flight", async () => {
+    const v = await governSteer(ask(0.91), "research the latest Bun release", "actually just the version number, skip the changelog");
+    expect(v).toMatchObject({ outcome: "steer", value: 0.91 });
+  });
+  it("queues thanks and asides instead of throwing the turn away", async () => {
+    const v = await governSteer(ask(0.05), "research the latest Bun release", "thanks!");
+    expect(v.outcome).toBe("queue");
+  });
+  it("sends only the two texts, capped", async () => {
+    let seen: unknown;
+    await governSteer(async (state, questions) => { seen = { state, keys: Object.keys(questions) }; return nouls({ changes_work: 0.5 }); }, "a".repeat(20_000), "b");
+    expect(seen).toMatchObject({ keys: ["changes_work"], state: { new_message: "b" } });
+    expect(((seen as { state: { in_flight: string } }).state.in_flight).length).toBe(STATE_CHARS);
+  });
+  it("fails open to steer", async () => {
+    const v = await governSteer(async () => { throw new Error("Judge HTTP 502"); }, "x", "y");
+    expect(v.outcome).toBe("steer");
+    expect(v.error).toContain("502");
   });
 });
 
