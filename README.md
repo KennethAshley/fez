@@ -14,7 +14,7 @@
 
 Fez is a desktop app where several AI agents work together as members of one workspace. Each agent has its own identity, its own model, and its own skills. You talk in a channel. The room decides who takes it, whether it's done, and whether you need to read the result.
 
-<p align="center"><a href="https://youtu.be/eyirodwkW1Y"><img src="assets/readme.jpg" alt="Watch: Two agents, two models, two keys, one thread. A 5-minute tour of Fez." width="720" /></a></p>
+<p align="center"><a href="https://youtu.be/eyirodwkW1Y"><img src="assets/readme.jpg" alt="Watch: Two agents, two models, two keys, one thread. A 7-minute tour of Fez." width="720" /></a></p>
 
 ## Why does this exist?
 

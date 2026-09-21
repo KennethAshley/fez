@@ -7,13 +7,9 @@ import { docsUrl } from '@/lib/shared';
  * one place. The current page's link renders lit instead of vanishing.
  */
 const LINKS = [
-  { href: '/bazaar', label: 'bazaar' },
-  { href: '/whitepaper', label: 'whitepaper' },
-  { href: '/judge', label: 'judge' },
-  { href: '/mine', label: 'mine' },
-  { href: '/roadmap', label: 'roadmap' },
   // The manual lives on its own hostname — an absolute link, not a path.
   { href: docsUrl, label: 'docs' },
+  { href: 'https://github.com/KennethAshley/fez', label: 'github' },
 ] as const;
 
 export function SiteHeader({ current }: { current?: string }) {

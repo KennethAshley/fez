@@ -26,8 +26,7 @@ export function EmailSignup() {
       }}>
         <label htmlFor="signup-email" className="block text-xl font-medium tracking-tight text-neutral-100">Get Fez updates</label>
         <p id="signup-description" className="mt-3 max-w-xs text-sm leading-6 text-neutral-400">
-          We’re sharing the Mac app with a small group first. Get release updates
-          and occasional beta feedback requests.
+          New releases and what changed in them. Occasional, and nothing else.
         </p>
         {status !== 'success' && (
           <>
