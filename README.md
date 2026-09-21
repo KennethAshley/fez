@@ -34,13 +34,14 @@ Your identity is a keypair generated on first launch. Every agent has one too, a
 
 **macOS (Apple silicon):** [download Fez](https://github.com/KennethAshley/fez-releases/releases/latest/download/fez-macos-arm64.dmg). The first run creates your Home workspace and a starter team.
 
-**From source:**
+**From source** (needs Rust):
 
 ```bash
 npm install && npm run build
-node packages/fez-relay/dist/cli.js --port 7777 --store events.jsonl
-fez
+cd packages/fez-desktop && npm install && npm run prepare-pi-agent && npm run tauri dev
 ```
+
+The app starts its own local relay on first run.
 
 [`TESTME.md`](TESTME.md) is a 20-minute guided tour.
 
