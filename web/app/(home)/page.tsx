@@ -29,28 +29,31 @@ export default function HomePage() {
         <div className="mx-auto w-full max-w-5xl"><SiteHeader /></div>
 
         <main id="main-content" tabIndex={-1} className="flex-1">
-          <section className="mx-auto grid max-w-5xl gap-10 pb-12 pt-8 md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] md:items-center md:gap-16 md:py-12 lg:gap-24">
-            <div>
-              <h1 className="max-w-xl text-[clamp(1.75rem,3.5vw,2.5rem)] font-medium leading-tight tracking-tight text-neutral-100">
-                A chat room where a team of agents work, and the room does the managing.
-              </h1>
-              <p className="mt-4 max-w-md text-sm leading-7 text-neutral-400">
-                Fez is a desktop app for Mac. Several agents, each its own member with its own
-                identity, model and skills. You talk in a channel. The room decides who takes it,
-                whether it&apos;s done, and whether you need to read it.
-              </p>
-              <div className="mt-8">
-                {/* The stable asset name rides every public release, so this link survives version bumps. */}
-                <a
-                  href="https://github.com/KennethAshley/fez-releases/releases/latest/download/fez-macos-arm64.dmg"
-                  className="inline-block border border-neutral-800 px-5 py-2 text-xs text-neutral-300 transition-colors hover:border-[#FF6A00] hover:text-[#FF6A00]"
-                >
-                  download fez
-                </a>
-                <p className="mt-2 text-[10px] text-neutral-700">macOS · apple silicon · early</p>
-              </div>
+          <section className="mx-auto max-w-5xl pb-12 pt-8 md:py-12">
+            <h1 className="max-w-2xl text-[clamp(1.75rem,3.5vw,2.5rem)] font-medium leading-tight tracking-tight text-neutral-100">
+              A chat room where a team of agents work, and the room does the managing.
+            </h1>
+            <p className="mt-4 max-w-xl text-sm leading-7 text-neutral-400">
+              Fez is a desktop app for Mac. Several agents, each its own member with its own
+              identity, model and skills. You talk in a channel. The room decides who takes it,
+              whether it&apos;s done, and whether you need to read it.
+            </p>
+            <div className="mt-8 flex flex-wrap items-center gap-3">
+              {/* The stable asset name rides every public release, so this link survives version bumps. */}
+              <a
+                href="https://github.com/KennethAshley/fez-releases/releases/latest/download/fez-macos-arm64.dmg"
+                className="inline-block border border-[#FF6A00] bg-[#FF6A00] px-5 py-2 text-xs font-medium text-black transition-colors hover:bg-[#FF8533]"
+              >
+                Get the app
+              </a>
+              <a
+                href={GITHUB}
+                className="inline-block border border-neutral-800 px-5 py-2 text-xs text-neutral-300 transition-colors hover:border-[#FF6A00] hover:text-[#FF6A00]"
+              >
+                Open the repo
+              </a>
             </div>
-            <EmailSignup />
+            <p className="mt-2 text-[10px] text-neutral-700">macOS · apple silicon · early · MIT</p>
           </section>
 
           <AppShowcase />
@@ -108,6 +111,10 @@ export default function HomePage() {
                 </a>
               </section>
             </div>
+
+            <section aria-label="Updates" className="border-t border-neutral-900 py-12 md:py-16">
+              <div className="max-w-md"><EmailSignup /></div>
+            </section>
           </div>
         </main>
 
