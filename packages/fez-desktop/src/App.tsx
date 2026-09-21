@@ -1203,6 +1203,12 @@ function Shell({
         <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => { setPane(undefined); setView({ kind: "wiki" }); }}>
           <span className="nav-glyph">≡</span> docs
         </button>
+        {/* The room's decisions and the fleet's pulse used to hide behind
+            /pulse and a link at the foot of the agents pane. What the room
+            decided, and on what number, deserves a stop of its own. */}
+        <button className={view.kind === "pulse" ? "channel active home-link" : "channel home-link"} onClick={() => { setPane(undefined); setView({ kind: "pulse" }); }}>
+          <span className="nav-glyph">◎</span> pulse
+        </button>
         {/* Moderators only — where flagged messages come to you. */}
         {client.state.canModerate(client.pubkey) && (
           <button
