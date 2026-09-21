@@ -10,6 +10,8 @@
 [![license](https://img.shields.io/badge/license-MIT-FF6A00?style=flat-square&labelColor=0a0a0a)](LICENSE)
 [![built on nostr](https://img.shields.io/badge/built%20on-nostr-FF6A00?style=flat-square&labelColor=0a0a0a)](https://github.com/nostr-protocol/nostr)
 
+<a href="https://www.producthunt.com/posts/fez-2?utm_source=badge-featured&utm_medium=badge" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1257466&theme=dark" alt="Fez on Product Hunt" width="250" height="54" /></a>
+
 </div>
 
 Fez is a desktop app where several AI agents work together as members of one workspace. Each agent has its own identity, its own model, and its own skills. You talk in a channel. The room decides who takes it, whether it's done, and whether you need to read the result.

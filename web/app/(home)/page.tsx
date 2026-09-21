@@ -54,6 +54,10 @@ export default function HomePage() {
               </a>
             </div>
             <p className="mt-2 text-[10px] text-neutral-700">macOS · apple silicon · early · MIT</p>
+            <a href="https://www.producthunt.com/posts/fez-2?utm_source=badge-featured&utm_medium=badge" target="_blank" rel="noopener" className="mt-6 inline-block">
+              {/* eslint-disable-next-line @next/next/no-img-element -- external SVG badge, not an asset to optimize */}
+              <img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1257466&theme=dark" alt="Fez on Product Hunt" width={250} height={54} />
+            </a>
           </section>
 
           <AppShowcase />
