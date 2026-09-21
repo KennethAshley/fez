@@ -2,7 +2,7 @@ import { unixNow } from "../shared/time.js";
 import { hexToBytes } from "nostr-tools/utils";
 import { type Event, type Filter, type UnsignedEvent, finalizeEvent, generateSecretKey, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import { RelayConnection } from "./relay.js";
-import { KIND_AGENT_CAPABILITY, KIND_AGENT_METADATA, KIND_AGENT_PROGRESS, KIND_AGENT_RESULT, KIND_AGENT_TASK } from "./kinds.js";
+import { KIND_AGENT_METADATA, KIND_AGENT_PROGRESS, KIND_AGENT_RESULT, KIND_AGENT_TASK } from "./kinds.js";
 import { buildDmWraps, buildGroupDmWraps, unwrapDm, type DmRumor } from "./dm.js";
 
 export interface ClientConfig {
@@ -10,16 +10,6 @@ export interface ClientConfig {
   relay: string | string[];
   /** Optional private key (auto-generated if not provided) */
   privateKey?: string;
-}
-
-export interface Capability {
-  pubkey: string;
-  name: string;
-  type: string;
-  description?: string;
-  pricing?: Record<string, string>;
-  inputSchema?: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
 }
 
 export interface TaskOptions {
@@ -56,22 +46,13 @@ export interface TaskResult {
 }
 
 /**
- * Fez Client — for calling agents from your app, script, or another agent.
+ * The signing relay client: one key, one relay set. Signs, encrypts, and
+ * publishes as that key.
  *
- * ```typescript
- * const client = new CapabilityClient({ relay: "wss://relay.example.com" });
- *
- * // Discover agents
- * const storageAgents = await client.findCapabilities({ type: "storage" });
- *
- * // Call one
- * const result = await client.sendTask({
- *   to: storageAgents[0].pubkey,
- *   taskType: "store",
- *   instruction: "Store this file",
- *   params: { data: "..." },
- * });
- * ```
+ * `sendTask` speaks the 47001 task protocol. No production agent answers
+ * it — agents live in channels and answer 47103 messages that mention
+ * them. It stays for dev/experiments/coordination, which drives scripted
+ * `Agent` workers over it on a local relay.
  */
 export class CapabilityClient {
   private relay: RelayConnection;
@@ -183,40 +164,8 @@ export class CapabilityClient {
   }
 
   /**
-   * Discover agents by capability type.
-   */
-  async findCapabilities(filter: { type?: string; name?: string }): Promise<Capability[]> {
-    const filters: Filter[] = [{ kinds: [KIND_AGENT_CAPABILITY], limit: 100 }];
-
-    if (filter.type) {
-      filters[0]["#capability_type"] = [filter.type];
-    }
-
-    const events = await this.relay.query(filters);
-
-    return events
-      .map((event) => {
-        try {
-          const content = JSON.parse(event.content);
-          const capType = event.tags.find((t) => t[0] === "capability_type")?.[1];
-          return {
-            pubkey: event.pubkey,
-            name: content.name || event.tags.find((t) => t[0] === "d")?.[1] || "unnamed",
-            type: capType || "unknown",
-            description: content.description,
-            pricing: content.pricing,
-            inputSchema: content.input_schema,
-            outputSchema: content.output_schema,
-          };
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean) as Capability[];
-  }
-
-  /**
-   * Discover agents by name from metadata events.
+   * Discover agents by name from metadata events. Agents republish
+   * metadata on every start, so keep only the newest event per pubkey.
    */
   async findAgentsByName(name: string): Promise<{ pubkey: string; name: string; supportedTasks: string[] }[]> {
     const filters: Filter[] = [
@@ -227,8 +176,13 @@ export class CapabilityClient {
     ];
 
     const events = await this.relay.query(filters);
+    const newest = new Map<string, Event>();
+    for (const event of events) {
+      const seen = newest.get(event.pubkey);
+      if (!seen || event.created_at > seen.created_at) newest.set(event.pubkey, event);
+    }
 
-    return events
+    return [...newest.values()]
       .map((event) => {
         try {
           const content = JSON.parse(event.content);

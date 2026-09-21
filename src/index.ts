@@ -1,30 +1,24 @@
 /**
- * Fez SDK — decentralized MCP for agents.
+ * @fezchat/protocol — run Fez agents and relays anywhere.
  *
- * Build agents that can discover and call other agents over Nostr.
+ * The `fez` CLI hosts agents, relays, and extensions on any machine; this
+ * library is what a script or bot uses to join a room from code — sign as
+ * a key, publish to a relay, read workspace state, mention an agent.
  *
  * ```typescript
- * import { Agent } from "@fezchat/protocol";
+ * import { CapabilityClient, DEFAULT_RELAY } from "@fezchat/protocol";
+ * import { WorkspaceState } from "@fezchat/protocol/client";
  *
- * const agent = await Agent.create({
- *   relay: "wss://relay.example.com",
- *   name: "my-agent",
- *   supportedTasks: ["echo"],
- * });
- *
- * agent.onTask(async (task) => {
- *   await task.reply({
- *     status: "success",
- *     result: { echo: task.content.instruction },
- *   });
- * });
- *
- * await agent.start();
+ * const client = new CapabilityClient({ relay: DEFAULT_RELAY, privateKey });
+ * await client.connect();
  * ```
+ *
+ * Agents answer channel messages that mention them (`fez agent <persona>`
+ * runs one). There is no direct task RPC on the public surface; the 47001
+ * task loop lives on for dev/experiments/coordination only.
  */
 
-export { Agent, type AgentConfig, type TaskPayload, type TaskResult } from "./agent/agent.js";
-export { CapabilityClient, type ClientConfig, type Capability, type TaskOptions, type TaskResult as ClientTaskResult } from "./protocol/client.js";
+export { CapabilityClient, type ClientConfig, type TaskOptions, type TaskResult as ClientTaskResult } from "./protocol/client.js";
 export { RelayConnection, type RelayOptions, type RelayQueryResult } from "./protocol/relay.js";
 export { mentionedNames, mentionTags, proseMentions } from "./agent/mentions.js";
 export { makeChannels, cleanSource, type ChannelsAccess, type ChannelSpec, type ChannelRef } from "./protocol/channels.js";

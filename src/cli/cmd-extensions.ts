@@ -1,4 +1,4 @@
-/** Running and managing packages: run, discover, send, install/create/link/list/remove. */
+/** Running and managing packages: run, discover, install/create/link/list/remove. */
 import type { Command } from "commander";
 import chalk from "chalk";
 import fs from "fs/promises";
@@ -97,9 +97,8 @@ program
 
 program
   .command("discover")
-  .description("Discover agents on the network")
+  .description("List the agents announced on your relay set")
   .option("-r, --relay <url>", "Relay URL (default: your configured relay set)")
-  .option("-t, --type <type>", "Filter by capability type")
   .option("-n, --name <name>", "Filter by agent name")
   .action(async (options) => {
     // No baked-in default: this used to hardcode wss://relay.damus.io and
@@ -110,82 +109,16 @@ program
     const client = new CapabilityClient({ relay: relays });
     await client.connect();
 
-    console.log(chalk.blue(`🔍 Discovering agents on ${relays.join(", ")}...\n`));
+    console.log(chalk.blue(`🔍 Agents on ${relays.join(", ")}...\n`));
 
-    let agents: Array<{ pubkey: string; name: string; supportedTasks: string[] }> = [];
-
-    if (options.name) {
-      agents = await client.findAgentsByName(options.name);
-    }
-
-    if (agents.length === 0 && options.type) {
-      const capabilities = await client.findCapabilities({ type: options.type });
-      capabilities.forEach((cap) => {
-        console.log(`  ${chalk.green(cap.name)}`);
-        console.log(`    Pubkey: ${chalk.dim(cap.pubkey)}`);
-        console.log(`    Type: ${cap.type}`);
-        console.log(`    ${cap.description || ""}`);
-        if (cap.pricing) {
-          console.log(`    Pricing: ${JSON.stringify(cap.pricing)}`);
-        }
-        console.log();
-      });
-      client.disconnect();
-      return;
-    }
-
-    if (agents.length === 0) {
-      // Fallback: show all metadata agents
-      agents = await client.findAgentsByName("");
-    }
-
+    const agents = await client.findAgentsByName(options.name ?? "");
     agents.forEach((agent) => {
       console.log(`  ${chalk.green(agent.name)}`);
       console.log(`    Pubkey: ${chalk.dim(agent.pubkey)}`);
       console.log(`    Tasks: ${agent.supportedTasks.join(", ")}`);
       console.log();
     });
-
-    client.disconnect();
-  });
-
-// ─── send ───────────────────────────────────────────────────────────────────
-
-program
-  .command("send")
-  .description("Send a task to an agent")
-  .requiredOption("-t, --to <pubkey>", "Target agent pubkey")
-  .requiredOption("--type <type>", "Task type")
-  .option("-i, --instruction <text>", "Instruction text", "Do something")
-  .option("-r, --relay <url>", "Relay URL (default: your configured relay set)")
-  .option("-k, --key <file>", "Private key file")
-  .option("-p, --params <json>", "JSON params", "{}")
-  .action(async (options) => {
-    let privateKey: string | undefined;
-    if (options.key) {
-      privateKey = (await fs.readFile(options.key, "utf-8")).trim();
-    }
-
-    const { resolveRelays } = await import("../shared/settings.js");
-    const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey });
-    await client.connect();
-
-    console.log(chalk.blue(`📤 Sending task to ${options.to}...`));
-
-    const result = await client.sendTask({
-      to: options.to,
-      taskType: options.type,
-      instruction: options.instruction,
-      params: JSON.parse(options.params),
-    });
-
-    if (result.status === "success") {
-      console.log(chalk.green("✅ Success"));
-      console.log(JSON.stringify(result.result, null, 2));
-    } else {
-      console.log(chalk.red(`❌ ${result.status}`));
-      console.log(result.error?.message || "Unknown error");
-    }
+    if (agents.length === 0) console.log(chalk.dim("  none yet — run one with: fez agent <persona>\n"));
 
     client.disconnect();
   });

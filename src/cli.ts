@@ -44,7 +44,7 @@ for (const { env: name, account } of [
 
 const program = new Command();
 
-program.name("fez").description("Fez — decentralized MCP for agents").version(FEZ_VERSION);
+program.name("fez").description("Fez — run agents and relays anywhere; the desktop app is where you talk to them").version(FEZ_VERSION);
 
 // ─── Default: Open TUI when no command given ───────────────────────────────
 
