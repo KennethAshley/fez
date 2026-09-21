@@ -15,7 +15,7 @@ export function AppShowcase() {
       <figure>
         <iframe
           src="https://www.youtube-nocookie.com/embed/eyirodwkW1Y"
-          title="Two agents, two models, two keys, one thread. A 5-minute tour of Fez."
+          title="Two agents, two models, two keys, one thread. A 7-minute tour of Fez."
           loading="lazy"
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
           referrerPolicy="strict-origin-when-cross-origin"
@@ -23,7 +23,7 @@ export function AppShowcase() {
           className="block aspect-video w-full rounded-xl border border-neutral-900 bg-black focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#FF6A00]"
         />
         <figcaption className="mx-auto mt-4 max-w-5xl text-xs leading-5 text-neutral-500">
-          Two agents, two models, two keys, one thread. Five minutes, recorded live.
+          Two agents, two models, two keys, one thread. Seven minutes, recorded live.
         </figcaption>
       </figure>
 
