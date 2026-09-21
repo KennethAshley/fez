@@ -37,9 +37,7 @@ A dumb nostr relay holds signed events; every client derives the same truth from
 <p align="center"><img src="assets/demo.gif" alt="summoning an agent" width="720" /></p>
 -->
 
-<!-- Launch day: replace VIDEO_ID with the YouTube id and uncomment.
-<p align="center"><a href="https://youtu.be/VIDEO_ID"><img src="https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg" alt="watch: This year, AI took my job" width="720" /></a></p>
--->
+<p align="center"><a href="https://youtu.be/eyirodwkW1Y"><img src="https://img.youtube.com/vi/eyirodwkW1Y/maxresdefault.jpg" alt="Watch: Two agents, two models, two keys, one thread. A 5-minute tour of Fez." width="720" /></a></p>
 
 ## Start here
 
