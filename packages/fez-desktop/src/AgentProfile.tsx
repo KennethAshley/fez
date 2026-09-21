@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { verifyEvent } from "nostr-tools/pure";
 import { parseSkillDecls } from "@fezchat/client";
 import Avatar from "./Avatar";
 import { hasFace } from "./agent-face";
@@ -8,10 +7,7 @@ import { agentSkillStrip, type InstalledSkillMd } from "./agent-skill-health";
 import { useConfig } from "./config-store";
 import { relaySet } from "./relay";
 import { markWaking, clearWaking, wakingSince, wakeLabel, subscribeWaking } from "./waking";
-import { BAZAAR_RELAY, aggregateRecord, bestRow, type AttestationEvent, type RecordRow } from "./bazaar-record";
-import { fetchSaltPanel, tierLabel, type SaltPanel } from "./salt-record";
-import { SaltSection, AgentProfileExtras } from "./AgentReputation";
-import { RelayConnection } from "../../../src/protocol/relay.js";
+import { AgentProfileExtras } from "./AgentReputation";
 
 /**
  * One agent, at reading size.
@@ -29,67 +25,6 @@ function field(front: string, key: string): string | undefined {
   return front.match(new RegExp(`^${key}:\\s*(.+)$`, "m"))?.[1]?.trim();
 }
 
-/**
- * The bazaar track record — a one-shot read per profile open, cached for
- * the session so reopening the same agent's profile doesn't re-hit the
- * relay. Kept module-level (not in a hook) because the cache should
- * outlive any single AgentProfile mount.
- */
-const recordCache = new Map<string, RecordRow[] | "error">();
-
-async function fetchRecord(pk: string): Promise<RecordRow[] | "error"> {
-  const hit = recordCache.get(pk);
-  if (hit) return hit;
-  const relay = new RelayConnection({ urls: [BAZAAR_RELAY] });
-  try {
-    await relay.connect();
-    const events = (await relay.query([{ kinds: [47020], "#p": [pk], limit: 500 }])) as unknown as AttestationEvent[];
-    // connect()/query() never reject on a dead relay — connect() swallows
-    // failures into onError (Promise.allSettled) and query()'s querySync
-    // just resolves empty once its wait window elapses. So an unreachable
-    // relay and a reachable-but-empty relay would otherwise both land here
-    // with events = []. health() is the only thing that tells them apart:
-    // if nothing ever connected, this is "unknown", not "no record".
-    if (!relay.health().some((h) => h.connected)) throw new Error("bazaar relay unreachable");
-    const rows = aggregateRecord(events.filter((ev) => verifyEvent(ev as never)), pk);
-    recordCache.set(pk, rows);
-    return rows;
-  } catch {
-    // NOT cached: "unreachable" pinned for the whole session meant
-    // reconnecting and reopening the profile still said unreachable.
-    return "error";
-  } finally {
-    relay.disconnect();
-  }
-}
-
-/**
- * Three states, and the error state must never collapse into "empty" —
- * a relay that's unreachable tells you nothing about whether the agent
- * has a record, so it gets its own sentence (same rule as the wallet's
- * mirror states).
- */
-function TrackRecord({ rows }: { rows: RecordRow[] | "error" | undefined }) {
-  if (rows === undefined) return <div className="settings-hint">◌ checking the bazaar…</div>;
-  if (rows === "error") return <div className="settings-hint">bazaar relay unreachable — record unknown, not empty</div>;
-  if (rows.length === 0) return <div className="settings-hint">no public record yet — this agent hasn't worked the bazaar</div>;
-  return (
-    <ul className="profile-skills">
-      {rows.map((r) => (
-        <li key={r.taskType}>
-          <b>{r.taskType}</b>
-          <span className="skill-desc">
-            {" "}
-            · {r.count} scored task{r.count === 1 ? "" : "s"}
-            {r.percentile !== undefined ? ` · ${r.percentile}th percentile` : ""}
-            {` · last active ${new Date(r.lastAt * 1000).toLocaleDateString()}`}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 export default function AgentProfile({
   name,
   pk,
@@ -97,10 +32,6 @@ export default function AgentProfile({
   owner,
   onEdit,
   onMessage,
-  viewer,
-  isViewerAgent,
-  inViewerCircle,
-  displayName,
 }: {
   name: string;
   pk?: string;
@@ -109,7 +40,7 @@ export default function AgentProfile({
   owner?: string;
   onEdit: () => void;
   onMessage?: () => void;
-  /** The reader's pubkey — salt is bucketed by the viewer's vantage. */
+  /** Accepted for callers; the standing section that read them is out of the pane for now. */
   viewer?: string;
   isViewerAgent?: (pk: string) => boolean;
   inViewerCircle?: (pk: string) => boolean;
@@ -118,34 +49,6 @@ export default function AgentProfile({
   const { skills: catalog } = useConfig();
   const [content, setContent] = useState<string>();
   const [installedMds, setInstalledMds] = useState<InstalledSkillMd[]>([]);
-  // Standing data lives here, not in the sections: the header strip and
-  // the standing section read the same fetch, so one relay round-trip
-  // feeds both the glance and the detail.
-  const [record, setRecord] = useState<RecordRow[] | "error">();
-  const [salt, setSalt] = useState<SaltPanel | "error">();
-
-  useEffect(() => {
-    let cancelled = false;
-    setRecord(undefined);
-    setSalt(undefined);
-    if (!pk) return;
-    void fetchRecord(pk).then((r) => {
-      if (!cancelled) setRecord(r);
-    });
-    if (viewer) {
-      void fetchSaltPanel({
-        pk,
-        viewer,
-        relays: [...relaySet(), BAZAAR_RELAY],
-        isViewerAgent: isViewerAgent ?? ((k) => k === viewer),
-        inViewerCircle: inViewerCircle ?? (() => false),
-      })
-        .then((p) => { if (!cancelled) setSalt(p); })
-        .catch(() => { if (!cancelled) setSalt("error"); });
-    }
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pk, viewer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -201,25 +104,12 @@ export default function AgentProfile({
               reader who never scrolls still knows how this agent is
               judged and what runs it. Ember bar = the tier that needs
               you; online already lives on the face's dot. */}
-          {(salt || record || harness) && (
+          {/* Standing (bazaar grades, peer salt) is out of the pane for now —
+              the room's own record of an agent is its chits and decisions.
+              Extensions can still contribute sections below. */}
+          {harness && (
             <div className="profile-strip">
-              {typeof record === "object" && bestRow(record) ? (
-                <span className="skill-chip" title="strongest suit on the bazaar — judged, scored work">
-                  {(() => {
-                    const b = bestRow(record)!;
-                    return `${b.taskType}${b.percentile !== undefined ? ` · ${b.percentile}th` : ` · ${b.count} task${b.count === 1 ? "" : "s"}`}`;
-                  })()}
-                </span>
-              ) : null}
-              {salt && salt !== "error" ? (
-                <span
-                  className={salt.tier === "nameless" || salt.tier === "spoken-of" ? "skill-chip attn" : "skill-chip"}
-                  title="peer standing from your vantage — details under standing"
-                >
-                  {tierLabel(salt.tier)}
-                </span>
-              ) : null}
-              {harness ? <span className="skill-chip" title="what runs it — details under runtime">{harness}</span> : null}
+              <span className="skill-chip" title="what runs it — details under runtime">{harness}</span>
             </div>
           )}
         </div>
@@ -295,18 +185,6 @@ export default function AgentProfile({
               </li>
             ))}
           </ul>
-        )}
-
-        {/* Two evidence systems, one question — "is it any good?" —
-            so they share a section: judged bazaar scores first (dense,
-            scored), peer salt beneath. */}
-        <div className="manage-section">standing</div>
-        <div className="manage-sub">bazaar grades</div>
-        {pk ? <TrackRecord rows={record} /> : <div className="settings-hint">no public key — record unknowable</div>}
-        {pk && viewer ? (
-          <SaltSection panel={salt} viewer={viewer} displayName={displayName} />
-        ) : (
-          <div className="settings-hint">no public key — salt unknowable</div>
         )}
 
         {pk && <AgentProfileExtras pubkey={pk} persona={name} />}
