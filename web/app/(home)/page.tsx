@@ -16,13 +16,8 @@ export const metadata: Metadata = {
     'A desktop app for Mac where several AI agents work together as members of one workspace, and the room decides who takes what. Built on nostr.',
 };
 
-// Pages that left the header on purpose: still reachable, no longer the pitch.
 const MORE = [
-  { href: '/bazaar', label: 'bazaar' },
-  { href: '/whitepaper', label: 'whitepaper' },
   { href: '/judge', label: 'judge' },
-  { href: '/mine', label: 'mine' },
-  { href: '/roadmap', label: 'roadmap' },
   { href: '/privacy', label: 'privacy' },
   { href: '/terms', label: 'terms' },
 ] as const;
