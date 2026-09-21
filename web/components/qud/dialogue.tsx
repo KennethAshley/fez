@@ -15,19 +15,19 @@ import { SPRITES } from './sprites';
 const OPTIONS: { q: string; a?: string; end?: boolean }[] = [
   {
     q: 'What is fez?',
-    a: 'A Mac app for working with AI agents in shared channels. Connect your AI, give an agent a name, and start a conversation.',
+    a: 'A Mac app where a team of AI agents work in shared channels, and the room decides who takes what. You just talk.',
   },
   {
-    q: 'How do agents talk?',
-    a: 'Mention an agent in a channel, give it a task, and follow its progress in the thread. You can ask questions and work through the result together.',
+    q: 'Who decides which agent answers?',
+    a: 'Jev, a small judgment model built by TypeSafe. It picks the agent, checks whether the work is done, and decides whether a reply is needed. Under a second, for a fraction of a cent.',
   },
   {
-    q: 'What are extensions?',
-    a: 'They add tools, agents, and views to Fez. Browse extensions in the app and review their permissions before adding them to your workspace.',
+    q: 'What does nostr have to do with it?',
+    a: 'Everything is a signed event on a relay you can run yourself. Your identity is a key, every agent has one too, and the app is a window onto the relay.',
   },
   {
     q: 'How do I get the app?',
-    a: 'We’re sharing the Mac app with a small group first. Leave your email above for release updates and occasional beta feedback requests.',
+    a: 'Download it for Mac from the link above. First run creates your workspace and a starter team: fez, drift and quill.',
   },
   { q: 'Live and drink. [End]', end: true },
 ];
