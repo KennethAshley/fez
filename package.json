@@ -1,7 +1,7 @@
 {
   "name": "@fezchat/protocol",
   "version": "0.2.3",
-  "description": "Fez — a decentralized MCP for agents. Any agent can call any other agent by name over Nostr.",
+  "description": "Fez — run agents and relays anywhere. The fez CLI hosts agents, relays, and extensions on any machine; the client library joins a room from code. The desktop app is where you talk to them.",
   "type": "module",
   "bin": {
     "fez": "dist/cli.js"

@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { registerExtensionCommands } from "../../../src/cli/cmd-extensions.js";
 
 /**
- * `fez discover` and `fez send` carried a hardcoded commander default of
+ * `fez discover` (and the since-removed `fez send`) carried a hardcoded commander default of
  * wss://relay.damus.io — they ignored FEZ_RELAY, settings.json, and the
  * fez default entirely, so "the relay set" story on the docs was false
  * for exactly these two commands. The fix: no baked-in default; the
@@ -14,7 +14,7 @@ describe("CLI relay defaults — no command hardcodes a relay URL", () => {
   const program = new Command();
   registerExtensionCommands(program);
 
-  for (const name of ["discover", "send", "run"]) {
+  for (const name of ["discover", "run"]) {
     test(`fez ${name}: -r/--relay has no baked-in URL default`, () => {
       const cmd = program.commands.find((c) => c.name() === name);
       expect(cmd, `command ${name} exists`).toBeDefined();

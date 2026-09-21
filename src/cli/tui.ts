@@ -95,7 +95,7 @@ import { FezClient } from "../../packages/fez-client/dist/index.js";
 import { TerminalInputs } from "./agent-input.js";
 import { installNodeStatePersistence } from "../../packages/fez-client/dist/state-node.js";
 import { RelayConnection } from "../protocol/relay.js";
-import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "../protocol/kinds.js";
+import { KIND_AGENT_METADATA } from "../protocol/kinds.js";
 import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "../agent/harness.js";
 import { spawn } from "node:child_process";
 import { loadExtensions, setNostrBackend, setUiBackend, setClientBackend, setWorkspaceBackend, getInputHandlers, findUrlHandler, getRegisteredThemes, findTheme, registerTheme as registerThemePack, type MessageHandle } from "../extensions/extensions.js";
@@ -642,54 +642,13 @@ export class FezTUI {
     const target = agents[0];
     this.agentNameMap.set(target.pubkey, target.name);
 
-    // Channel-native agents (standing channel agents, the orchestrator,
-    // the workflow service) speak 47103 channel messages, not the 47001
-    // task protocol — a task sent to one spins for the full timeout and
-    // dies. Their supported_tasks say so; fail fast with the actual fix.
-    const CHANNEL_NATIVE = new Set(["channel-chat", "orchestrate", "workflow-automation"]);
-    if (target.supportedTasks.length > 0 && target.supportedTasks.every((t) => CHANNEL_NATIVE.has(t))) {
-      this.failLoader(
-        spinner,
-        `@${target.name} lives in channels — join one you share (e.g. /join general) and mention it there.`
-      );
-      this.updateMessage(routingMsg.id, { content: "channel-native agent", status: "error" });
-      return;
-    }
-
-    try {
-      const result = await this.client.sendTask({
-        to: target.pubkey,
-        taskType: "auto",
-        instruction,
-        onProgress: (event) => {
-          try {
-            const content = JSON.parse(event.content);
-            const pct = content.percent_complete ? ` (${content.percent_complete}%)` : "";
-            spinner.setMessage(`@${target.name}: ${content.message || "working..."}${pct}`);
-          } catch {
-            // ignore
-          }
-        },
-      });
-
-      this.stopLoader(spinner);
-      if (result.status === "success") {
-        const rawText =
-          typeof result.result === "string" ? result.result : JSON.stringify(result.result ?? "", null, 2);
-        const costNote = result.cost ? `\n${chalk.dim(`Cost: ${result.cost.amount} ${result.cost.currency}`)}` : "";
-        this.updateMessage(routingMsg.id, { content: rawText, status: "done" });
-        this.printReply(target.name, rawText + costNote, chalk.bold.green, triggeredBy);
-        await this.handleAgentReply(rawText, target.name, triggeringMsgId, routingMsg.id, depth);
-      } else {
-        const message = result.error?.message || "Unknown error";
-        this.updateMessage(routingMsg.id, { content: message, status: "error" });
-        this.printReply(target.name, `Failed: ${message}`, chalk.bold.red, triggeredBy);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.failLoader(spinner, `@${target.name} failed: ${message}`);
-      this.updateMessage(routingMsg.id, { content: message, status: "error" });
-    }
+    // Remote agents live in channels: they answer 47103 channel messages,
+    // and there is no direct task protocol. Say so, with the actual fix.
+    this.failLoader(
+      spinner,
+      `@${target.name} lives in channels — join one you share (e.g. /join general) and mention it there.`
+    );
+    this.updateMessage(routingMsg.id, { content: "channel-native agent", status: "error" });
   }
 
   /** Live "agent is working" line — a pi-tui Loader added to the log, removed again on stop/fail. */
@@ -961,14 +920,9 @@ export class FezTUI {
   }
 
   private subscribeToEvents(): void {
-    // Listen for progress and results
+    // Learn agent names as they announce themselves
     this.relay.subscribe(
       [
-        {
-          kinds: [KIND_AGENT_RESULT, KIND_AGENT_PROGRESS],
-          "#p": [this.myPubkey],
-          since: unixNow(),
-        },
         {
           kinds: [KIND_AGENT_METADATA],
           since: unixNow(),
