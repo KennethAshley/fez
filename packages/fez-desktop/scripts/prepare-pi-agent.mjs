@@ -30,7 +30,7 @@ const PI_VERSION = "0.84.2"; // @earendil-works/pi-coding-agent
 const PI_ACP_VERSION = "0.0.33"; // pi-acp (the ACP↔pi-rpc bridge)
 // The bundle's identity: any shipped binary changing must change this
 // string, or installed apps skip the recopy.
-const BUNDLE_VERSION = `${PI_VERSION}+svc39`; // svc39: every published extension in the gallery (workflows, mesh, chutes, bittensor, hippius); svc38: pulse in the sidebar
+const BUNDLE_VERSION = `${PI_VERSION}+svc40`; // svc40: a turn that ends without a message clears its streaming draft; svc39: full gallery
 const PI_REPO = "https://github.com/earendil-works/pi.git";
 // Pin a tag or commit SHA for reproducibility. Defaults to the release
 // tag matching PI_VERSION (the version check below still guards a tag

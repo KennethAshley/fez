@@ -3161,7 +3161,10 @@ export class FezClient {
 
   private handleDraft(event: WireEvent): void {
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-    if (!channelId || !event.content) return;
+    // An EMPTY draft is the author saying "done streaming": a turn that
+    // ends without a message (result delivered through a tool, silent
+    // acceptance) used to leave its last draft on screen indefinitely.
+    if (!channelId) return;
     if (event.pubkey === this.pubkey) return;
     if (!this.state.isMember(event.pubkey)) return;
     const rootId =

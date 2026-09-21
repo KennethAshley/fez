@@ -615,7 +615,11 @@ function Shell({
     client.on("draft", ((channelId: string, authorPk: string, content: string, rootId?: string) => {
       let byAuthor = draftsRef.current.get(channelId);
       if (!byAuthor) draftsRef.current.set(channelId, (byAuthor = new Map()));
-      byAuthor.set(authorPk, { content, rootId, ts: Date.now() });
+      // An empty draft is the author's "done streaming" — the turn ended
+      // without a message (result via tool, silent accept), so nothing
+      // else would ever adopt this draft. Drop it.
+      if (content) byAuthor.set(authorPk, { content, rootId, ts: Date.now() });
+      else byAuthor.delete(authorPk);
       render();
     }) as never);
     client.on("message", ((channelId: string, msg: Msg) => {

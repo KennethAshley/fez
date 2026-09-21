@@ -1795,6 +1795,8 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
   let activeScope: string | undefined;
   /** The message the in-flight channel turn is answering — what a mid-turn mention is judged against (steer or queue). */
   let activeTrigger: ChEvent | undefined;
+  /** Ends the in-flight turn's streaming draft on clients (an empty draft frame); set per channel turn. */
+  let clearDraft: (() => void) | undefined;
   /** Last owner escalation per failure class — one DM an hour, not one per retry. */
   const escalatedAt = new Map<string, number>();
   const ESCALATION_WINDOW_MS = 3_600_000;
@@ -2433,14 +2435,26 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         // — history and late joiners see only the final message) carrying
         // the accumulated text, throttled to be kind to the relay.
         let lastDraftAt = 0;
+        let draftShown = false;
         const publishDraft = (textSoFar: string) => {
           const now = Date.now();
           if (doc) return; // drafts are a channel-timeline affordance
           if (!textSoFar || now - lastDraftAt < 350) return;
           lastDraftAt = now;
+          draftShown = true;
           void relay
             .publish(client.signEvent({ kind: KIND_DRAFT, tags: replyTags, content: capReply(textSoFar) }))
             .catch(() => {});
+        };
+        // A turn that ends without a message — result delivered through
+        // fez_complete_work, silent acceptance — left its last draft on
+        // screen (seen live: a yellow tail of the model's wrap-up sitting
+        // under the delivered answer). An empty draft tells clients the
+        // streaming is over.
+        clearDraft = () => {
+          if (!draftShown || doc) return;
+          draftShown = false;
+          void relay.publish(client.signEvent({ kind: KIND_DRAFT, tags: replyTags, content: "" })).catch(() => {});
         };
 
         // The frame names its thread: without `root`, the desktop's
@@ -2719,6 +2733,8 @@ const retryReason = (err: unknown) => (err instanceof Error ? err.message : Stri
         // Buzz's ReactionGuard shape: status reactions clear on every exit
         // path — the reply (or nothing, on failure) is what remains.
         clearStatusReactions();
+        clearDraft?.();
+        clearDraft = undefined;
         clearInterval(typing);
         turnController = undefined;
         turnKind = undefined;
