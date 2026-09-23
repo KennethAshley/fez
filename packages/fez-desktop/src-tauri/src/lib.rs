@@ -1,5 +1,5 @@
 use nostr::JsonUtil as _;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod always_on;
 mod bounded_command;
 mod bundled_extensions;
@@ -2745,7 +2745,7 @@ pub fn run() {
                 let quit = MenuItem::with_id(app, "fez-quit", "Quit Fez…", true, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&show])?;
                 let mut tray = tauri::tray::TrayIconBuilder::new().tooltip("Fez");
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 {
                     use tauri::{menu::CheckMenuItem, Emitter};
                     let mut awake = always_on::AlwaysOn::new(fez_home().map_err(std::io::Error::other)?.join("desktop-always-on"));
