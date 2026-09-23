@@ -77,6 +77,7 @@ import HireProposalCard from "./HireProposalCard";
 import "./App.css";
 import "./page-shell.css";
 import "./fez-utilities.css";
+import { KEYSTORE_PROMPT } from "./platform";
 
 /**
  * fez-desktop — the GUI over the same headless brain as the TUI (#30).
@@ -314,8 +315,7 @@ function BootError({ message, onRetry }: { message: string; onRetry: () => void 
         <p>{message}</p>
         {keychain && (
           <p className="boot-error-hint">
-            fez keeps your identity in the macOS keychain. If a permission dialog appeared, choose
-            “Always Allow” and try again.
+            {KEYSTORE_PROMPT}
           </p>
         )}
         <button className="agent-action" onClick={onRetry}>try again</button>

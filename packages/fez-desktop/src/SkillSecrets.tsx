@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useConfig } from "./config-store";
 import { PROVIDERS } from "./providers";
+import { KEYSTORE } from "./platform";
 
 /**
  * Skill secret custody UI — lives in SETTINGS (the market only installs
@@ -37,7 +38,7 @@ export function SecretField({ skill, envKey, onSaved }: { skill: string; envKey:
       <button
         className="mini"
         disabled={busy || !value.trim()}
-        title="store in the macOS keychain (write-only — the GUI can never read it back)"
+        title={`store in the ${KEYSTORE} (write-only — the GUI can never read it back)`}
         onClick={() => {
           setBusy(true);
           setError(undefined);
@@ -76,7 +77,7 @@ export function EnvKeyStatus({
     void invoke<boolean>("has_skill_secret", { skill, key: envKey }).then(setInKeychain).catch(() => setInKeychain(false));
   }, [skill, envKey]);
   if (inKeychain === undefined) return <span className="skill-dep">{envKey} …</span>;
-  if (inKeychain) return <span className="skill-dep ready" title="stored in the macOS keychain">{envKey} 🔒</span>;
+  if (inKeychain) return <span className="skill-dep ready" title={`stored in the ${KEYSTORE}`}>{envKey} 🔒</span>;
   if (plaintext) return <span className="skill-dep needs-env" title="plaintext value in settings.json — save it here to move it into the keychain">{envKey} ⚠ plaintext</span>;
   if (!editable) return <span className="skill-dep needs-env" title="fill in settings (⌘,) → skills & secrets">{envKey} ○ set in settings</span>;
   return (
@@ -363,7 +364,7 @@ function SecretCard({
             <span
               key={k}
               className={"key-chip" + (statuses ? (statuses[k] ? " stored" : " missing") : "")}
-              title={statuses?.[k] ? "stored in the macOS keychain — write-only" : "no value yet"}
+              title={statuses?.[k] ? `stored in the ${KEYSTORE} — write-only` : "no value yet"}
             >
               {statuses?.[k] ? "🔒 " : "○ "}
               {k}
