@@ -6,7 +6,7 @@ import type { FezClient } from "@fezchat/client";
 import { mimeFor, uploadToBlossom } from "./blossom.js";
 
 /**
- * fez-media — file sharing for fez, the store-model way (GAPS §3 media):
+ * fez-media — file sharing for fez, the store-model way:
  * /upload pushes a file to a Blossom server under a BUD-02 signed
  * authorization and drops the content-addressed URL into the current
  * channel. The relay carries only the URL; the bytes live wherever the

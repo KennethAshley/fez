@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { validatePersonaFile, mergeDefaults, KNOWN_EXTRA_KEYS } from "@fezchat/protocol";
 
 /**
- * Persona validation + pack-defaults gate (GAPS item 18, Buzz's
+ * Persona validation + pack-defaults gate (Buzz's
  * pack-validate error/warning split): structural failures error, style
  * and typo-class problems warn, and pack defaults merge UNDER persona
  * frontmatter (persona wins).

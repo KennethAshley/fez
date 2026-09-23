@@ -88,8 +88,7 @@ export const CONNECTIONS: ConnectionEntry[] = [
   // No DCR — needs fez's one-time registered client_id (the gh precedent).
   { key: "github", title: "GitHub", url: "https://api.githubcopilot.com/mcp/", what: "repos, PRs, issues",
     pendingClientId: "GitHub's OAuth doesn't support dynamic registration — fez needs its one-time registered client_id shipped in the catalog first. Until then: paste a PAT into the github keycard (SKILLS & SECRETS), which its MCP server accepts." },
-  // Google's official Workspace MCP servers — probed live 2026-09-05, see
-  // docs/superpowers/research/2026-09-05-google-mcp-bridges.md. Same
+  // Google's official Workspace MCP servers — probed live 2026-09-05. Same
   // no-DCR bucket as GitHub: rows go live when fez's one registered
   // Desktop-client id lands here. Gmail deliberately absent — restricted
   // scopes mean an annual CASA assessment; these four verify for free.

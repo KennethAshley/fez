@@ -3,7 +3,7 @@ import * as protocol from "@fezchat/protocol";
 import { K } from "../../fez-client/dist/index.js";
 
 /**
- * Registry integrity gate (GAPS.md §2.6): src/kinds.ts is THE registry;
+ * Registry integrity gate: src/kinds.ts is THE registry;
  * fez-client's K table is a deliberate dependency-light mirror. They had
  * already drifted once (7 kinds lived only in K) — this gate makes drift
  * a test failure instead of a latent bug. Buzz's equivalent:

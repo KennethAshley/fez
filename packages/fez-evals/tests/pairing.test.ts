@@ -4,7 +4,7 @@ import { verifyEvent, matchFilter, type Event, type Filter } from "nostr-tools";
 import { pairSend, pairReceive, deriveSas, buildPairingUri, parsePairingUri } from "@fezchat/protocol";
 
 /**
- * Pairing gate (GAPS item 19): the whole NIP-AB-style handshake over a
+ * Pairing gate: the whole NIP-AB-style handshake over a
  * live in-process relay — identity arrives intact when both humans
  * confirm the SAS, both sides compute the SAME SAS, and either side
  * rejecting it aborts with nothing delivered. The relay only ever sees

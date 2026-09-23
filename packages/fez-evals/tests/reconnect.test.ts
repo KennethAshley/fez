@@ -5,7 +5,7 @@ import { matchFilter, type Event, type Filter } from "nostr-tools";
 import { RelayConnection } from "@fezchat/protocol";
 
 /**
- * Reconnect gate — the wire-level survival guarantees GAPS.md §2.1 demands:
+ * Reconnect gate — the wire-level survival guarantees:
  * a standing subscription outlives a dropped socket, backdated stragglers
  * are recovered by the skew backfill, publishes retry across the drop, and
  * policy rejections fail fast instead of retrying.

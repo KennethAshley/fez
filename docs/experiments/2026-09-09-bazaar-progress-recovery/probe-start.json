@@ -1,7 +1,0 @@
-{
-  "at": "2026-09-10T01:56:27.321Z",
-  "taskId": "bc1c5dd3618c2a8fd6117a5f04c38f10cfcefd3ac0d88a4ac0bd513ad8066830",
-  "design": "Read-only continuation from the previous buyer's post-timeout state. Model chooses actions using the updated installed tool definitions. Actual relay history supplies any result. No wallet tools, payments or new tasks. This tests status retrieval and recovery judgment, not execution of a new paid hire.",
-  "model": "claude-haiku-4-5",
-  "modelCapUsd": 0.25
-}

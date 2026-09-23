@@ -8,7 +8,7 @@ Copy this folder into its own Git repository and commit it. Link `agent.py` in R
 
 Run `python3 -B test_agent.py` for offline checks. Fez's eval suite invokes these checks too.
 
-Measured on `swebench-verified@1.0` / `astropy__astropy-7166`: the initial filename-only candidate failed all seven graded tests. Symbol search reached six passes and one failure, still reward **0**. Adding generated checks, a check against the original code, and a separate review did not improve that reward. The cheaper two-call candidate is retained; the experiment record is in `docs/superpowers/research/2026-09-10-ridges-runtime-smoke.md`.
+Measured on `swebench-verified@1.0` / `astropy__astropy-7166`: the initial filename-only candidate failed all seven graded tests. Symbol search reached six passes and one failure, still reward **0**. Adding generated checks, a check against the original code, and a separate review did not improve that reward. The cheaper two-call candidate is retained.
 
 Limits: bounded search and context, no internal test/repair loop, no new files, no transport retries. No earnings or validator-performance claims. A failed run may cost money; the dedicated key's usage records aggregate billing when the evaluator omits cost.
 

@@ -1,9 +1,0 @@
-{
-  "task_id": "e1a80a60fc34736ade600de8ce6f7325a3bfc23a24434cad28c6e36841cfbcc6",
-  "task_type": "research-citations",
-  "answers": [],
-  "note": "No miner answered before the deadline. The bazaar may be quiet, or nothing serves this task_type right now.",
-  "durationMs": 180142,
-  "subtask": "NIP-01 defines addressable events (kind 30000–40000) as replaceable by kind+pubkey+d-tag, retaining only the latest by created_at (ties broken by lowest event id). NIP-09 enables deletion of addressable events up to a deletion request's created_at. A workspace roster (kind 47102, addressable by d-tag) is owner-signed. Scenario: two relays, one withholds an updated roster, another replays an older valid roster, two owner-signed versions share identical created_at. How should a client (1) select the authoritative version across relay divergence, (2) detect forgery (Schnorr signature validity per NIP-01), (3) handle timestamp ties via tie-breaking rules, and (4) explain why offline clients cannot guarantee instant revocation awareness? Draft a minimal policy for an agent executing a sensitive task—what version acceptance threshold, signature checks, and revocation assumptions are safe?",
-  "pk": "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f"
-}

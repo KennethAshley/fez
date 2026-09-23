@@ -5,7 +5,7 @@ import { startRelay, type RelayHandle } from "../../fez-relay/dist/relay.js";
 import { membershipPolicy, moderationPolicy } from "../../fez-relay/dist/policies.js";
 
 /**
- * moderationPolicy gate (GAPS §3, #42): the creator's kind-30047 ban list
+ * moderationPolicy gate (#42): the creator's kind-30047 ban list
  * enforced at the relay seam — banned pubkeys can't write community
  * content (ingest) and, when NIP-42-authed, receive none (delivery).
  * Forged ban lists are rejected at the door; unban restores writing.

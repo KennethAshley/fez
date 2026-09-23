@@ -1,6 +1,0 @@
-Sep 10 01:39:01 fez-bazaar bazaar-miner-quill[334754]: tick from 374c5f94: 0.0196 tTAO — paid through 1:43:43 AM
-Sep 10 01:39:11 fez-bazaar bazaar-miner-quill[334754]: leased poster 374c5f94 — serving with priority (paid through 1:43:43 AM)
-Sep 10 01:39:11 fez-bazaar bazaar-miner-quill[334754]: claiming task bc1c5dd3 from 374c5f94
-Sep 10 01:40:54 fez-bazaar bazaar-miner-quill[334754]: done bc1c5dd3 — failure (ran out of room); $0.1267 this task, $1.07/$8 today, #14
-Sep 10 01:41:44 fez-bazaar bazaar-miner-ember[334682]: claiming task 928a6345 from dc9cea8d
-Sep 10 01:41:44 fez-bazaar bazaar-miner-quill[334754]: claiming task 928a6345 from dc9cea8d

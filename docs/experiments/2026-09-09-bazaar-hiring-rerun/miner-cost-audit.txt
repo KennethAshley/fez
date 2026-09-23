@@ -1,5 +1,0 @@
-claiming task 1e9b5a3e from 689ad2c1
-done 1e9b5a3e — success; $0.1314 this task, $0.25/$8 today, #3
-claiming task 90db5191 from a011cddd
-done 90db5191 — success; $0.0483 this task, $0.30/$8 today, #4
-claiming task b01e42f4 from 3f9b8de1

@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 
 /**
- * Blossom (BUD-02) upload — the decentralized media half fez was missing
- * (GAPS §3): the CLIENT signs a kind-24242 authorization naming the
+ * Blossom (BUD-02) upload — the decentralized media half fez was missing:
+ * the CLIENT signs a kind-24242 authorization naming the
  * blob's sha256, any Blossom server verifies and stores, and the relay
  * never sees a byte. Buzz runs its own media pipeline inside the relay;
  * fez points at whichever server the user brings (public or self-hosted)

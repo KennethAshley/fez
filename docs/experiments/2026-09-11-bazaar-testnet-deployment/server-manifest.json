@@ -1,8 +1,0 @@
-{
-  "20-testnet.conf": "5a15397b455dc722403042bec7c4df7b2d6871bcfc24c02548fc94eaec4bd86f",
-  "assert-bazaar-testnet.py": "c583fe295cace7564569f6ba00ad64bcdd04ece9aa800f0f61b7b1ccc0fe139b",
-  "availability.js": "530be01e01ea9b34892df45e6fe8ccb0c8651b034d9fd13742ec1ebb7e6c97b6",
-  "fez-bazaar-miner": "5a73266d42565d7c8e6ffa5e5d6d2e6c2cde80826c2a7217b6725a6e9c757d13",
-  "fez-bazaar-validator": "4a80ca96416915aa13b66fc71e8c23c1a9fe12b95494516ca489e9c417c28263",
-  "index.html": "1f0939db2dba3a13f8c5c18585cc14d64cf45eb407c0776acbb6efe7b4bbfb8e"
-}

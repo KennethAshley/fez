@@ -5,7 +5,7 @@ import { startRelay, type RelayHandle } from "../../fez-relay/dist/relay.js";
 import { createdAtFencePolicy } from "../../fez-relay/dist/policies.js";
 
 /**
- * Ingest-hygiene gate for fez-relay (GAPS.md §2.2): duplicate dedup,
+ * Ingest-hygiene gate for fez-relay: duplicate dedup,
  * content size cap, NIP-01 newest-first limit, filters/subscription caps,
  * connection cap, and the created_at drift fence (with its NIP-17
  * gift-wrap exemption — fuzzed timestamps must pass the past fence).

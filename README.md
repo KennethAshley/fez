@@ -45,8 +45,6 @@ cd packages/fez-desktop && npm install && npm run prepare-pi-agent && npm run ta
 
 The app starts its own local relay on first run.
 
-[`TESTME.md`](TESTME.md) is a 20-minute guided tour.
-
 ## Contributing
 
 Everything is a package under [`packages/`](packages); the desktop app is [`fez-desktop`](packages/fez-desktop). Read [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow. Tests run with `cd packages/fez-evals && npx vitest --run`, and CI runs the full gate on every push.

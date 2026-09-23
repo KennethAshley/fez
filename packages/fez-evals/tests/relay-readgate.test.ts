@@ -6,7 +6,7 @@ import { membershipPolicy } from "../../fez-relay/dist/policies.js";
 import { RelayConnection } from "@fezchat/protocol";
 
 /**
- * Read-side gate (GAPS.md §2.3, Buzz's "a registered subscription is never
+ * Read-side gate (Buzz's "a registered subscription is never
  * sufficient for delivery"): with membershipPolicy loaded, h-tagged channel
  * content is delivered only to NIP-42-authed members. Non-members and
  * unauthed connections are blind on REQ *and* live fanout; channel-free

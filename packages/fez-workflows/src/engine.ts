@@ -189,7 +189,7 @@ export async function startWorkflowEngine(opts: EngineOptions): Promise<EngineHa
     }).catch(() => {});
   };
 
-  // ── Durable suspensions (GAPS item 14): a restart used to drop every
+  // ── Durable suspensions: a restart used to drop every
   // pending approval gate. Suspended runs now persist — enough context to
   // resume the step loop after the gate — and re-arm at boot with their
   // REMAINING timeout. Delays stay best-effort (a restart re-runs nothing).

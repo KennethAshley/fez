@@ -47,10 +47,21 @@ venv/
 # Logs
 *.log
 dev/relay.mjs
-dev/relay-events.jsonl
+dev/relay-events*
 dev/experiments/coordination/.*.*/
 
 # built relay bundle — deploy/deploy.sh rebuilds it every time
 deploy/fez-relay.mjs
 .worktrees/
 .claude/worktrees/
+
+# Agent working notes and local tooling config — not part of the project
+.agents/
+.superpowers/
+.codex/
+.mcp.json
+docs/superpowers/plans/
+docs/superpowers/research/*
+!docs/superpowers/research/2026-09-18-typesafe-routing-results.*
+skills-lock.json
+packages/fez-desktop/scripts/native-browser.lock

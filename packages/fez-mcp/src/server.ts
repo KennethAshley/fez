@@ -39,7 +39,7 @@ import {
 } from "@fezchat/protocol";
 
 /**
- * fez-mcp — the agent's hands ON fez itself (GAPS §3 item 15; Buzz gives
+ * fez-mcp — the agent's hands ON fez itself (Buzz gives
  * its agents the `buzz` CLI inside buzz-dev-mcp — this is the fez-native
  * equivalent as proper MCP tools instead of shell strings).
  *

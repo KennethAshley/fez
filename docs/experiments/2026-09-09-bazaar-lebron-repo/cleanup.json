@@ -1,8 +1,0 @@
-{
-  "at": "2026-09-10T03:45:06.312430+00:00",
-  "airPilotStopped": true,
-  "temporaryRepositoryGrantRevoked": true,
-  "temporaryRelayPort8793Closed": true,
-  "tailscaleServeStatus": {},
-  "normalFezServicesAndUserSshAccessRetained": true
-}

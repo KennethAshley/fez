@@ -5,7 +5,7 @@ import path from "node:path";
 import { loadDefs, resolveTemplate } from "../../fez-workflows/src/defs.js";
 
 /**
- * Workflow vocabulary gate (GAPS item 14): the expanded step set loads,
+ * Workflow vocabulary gate: the expanded step set loads,
  * the SEC-006 exfiltration fence holds (webhook URLs must be static and
  * https/localhost), step ids are unique, and template resolution covers
  * step outputs.

@@ -9,7 +9,7 @@ import { startRelay } from "../../fez-relay/dist/relay.js";
 /**
  * Boot-time store compaction: the append-only JSONL keeps full history,
  * but a restart must (a) serve only the compacted view and (b) rewrite
- * the file when dead weight passes the threshold — GAPS.md §2.2's
+ * the file when dead weight passes the threshold — the
  * "unbounded growth from our own chattiest kinds".
  */
 

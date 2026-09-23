@@ -1,8 +1,0 @@
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"task_id\":\"db0d783276ec26ec7fe17613fa1b76c11d71d711b02bc8dd89b412cbe3df513b\",\"task_type\":\"repo-work\",\"task_state\":\"claimed\",\"progress\":[{\"miner\":\"npub16wn077ykv8maqjres3g9dp5gkpdreyryusw0cdxvhcvrgfc6txsq3gju4d\",\"message\":\"lebron: 0 !== 7500 — the duplicate is counted twice). Now the minimal fix: track seen references in a Map, skip exact duplicates, throw on conflicts\",\"created_at\":1789011286}],\"answers\":[],\"successful_answers\":0,\"note\":\"A miner claimed this task, but no final result arrived during this wait. A claim is not proof it is still running. Use bazaar_wait with task_id to check again without paying or posting another task.\"}"
-    }
-  ]
-}

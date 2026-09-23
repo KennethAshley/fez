@@ -33,7 +33,7 @@ export interface RelayPolicy {
   name: string;
   onEvent(event: StoredEvent, ctx: PolicyContext): PolicyVerdict | Promise<PolicyVerdict>;
   /**
-   * Read-side gate (GAPS 2.3 — Buzz's "a registered subscription is never
+   * Read-side gate (Buzz's "a registered subscription is never
    * sufficient for delivery"): called for every event about to be served
    * to a connection, on REQ replay AND live fanout. Return false to
    * withhold. MUST be synchronous — it sits on the delivery hot path.

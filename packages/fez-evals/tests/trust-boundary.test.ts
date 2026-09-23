@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 /**
- * THE trust-boundary gate (GAPS.md §2.5). Fez moved Buzz's entire relay
+ * THE trust-boundary gate. Fez moved Buzz's entire relay
  * ACL layer into client-side trust rules — this suite is the first test
  * coverage that boundary has ever had. A real FezClient runs against a
  * scripted Wire: seeded history hydrates through start(), live events
