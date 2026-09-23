@@ -13,7 +13,15 @@ const run = (command, argv, cwd = desktop, env = process.env) => execFileSync(co
 if (args[0] !== 'build' || args.includes('--help') || args.includes('-h')) {
   run(join(desktop, 'node_modules/.bin/tauri'), args);
 } else {
-  if (process.platform !== 'darwin') throw new Error('Native browser desktop builds currently require macOS');
+  // Only the CEF runtime below needs macOS. Everywhere else, build the
+  // ordinary Tauri webview app with the stable CLI: no patched toolchain, no
+  // staging step, and #[cfg(not(feature = "native-browser"))] takes the Tao
+  // window path. Bundled extensions are skipped because only the native
+  // browser build installs them at startup.
+  if (process.platform !== 'darwin') {
+    run(join(desktop, 'node_modules/.bin/tauri'), args);
+    process.exit(0);
+  }
   const target = resolve(desktop, process.env.CARGO_TARGET_DIR || 'src-tauri/target');
   const cache = join(desktop, 'src-tauri/target/native-browser');
   const pins = JSON.parse(await readFile(join(here, 'native-browser.json'), 'utf8'));
