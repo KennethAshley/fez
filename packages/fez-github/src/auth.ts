@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { keychainFind, keychainStore } from "@fezchat/protocol";
 import { createOAuthDeviceAuth } from "@octokit/auth-oauth-device";
 import { DEFAULT_CLIENT_ID, type DeviceCodeLike } from "./app-id.js";
 
@@ -120,13 +121,12 @@ export async function refresh(clientId: string, refreshToken: string): Promise<T
 // ── keychain ────────────────────────────────────────────────────────
 
 async function keychainSet(account: string, value: string): Promise<void> {
-  await run("security", ["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", account, "-w", value]);
+  keychainStore(KEYCHAIN_SERVICE, account, value);
 }
 
 async function keychainGet(account: string): Promise<string | undefined> {
   try {
-    const { stdout } = await run("security", ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-w"]);
-    return stdout.trim() || undefined;
+    return keychainFind(KEYCHAIN_SERVICE, account);
   } catch {
     return undefined;
   }
