@@ -10,6 +10,7 @@ const LINKS = [
   // The manual lives on its own hostname — an absolute link, not a path.
   { href: docsUrl, label: 'docs' },
   { href: 'https://github.com/KennethAshley/fez', label: 'github' },
+  { href: 'https://discord.gg/E4C7pydxqd', label: 'discord' },
 ] as const;
 
 export function SiteHeader({ current }: { current?: string }) {
