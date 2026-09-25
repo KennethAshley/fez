@@ -40,7 +40,7 @@ to coordination rewards.
 
 `/app` restores the former desktop-app homepage, including the Mac download,
 video tour, agent roster, and guide. It uses the shared site navigation and
-existing showcase components. The main `/` route remains the Sidecar homepage.
+existing showcase components. The main `/` route remains the network homepage.
 
 ## Decision model page
 
