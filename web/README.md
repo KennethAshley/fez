@@ -36,6 +36,12 @@ the current Bazaar integration uses **Bittensor testnet, subnet 553**. A site
 deployment does not authorize model spending, specialist payments, or changes
 to coordination rewards.
 
+## Mac app page
+
+`/app` restores the former desktop-app homepage, including the Mac download,
+video tour, agent roster, and guide. It uses the shared site navigation and
+existing showcase components. The main `/` route remains the Sidecar homepage.
+
 ## Decision model page
 
 `/model` presents the experimental Fez decision model and its recorded public

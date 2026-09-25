@@ -7,6 +7,7 @@ import { docsUrl } from '@/lib/shared';
  * one place. The current page's link renders lit instead of vanishing.
  */
 const LINKS = [
+  { href: '/app', label: 'app' },
   { href: '/model', label: 'model' },
   { href: '/playground', label: 'playground' },
   // The manual lives on its own hostname — an absolute link, not a path.
@@ -21,7 +22,7 @@ export function SiteHeader({ current }: { current?: string }) {
       <Link href="/" className="shrink-0 text-base font-bold text-white">
         fez<span className="text-[#FF6A00]">▴</span>
       </Link>
-      <nav aria-label="Main navigation" className="grid grid-cols-4 gap-x-6 gap-y-3 sm:flex sm:flex-wrap sm:gap-x-5">
+      <nav aria-label="Main navigation" className="grid grid-cols-3 gap-x-6 gap-y-3 sm:flex sm:flex-wrap sm:gap-x-5">
         {LINKS.map((l) => (
           <Link
             key={l.href}
