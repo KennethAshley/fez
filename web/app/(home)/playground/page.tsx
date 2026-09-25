@@ -22,12 +22,11 @@ export default function PlaygroundPage() {
           <div className="mt-5 flex flex-wrap gap-x-6 gap-y-3 font-sans text-sm">
             <Link href="/model#quality" className="underline decoration-neutral-700 underline-offset-4 hover:text-white">Model &amp; methodology</Link>
             <a href="https://github.com/ooo-hq/fez" className="underline decoration-neutral-700 underline-offset-4 hover:text-white">Fez on GitHub</a>
-            <a href="https://github.com/jaredpalmer/kev/blob/main/kev/serve.py" className="underline decoration-neutral-700 underline-offset-4 hover:text-white">Kev API source</a>
           </div>
         </div>
         <DecisionPlayground {...playgroundConfig()} />
         <footer className="mt-12 border-t border-neutral-800 pt-6 font-sans text-xs leading-6 text-neutral-400">
-          Inspired by <a href="https://github.com/jaredpalmer/kev/tree/main/playground" className="underline underline-offset-4">Jared Palmer’s Kev playground</a>. Fez uses Kev’s Apache-2.0 serving code. Playground examples are illustrative, not an evaluation benchmark.
+          Playground examples are illustrative, not an evaluation benchmark.
         </footer>
       </main>
     </div>
