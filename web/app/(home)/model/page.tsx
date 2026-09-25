@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { PageSection, SitePage } from '@/components/site-page';
 import { benchmark, readComparison, percent, decimal, milliseconds, comparisonHeadline } from '@/lib/model-benchmark';
+import testnet from '@/public/model/testnet-round-001.json';
 
 export const metadata: Metadata = {
   title: 'fez — the decision model',
@@ -11,6 +12,7 @@ export const metadata: Metadata = {
 const REPO = 'https://github.com/ooo-hq/fez';
 const METHOD = `${REPO}/blob/main/docs/jevbench-public.md`;
 const SOURCE = '/model/jevbench-public-001.json';
+const TESTNET_SOURCE = '/model/testnet-round-001.json';
 const LINK = 'text-[#FF6A00] underline decoration-[#FF6A00]/40 underline-offset-4 hover:decoration-[#FF6A00]';
 const CELL = 'border-t border-neutral-800 px-3 py-3 text-right tabular-nums sm:px-5';
 const HEAD = 'border-t border-neutral-800 px-3 py-3 text-left font-normal text-neutral-200 sm:px-5';
@@ -55,6 +57,10 @@ export default function ModelPage() {
     <SitePage current="model" title="Decisions, measured."
       description="Fez is an experimental 0.8B decision model for yes/no questions, choices, and scores. It returns structured probabilities without generating prose."
       note="Experimental candidate. No public model release or automatic winner promotion yet.">
+      <a href="#testnet" className="mb-6 flex flex-wrap items-center justify-between gap-3 border border-[#FF6A00]/50 bg-[#FF6A00]/5 px-5 py-4 text-sm hover:bg-[#FF6A00]/10">
+        <span className="font-medium text-[#FF6A00]">Bittensor testnet · Subnet {testnet.chain.netuid}</span>
+        <span className="text-neutral-300">First training round verified on-chain <span aria-hidden="true">↓</span></span>
+      </a>
       <nav aria-label="Project resources" className="mb-8 grid gap-3 sm:grid-cols-3">
         {[
           { href: REPO, title: 'GitHub repository', description: 'Explore the training and evaluation code.' },
@@ -79,7 +85,7 @@ export default function ModelPage() {
               <p className="mt-4 max-w-[62ch]">Fez returns structured probabilities without generating a text answer. Applications can load a selected checkpoint directly.</p>
             </div>
             <div className="border-l border-neutral-800 pl-6">
-              <p className="text-xs text-neutral-400">Latest recorded candidate</p>
+              <p className="text-xs text-neutral-400">Public benchmark candidate</p>
               <code className="mt-3 block break-all text-sm leading-6 text-neutral-200">{fez.checkpoint_sha256}</code>
             </div>
           </div>
@@ -155,25 +161,37 @@ export default function ModelPage() {
 
         <PageSection id="training" title="Training & evaluation">
           <ol className="grid gap-7 sm:grid-cols-2 lg:grid-cols-4">{PROCESS.map(([title, description], index) => <li key={title}><span className="font-mono text-xs text-[#FF6A00]">0{index + 1}</span><h3 className="mt-2 font-medium text-white">{title}</h3><p className="mt-2 text-sm leading-6">{description}</p></li>)}</ol>
-          <div className="mt-7 border border-dashed border-neutral-700 p-5"><h3 className="font-medium text-neutral-200">No live round feed connected</h3><p className="mt-2 text-sm">Submission queue, round phase, and evaluation history are unavailable.</p></div>
+          <div className="mt-7 border border-dashed border-neutral-700 p-5"><h3 className="font-medium text-neutral-200">One testnet round completed</h3><p className="mt-2 text-sm">Training, signed submissions, evaluation, and revealed chain weights are recorded below. A live submission queue and round feed are not connected.</p><a href="#testnet" className={`${LINK} mt-3 inline-block text-sm`}>View the verified round</a></div>
           <p className="mt-5 text-sm leading-7">The local loop works on Apple Silicon and an RTX 4090. Accuracy and latency are diagnostics, not separate reward components. The subnet’s family-macro Brier and JevBench Brier use different aggregation rules.</p>
           <a href={`${REPO}/blob/main/docs/evaluation.md`} className={`${LINK} mt-4 inline-block text-sm`}>Evaluation contract</a>
         </PageSection>
 
         <PageSection id="participants" title="Participants">
-          <p className="mb-5 text-sm">A local rehearsal was run. Current availability is unknown.</p>
-          <dl className="divide-y divide-neutral-800 border border-neutral-800">{[['Miners', 'Train and submit candidates'], ['Validators', 'Independently evaluate checkpoints']].map(([role, description]) => <div key={role} className="grid gap-x-4 gap-y-1 p-5 sm:grid-cols-[1fr_auto]"><dt className="text-neutral-200">{role}</dt><dd className="text-xs sm:col-start-1">{description}</dd><dd className="mt-2 text-xs sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:self-center">Availability unknown</dd></div>)}</dl>
-          <p className="mt-4 text-xs leading-6">Historical completion does not establish that a participant is online. No public health observations or participant counts are available.</p>
+          <p className="mb-5 text-sm">Three registered miners and one validator completed the recorded subnet {testnet.chain.netuid} rehearsal.</p>
+          <dl className="divide-y divide-neutral-800 border border-neutral-800">{[['Miners · UIDs 1–3', 'Trained and submitted three distinct checkpoints'], ['Validator · UID 0', 'Evaluated the checkpoints and published weights']].map(([role, description]) => <div key={role} className="grid gap-x-4 gap-y-1 p-5 sm:grid-cols-[1fr_auto]"><dt className="text-neutral-200">{role}</dt><dd className="text-xs sm:col-start-1">{description}</dd><dd className="mt-2 text-xs sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:self-center">Recorded participation</dd></div>)}</dl>
+          <p className="mt-4 text-xs leading-6">One operator ran all four processes on one host. Services exited after the round; these counts do not indicate current availability or independent operators.</p>
           <a href={`${REPO}/blob/main/docs/mining.md`} className={`${LINK} mt-4 inline-block text-sm`}>Miner guide</a>
         </PageSection>
 
         <PageSection id="testnet" title="Testnet publication">
           <div className="border border-neutral-800">
-            <div className="p-5"><h3 className="font-medium text-neutral-100">Fresh testnet subnet pending</h3><p className="mt-2 text-sm">No subnet ID is confirmed. No Fez weights have been published.</p></div>
-            <dl className="grid gap-6 border-t border-neutral-800 p-5 text-xs sm:grid-cols-2 lg:grid-cols-4">{[['Network / subnet ID', 'Pending / Unconfirmed'], ['Proposed weights', 'Unavailable'], ['Publication receipt', 'Unavailable'], ['Observed on-chain weights', 'Unverified']].map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="mt-2 text-neutral-200">{value}</dd></div>)}</dl>
+            <div className="flex flex-wrap items-start justify-between gap-4 p-5">
+              <div><h3 className="font-medium text-[#FF6A00]">Bittensor testnet · Subnet {testnet.chain.netuid}</h3><p className="mt-2 text-sm">First training-to-chain round completed. Revealed weights verified.</p></div>
+              <a href={TESTNET_SOURCE} className={`${LINK} text-sm`}>Round evidence (JSON) ↗</a>
+            </div>
+            <dl className="grid gap-6 border-t border-neutral-800 p-5 text-xs sm:grid-cols-2 lg:grid-cols-4">{[['Network', 'Bittensor testnet'], ['Publication receipt', testnet.chain.weight_transaction.extrinsic_id], ['Verified at block', testnet.chain.verification.block.toLocaleString('en-US')], ['Round status', 'Completed · recorded rehearsal']].map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="mt-2 text-neutral-200">{value}</dd></div>)}</dl>
+            <div role="region" aria-label="Recorded testnet miner weights" tabIndex={0} className="overflow-x-auto overscroll-x-contain">
+              <table className="w-full min-w-[420px] border-collapse text-sm">
+                <caption className="sr-only">Three evaluated miners and their verified testnet weight allocation</caption>
+                <thead className="bg-neutral-950 text-xs"><tr><th scope="col" className={HEAD}>Miner UID</th><th scope="col" className={CELL}>Correct / 224</th><th scope="col" className={CELL}>Requested weight</th><th scope="col" className={CELL}>On-chain value</th></tr></thead>
+                <tbody>{testnet.miners.map(miner => <tr key={miner.uid}><th scope="row" className={HEAD}>{miner.uid}</th><td className={CELL}>{miner.correct} / {miner.cases}</td><td className={`${CELL} text-neutral-100`}>{percent(miner.requested_weight)}</td><td className={CELL}>{miner.on_chain_u16.toLocaleString('en-US')}</td></tr>)}</tbody>
+              </table>
+            </div>
+            <p className="border-t border-neutral-800 p-5 text-xs leading-6">Weights are based on family-macro Brier skill. The chain stores maximum-scaled integers; their normalized proportions matched the requested allocation within quantization tolerance. Verified <time dateTime={testnet.verified_at}>{time(testnet.verified_at)}</time>. This is the observation time, not a live refresh.</p>
           </div>
-          <p className="mt-4 text-xs leading-6">A publication commitment alone does not establish that weights were applied. On-chain verification is a separate observation.</p>
-          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-3 text-sm"><a href={`${REPO}/blob/main/docs/testnet.md`} className={LINK}>Testnet status</a><a href={`${REPO}/blob/main/docs/roadmap.md`} className={LINK}>Roadmap</a></div>
+          <p className="mt-4 text-xs leading-6">Each 0.8B checkpoint trained for one epoch on 224 examples, calibrated on 112 questions, and was evaluated on the same 224 test questions. This reused synthetic development benchmark is separate from the public JevBench comparison above. All compute ran on one Apple M4 Pro with 24 GiB memory, with GPU jobs serialized.</p>
+          <p className="mt-3 text-xs leading-6">This closed rehearsal demonstrates the training-to-chain path. It does not establish mainnet deployment, miner earnings, open competition, or automatic model promotion.</p>
+          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-3 text-sm"><a href={TESTNET_SOURCE} className={LINK}>Scores, methodology & chain evidence</a><a href={`${REPO}/blob/main/docs/testnet.md`} className={LINK}>Testnet guide</a><a href={`${REPO}/blob/main/docs/roadmap.md`} className={LINK}>Roadmap</a></div>
         </PageSection>
       </div>
       <p className="mt-14 border-t border-neutral-800 pt-6 text-xs">Fez decision model. Public evidence, read-only access.</p>

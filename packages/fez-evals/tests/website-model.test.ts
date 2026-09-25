@@ -1,5 +1,22 @@
 import { expect, it } from 'vitest';
 import { benchmark, readComparison, percent, decimal, milliseconds, comparisonHeadline } from '../../../web/lib/model-benchmark.js';
+import testnet from '../../../web/public/model/testnet-round-001.json';
+
+it('publishes recorded testnet evidence whose chain weights match the requested allocation', () => {
+  expect(testnet.data_mode).toBe('recorded-closed-testnet-rehearsal');
+  expect(testnet.chain.network).toBe('test');
+  expect(testnet.chain.netuid).toBe(579);
+  expect(testnet.chain.weight_transaction.success).toBe(true);
+  expect(testnet.chain.verification.weights_verified).toBe(true);
+  expect(testnet.chain.verification.block).toBeGreaterThan(testnet.chain.verification.last_update);
+  const chainTotal = testnet.miners.reduce((sum, miner) => sum + miner.on_chain_u16, 0);
+  expect(testnet.miners.reduce((sum, miner) => sum + miner.requested_weight, 0)).toBeCloseTo(1, 8);
+  for (const miner of testnet.miners) {
+    expect(Object.entries(testnet.chain.verification.on_chain_weights)).toContainEqual([String(miner.uid), miner.on_chain_u16]);
+    expect(Math.abs(miner.on_chain_u16 / chainTotal - miner.requested_weight)).toBeLessThan(2 / 65535);
+    expect(miner.accuracy).toBeCloseTo(miner.correct / miner.cases, 8);
+  }
+});
 
 it('preserves the public model comparison, units, and unavailable values', () => {
   const { fez, kev } = readComparison(benchmark);

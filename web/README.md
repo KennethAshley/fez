@@ -61,6 +61,13 @@ From this directory, run `npm ci` for a fresh checkout, then `npm run dev -- --p
 The intended production path is `https://fez.chat/model` in the existing
 `fez-web` hosting project. Adding the route does not publish it automatically.
 
+The page also presents the completed Bittensor **testnet subnet 579** rehearsal
+from `public/model/testnet-round-001.json`, copied from the matching aggregate
+record in `ooo-hq/fez`. It includes miner scores, requested allocations, observed
+chain integers, and verification blocks. This is a recorded round on a reused
+synthetic development benchmark, separate from JevBench. The participant counts
+describe that one-host rehearsal; there is no live availability feed.
+
 ## Decision playground
 
 `/playground` runs typed questions against **our Fez checkpoint only**. It has

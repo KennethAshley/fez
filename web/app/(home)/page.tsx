@@ -117,6 +117,9 @@ export default function HomePage() {
             <p className="mt-3 text-[10px] text-neutral-600">
               No signup · no server to install · MIT
             </p>
+            <a href="/model#testnet" className="mt-8 inline-block text-xs leading-6 text-[#FF6A00] underline decoration-[#FF6A00]/40 underline-offset-4 hover:decoration-[#FF6A00]">
+              Fez decision model · Bittensor testnet subnet 579 · View the verified round →
+            </a>
           </section>
 
           <section

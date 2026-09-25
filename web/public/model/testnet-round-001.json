@@ -1,0 +1,193 @@
+{
+  "schema": "fez-testnet-round/v1",
+  "data_mode": "recorded-closed-testnet-rehearsal",
+  "verified_at": "2026-09-25T06:40:01.894076+00:00",
+  "round_id": "668d0ee3770b4344b372f75a41ddd680",
+  "chain": {
+    "network": "test",
+    "netuid": 579,
+    "validator_uid": 0,
+    "commit_reveal": true,
+    "registration": {
+      "success": true,
+      "message": "Subnet 579 registered.",
+      "block_hash": "0x51d07f8f1dd68cc668264fad10deb3108529c19be2e3fb09614c96ba6800f1f5",
+      "extrinsic_id": "8081190-0006",
+      "fee_tao": 0.001713029,
+      "data": {
+        "netuid": 579,
+        "registration_mode": "immediate",
+        "registered_at_block": 8081190,
+        "registration_price_rao": 1000000000
+      }
+    },
+    "weight_transaction": {
+      "success": true,
+      "message": "Inclusion recovered from chain block and success events; transaction was not resubmitted.",
+      "block_hash": "0x8d9b8a728a10f6e83921a7d8806ab4dec9383819449b72fd2b823201c047078e",
+      "extrinsic_id": "8081301-0008",
+      "extrinsic_hash": "0xccf932d531bd995c6e87dd8e4749e8f0996cc9d24fe92ff388e36ba4a582b36c",
+      "data": {
+        "reveal_round": 32504965
+      }
+    },
+    "verification": {
+      "weights_verified": true,
+      "block": 8081345,
+      "last_update": 8081301,
+      "on_chain_weights": {
+        "1": 65535,
+        "2": 64598,
+        "3": 62125
+      },
+      "observed_at": "2026-09-25T06:40:01.894076+00:00",
+      "block_hash": "0xaa738d25e0f17787ed5467427d5cc3d0e4e955dd307b556d9019578a6d378f1e"
+    },
+    "confirmation_recovery": {
+      "connection_lost_during_confirmation": true,
+      "inclusion_confirmed_from_block_and_success_event": true,
+      "resubmitted": false
+    }
+  },
+  "model": {
+    "base": "Qwen/Qwen3.5-0.8B-Base",
+    "base_revision": "dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68",
+    "reference_sha256": "3574c638613970f6967e447a4747fb9815a910dfc59d4c2a2af2f09ee848b28a"
+  },
+  "runtime": {
+    "python": "3.13.15",
+    "fez_commit": "6d229537397a40a9288388246021adde8399f786",
+    "runtime_commit": "30c619b0527501cfdd448cb6eb9887e2af454603",
+    "packages": {
+      "bittensor": "11.1.0",
+      "torch": "2.8.0",
+      "transformers": "5.17.0",
+      "peft": "0.21.0"
+    }
+  },
+  "hardware": {
+    "processor": "Apple M4 Pro",
+    "memory_gib": 24.0,
+    "device": "mps",
+    "dtype": "float32",
+    "participant_placement": "one host, three miner processes and one validator",
+    "compute_scheduling": "shared device lock; sequential GPU jobs"
+  },
+  "training": {
+    "epochs": 1,
+    "learning_rate": 2e-05,
+    "microbatch": 1,
+    "gradient_accumulation": 4,
+    "lora_rank": 16,
+    "head_dim": 256,
+    "seed": "derived per registered hotkey and round"
+  },
+  "benchmark": {
+    "rubric": "fez-decisions/v1",
+    "counts": {
+      "train": {
+        "cases": 224,
+        "groups": 112,
+        "scenarios": 16
+      },
+      "calibration": {
+        "cases": 112,
+        "groups": 56,
+        "scenarios": 8
+      },
+      "test": {
+        "cases": 224,
+        "groups": 112,
+        "scenarios": 16
+      }
+    },
+    "manifest_sha256": "960a61b54b603bff4bd47137b575e8524f7547cd2aa6342a70308da030bc8bc4",
+    "dataset_sha256": "bfed42cbffb3ca205699fab0adb11665e7960b20f3f12a487626e438a6306c68",
+    "use": "repeated local development; related synthetic rules across splits",
+    "raw_data_public": false
+  },
+  "reward_rule": "max(0, 1 - family_macro_brier / uniform_brier), normalized across eligible candidates",
+  "miners": [
+    {
+      "uid": 1,
+      "sha256": "e50548949ae4c32ed029a97429491ff54b96533978be0a9340abace0dc942e86",
+      "status": "evaluated",
+      "cases": 224,
+      "accuracy": 0.8169642857142857,
+      "brier": 0.27317654319929935,
+      "uniform_brier": 0.6458333333333334,
+      "skill": 0.5770169653688269,
+      "confident_errors": 7,
+      "runtime": {
+        "torch": "2.8.0",
+        "kev": "0.1.0",
+        "kev_commit": "30c619b0527501cfdd448cb6eb9887e2af454603",
+        "python": "3.13.15",
+        "backend": "torch",
+        "dtype": "fp32",
+        "temperature": 0.9330329915368074,
+        "model_load_ms": 1229.2486659716815
+      },
+      "correct": 183,
+      "submitted_sha256": "e59884b62de3e0e29574970ac9870553cc6ffd51b4f8ea79665cef067c9a3811",
+      "requested_weight": 0.34086907121674365,
+      "on_chain_u16": 65535
+    },
+    {
+      "uid": 2,
+      "sha256": "69204e709377c637bc5d98945dc5294062755958a550439702ec03fa0a7eb580",
+      "status": "evaluated",
+      "cases": 224,
+      "accuracy": 0.8035714285714286,
+      "brier": 0.2785019078874232,
+      "uniform_brier": 0.6458333333333334,
+      "skill": 0.568771239400119,
+      "confident_errors": 4,
+      "runtime": {
+        "torch": "2.8.0",
+        "kev": "0.1.0",
+        "kev_commit": "30c619b0527501cfdd448cb6eb9887e2af454603",
+        "python": "3.13.15",
+        "backend": "torch",
+        "dtype": "fp32",
+        "temperature": 1.189207115002721,
+        "model_load_ms": 1241.7096249992028
+      },
+      "correct": 180,
+      "submitted_sha256": "63b87b5f7ec884b20874f185dcc76908419bb2a207c5473e3e29610bebfd8ae1",
+      "requested_weight": 0.33599796149007444,
+      "on_chain_u16": 64598
+    },
+    {
+      "uid": 3,
+      "sha256": "e5b02ed94d23c4d3fda66524b4030d5c9d8f409a2c62ee0364bbdee0a9d91469",
+      "status": "evaluated",
+      "cases": 224,
+      "accuracy": 0.8035714285714286,
+      "brier": 0.29256662612482087,
+      "uniform_brier": 0.6458333333333334,
+      "skill": 0.5469936111615676,
+      "confident_errors": 4,
+      "runtime": {
+        "torch": "2.8.0",
+        "kev": "0.1.0",
+        "kev_commit": "30c619b0527501cfdd448cb6eb9887e2af454603",
+        "python": "3.13.15",
+        "backend": "torch",
+        "dtype": "fp32",
+        "temperature": 1.4142135623730947,
+        "model_load_ms": 1800.3944999654777
+      },
+      "correct": 180,
+      "submitted_sha256": "8f5dc5c33ae1a880caab0b967281dd9868f24f3221e60a4305d9b0aa3eaa2338",
+      "requested_weight": 0.32313296729318186,
+      "on_chain_u16": 62125
+    }
+  ],
+  "limitations": [
+    "Three miner processes and one validator were operated by one operator on one host.",
+    "Fresh checkpoints; reused synthetic development benchmark, not an independent generalization test.",
+    "One completed round; services exited afterward. No continuous fleet availability is claimed.",
+    "No mainnet deployment, miner earnings, open competition, model release, or automatic winner promotion was demonstrated."
+  ]
+}
