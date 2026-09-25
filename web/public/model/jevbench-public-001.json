@@ -1,0 +1,138 @@
+{
+  "schema_version": "fez.public-benchmark/v1",
+  "id": "jevbench-public-001",
+  "status": "completed",
+  "data_mode": "recorded_experiment",
+  "started_at": "2026-09-25T00:15:15.367112+00:00",
+  "verified_at": "2026-09-25T00:20:49.480193+00:00",
+  "benchmark": {
+    "name": "JevBench",
+    "subset": "231 released public items: 48 easy, 72 original, 111 hard",
+    "harness_commit": "26eb72d4e0e60d8ace0adfc77a384063442561cd",
+    "dataset_sha256": "dc3995d8ae1e2fc8e81ce38431add509eb8bb39b85aadfd0c7c32079382dde51",
+    "upstream_url": "https://github.com/fstandhartinger/jevbench/tree/26eb72d4e0e60d8ace0adfc77a384063442561cd",
+    "includes_private_or_sealed_items": false,
+    "official_rank": null,
+    "official_score": null
+  },
+  "runtime": {
+    "hardware": "NVIDIA GeForce RTX 4090",
+    "python": "3.13.15",
+    "torch": "2.8.0+cu128",
+    "cuda": "12.8",
+    "backend": "torch",
+    "precision": "fp32",
+    "kev_commit": "30c619b0527501cfdd448cb6eb9887e2af454603",
+    "latency_scope": "localhost HTTP including encoding, inference and serialization; excludes model loading and three synthetic warmup calls",
+    "measurement": "one serial pass per model; Kev then Fez",
+    "packages": {
+      "transformers": "5.17.0",
+      "peft": "0.21.0",
+      "fastapi": "0.141.1",
+      "starlette": "1.7.0",
+      "uvicorn": "0.53.0"
+    }
+  },
+  "models": [
+    {
+      "id": "kev",
+      "name": "Published Kev 0.8B",
+      "checkpoint_sha256": "af9331c6c6331099ce2d28a0298620ca540c991f781b6167ceb0f177f235190f",
+      "temperature": 2.3510958125672174,
+      "metrics": {
+        "n_attempted": 231,
+        "n_correct": 147,
+        "accuracy": 0.6363636363636364,
+        "brier_mean": 0.4516481482683982,
+        "ece": 0.04405021645021649,
+        "confident_errors": 3,
+        "schema_validity": 1.0,
+        "latency": {
+          "n": 231,
+          "p50_s": 0.05278178700000069,
+          "p95_s": 0.20936380949999744
+        }
+      },
+      "slices": {
+        "easy": {
+          "n_scorable": 48,
+          "n_correct": 48,
+          "accuracy": 1.0,
+          "brier_mean": 0.020856931666666665
+        },
+        "original": {
+          "n_scorable": 72,
+          "n_correct": 58,
+          "accuracy": 0.8055555555555556,
+          "brier_mean": 0.33043012763888885
+        },
+        "hard": {
+          "n_scorable": 111,
+          "n_correct": 41,
+          "accuracy": 0.36936936936936937,
+          "brier_mean": 0.7165641472072072
+        }
+      }
+    },
+    {
+      "id": "fez",
+      "name": "Fez — larger-data candidate",
+      "checkpoint_sha256": "63475109e543fe5f7fd2698ec27f6ac0b828c67074606409ad71697abca30da3",
+      "temperature": 1.148698354997035,
+      "metrics": {
+        "n_attempted": 231,
+        "n_correct": 147,
+        "accuracy": 0.6363636363636364,
+        "brier_mean": 0.46360824536796535,
+        "ece": 0.11361515151515153,
+        "confident_errors": 8,
+        "schema_validity": 1.0,
+        "latency": {
+          "n": 231,
+          "p50_s": 0.042076722999993876,
+          "p95_s": 0.20526295199999822
+        }
+      },
+      "slices": {
+        "easy": {
+          "n_scorable": 48,
+          "n_correct": 48,
+          "accuracy": 1.0,
+          "brier_mean": 0.006789479166666667
+        },
+        "original": {
+          "n_scorable": 72,
+          "n_correct": 57,
+          "accuracy": 0.7916666666666666,
+          "brier_mean": 0.2964282773611111
+        },
+        "hard": {
+          "n_scorable": 111,
+          "n_correct": 42,
+          "accuracy": 0.3783783783783784,
+          "brier_mean": 0.7695925559459459
+        }
+      }
+    }
+  ],
+  "paired_outcomes": {
+    "fez_corrected": 6,
+    "fez_regressed": 6,
+    "net_additional_correct": 0
+  },
+  "published_reference": {
+    "name": "Jev 1.13.0",
+    "n_attempted": 231,
+    "n_correct": 200,
+    "source_url": "https://github.com/fstandhartinger/jevbench/blob/26eb72d4e0e60d8ace0adfc77a384063442561cd/results/v1.2/jevbench-v1.2-per-task.json",
+    "source_sha256": "c772b3b85809f483449ec2a6ae0272347371ed5f40f7faff8394ecf4ee22ae7c",
+    "scope": "Stored upstream outcomes filtered to the identical 231 public item IDs; not a fresh run or a matched hardware/latency comparison."
+  },
+  "limitations": [
+    "Public subset only; no official leaderboard rank or composite.",
+    "Both saved temperatures retained; no calibration or training on JevBench.",
+    "No exact normalized state overlap found in recorded local training; upstream contamination and semantic similarity remain unknown.",
+    "Single serial timing pass, not a repeated or production-speed study.",
+    "Hosted cost unmeasured; no cost estimate is presented."
+  ]
+}
