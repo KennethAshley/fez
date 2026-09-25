@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { docsUrl } from '@/lib/shared';
+import { discordUrl, docsUrl } from '@/lib/shared';
 
 /**
  * The one header every page wears — same links in the same order, so no
@@ -7,12 +7,13 @@ import { docsUrl } from '@/lib/shared';
  * one place. The current page's link renders lit instead of vanishing.
  */
 const LINKS = [
-  { href: '/app', label: 'app' },
+  { href: 'https://github.com/KennethAshley/fez', label: 'github' },
   { href: '/model', label: 'model' },
   { href: '/playground', label: 'playground' },
+  { href: '/app', label: 'app' },
   // The manual lives on its own hostname — an absolute link, not a path.
   { href: docsUrl, label: 'docs' },
-  { href: 'https://github.com/KennethAshley/fez', label: 'github' },
+  { href: discordUrl, label: 'discord' },
 ] as const;
 
 export function SiteHeader({ current }: { current?: string }) {
