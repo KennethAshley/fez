@@ -1,10 +1,11 @@
 use nostr::JsonUtil as _;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod always_on;
 mod bounded_command;
 mod bundled_extensions;
 mod desktop_runtime;
 mod git_install;
+mod keychain;
 mod isolated_panel;
 #[cfg(feature = "native-browser")]
 pub mod native_surfaces;
@@ -87,37 +88,17 @@ fn get_identity(account: Option<String>) -> Result<String, String> {
 // Absence is data, access failure is an error. Key creation must never
 // infer permission to replace an identity from a failed keychain read.
 fn read_identity(account: &str) -> Result<Option<String>, String> {
-    let output = Command::new("security")
-        .args([
-            "find-generic-password",
-            "-s",
-            "fez-keys",
-            "-a",
-            account,
-            "-w",
-        ])
-        .output()
-        .map_err(|e| format!("couldn't run security: {e}"))?;
-    if !output.status.success() {
-        // Two very different failures share a non-zero exit, and the app
-        // routes on which one it was: "no such item" is a FRESH MACHINE
-        // (the frontend matches "no fez identity" and shows onboarding),
-        // while a denied prompt / locked keychain is an access failure
-        // that must NOT create a second identity — it gets a retry
-        // screen instead. `security` exits 44 (errSecItemNotFound) when
-        // the item is absent; the stderr match is the belt to that
-        // suspender.
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let not_found = output.status.code() == Some(44) || stderr.contains("could not be found");
-        if not_found {
-            return Ok(None);
-        }
-        return Err(format!(
-            "keychain access failed for account \"{account}\": {}",
-            stderr.trim()
-        ));
-    }
-    let hex = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // Two very different failures share a non-zero exit, and the app
+    // routes on which one it was: "no such item" is a FRESH MACHINE (the
+    // frontend matches "no fez identity" and shows onboarding), while a
+    // denied prompt / locked store is an access failure that must NOT
+    // create a second identity — it gets a retry screen instead.
+    // keychain::find keeps the two apart, per platform.
+    let hex = match keychain::find("fez-keys", account) {
+        Ok(Some(hex)) => hex,
+        Ok(None) => return Ok(None),
+        Err(detail) => return Err(format!("keychain access failed for account \"{account}\": {detail}")),
+    };
     if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("keychain entry is not a 64-hex key".to_string());
     }
@@ -330,28 +311,7 @@ fn store_identity(account: &str, hex: &str, replace: bool) -> Result<(), String>
             Err(e) => return Err(format!("can't tell whether an identity already exists — {e}")),
         }
     }
-    let mut command = Command::new("security");
-    command.args([
-        "add-generic-password",
-        "-s",
-        "fez-keys",
-        "-a",
-        account,
-        "-w",
-        hex,
-    ]);
-    // Without -U the keychain also refuses a concurrent CLI's new key;
-    // the read-before-write guard alone cannot make creation atomic.
-    if replace {
-        command.arg("-U");
-    }
-    let status = command
-        .status()
-        .map_err(|e| format!("couldn't run security: {e}"))?;
-    if !status.success() {
-        return Err("keychain write failed".to_string());
-    }
-    Ok(())
+    keychain::store("fez-keys", account, hex, replace)
 }
 
 /// Create a persona file (~/.fez/personas/<name>.md) — the GUI's agent
@@ -491,14 +451,7 @@ fn set_skill_secret(skill: String, key: String, value: String) -> Result<(), Str
         return Err("empty value — use the keychain app to delete entries".to_string());
     }
     let account = format!("{skill}.{key}");
-    let status = Command::new("security")
-        .args(["add-generic-password", "-U", "-s", "fez-skill-env", "-a", &account, "-w", &value])
-        .status()
-        .map_err(|e| format!("couldn't run security: {e}"))?;
-    if !status.success() {
-        return Err("keychain write failed".to_string());
-    }
-    Ok(())
+    keychain::store("fez-skill-env", &account, &value, true)
 }
 
 /// Whether a secret exists (never its value).
@@ -511,9 +464,7 @@ fn delete_skill_secret(skill: String, key: String) -> Result<(), String> {
         return Err("bad skill/key name".to_string());
     }
     let account = format!("{skill}.{key}");
-    let _ = Command::new("security")
-        .args(["delete-generic-password", "-s", "fez-skill-env", "-a", &account])
-        .status();
+    keychain::forget("fez-skill-env", &account);
     Ok(())
 }
 
@@ -523,19 +474,7 @@ fn has_skill_secret(skill: String, key: String) -> Result<bool, String> {
         return Err("bad skill/key name".to_string());
     }
     let account = format!("{skill}.{key}");
-    let output = Command::new("security")
-        .args(["find-generic-password", "-s", "fez-skill-env", "-a", &account])
-        .output()
-        .map_err(|e| format!("couldn't run security: {e}"))?;
-    keychain_presence(output.status.code())
-}
-
-fn keychain_presence(code: Option<i32>) -> Result<bool, String> {
-    match code {
-        Some(0) => Ok(true),
-        Some(44) => Ok(false), // errSecItemNotFound; a locked/denied keychain is not "disconnected".
-        _ => Err("keychain access failed".into()),
-    }
+    keychain::contains("fez-skill-env", &account)
 }
 
 /// GUI extension parts installed by `fez install`/`fez link`
@@ -767,18 +706,7 @@ async fn factory_reset(app: tauri::AppHandle) -> Result<(), String> {
         }
         std::thread::sleep(std::time::Duration::from_millis(300));
         for service in ["fez-keys", "fez-skill-env", "fez-wallet"] {
-            // One entry per account; `security` deletes one match per
-            // call — loop until the service is empty.
-            loop {
-                let ok = Command::new("security")
-                    .args(["delete-generic-password", "-s", service])
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false);
-                if !ok {
-                    break;
-                }
-            }
+            keychain::forget_service(service);
         }
         let _ = std::fs::remove_dir_all(std::path::Path::new(&home).join(".fez"));
     })
@@ -889,12 +817,9 @@ fn wire_provider_pi(provider: String) -> Result<String, String> {
     let spec = provider_spec(&provider).ok_or_else(|| format!("unknown provider {provider}"))?;
     let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
 
-    let key = Command::new("security")
-        .args(["find-generic-password", "-s", "fez-skill-env", "-a", &format!("{}.{}", spec.id, spec.key_name), "-w"])
-        .output()
+    let key = keychain::find("fez-skill-env", &format!("{}.{}", spec.id, spec.key_name))
         .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .flatten()
         .filter(|k| !k.is_empty())
         .ok_or_else(|| format!("No {} key yet — add it first.", spec.name))?;
 
@@ -2820,7 +2745,7 @@ pub fn run() {
                 let quit = MenuItem::with_id(app, "fez-quit", "Quit Fez…", true, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&show])?;
                 let mut tray = tauri::tray::TrayIconBuilder::new().tooltip("Fez");
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 {
                     use tauri::{menu::CheckMenuItem, Emitter};
                     let mut awake = always_on::AlwaysOn::new(fez_home().map_err(std::io::Error::other)?.join("desktop-always-on"));

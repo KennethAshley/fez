@@ -16,6 +16,7 @@ import { buildFezPersonaMd, buildStarterPersonaMd, STARTER_TEAM } from "./welcom
 import { PROVIDERS } from "./providers";
 import { localAgents, agentReady, type LocalAgentStatus } from "./harnesses";
 import { parseWorkspaceInvite, workspaceInvite } from "../../fez-client/src/workspace-invite";
+import { KEYSTORE } from "./platform";
 
 export { nextStep, prevStep };
 
@@ -838,7 +839,7 @@ function TeamStep({ keyHex, error, onFinish, onBack }: { keyHex?: string; error?
         ))}
       </div>
       <p className="ob-lede">
-        <span className="ob-prompt">&gt;</span> You own your identity: it is saved in this Mac’s keychain. Keep a backup to recover it
+        <span className="ob-prompt">&gt;</span> You own your identity: it is saved in your {KEYSTORE}. Keep a backup to recover it
         if you lose this machine. Never share your backup key — it gives access to your identity.
       </p>
       {keyHex && (
