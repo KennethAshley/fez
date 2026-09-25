@@ -53,7 +53,7 @@ export default function ModelPage() {
 
   return (
     <SitePage current="model" title="Decisions, measured."
-      description="Fez is a small decision model for yes/no questions, choices, and scores. Built on Kev’s 0.8B model and improved through a training competition."
+      description="Fez is an experimental 0.8B decision model for yes/no questions, choices, and scores. It returns structured probabilities without generating prose."
       note="Experimental candidate. No public model release or automatic winner promotion yet.">
       <nav aria-label="Project resources" className="mb-8 grid gap-3 sm:grid-cols-3">
         {[
@@ -88,12 +88,12 @@ export default function ModelPage() {
         <PageSection id="quality" title="Model quality">
           <div className="mb-6 border-l-2 border-[#FF6A00] bg-[#FF6A00]/5 px-5 py-4">
             <p className="font-medium text-neutral-100">{comparisonHeadline(fez, kev)}</p>
-            <p className="mt-2 text-sm">Fez corrected {benchmark.paired_outcomes.fez_corrected} Kev errors and introduced {benchmark.paired_outcomes.fez_regressed}. No general improvement is established.</p>
+            <p className="mt-2 text-sm">Fez corrected {benchmark.paired_outcomes.fez_corrected} reference-model errors and introduced {benchmark.paired_outcomes.fez_regressed}. No general improvement is established.</p>
           </div>
           <dl className="mb-6 grid grid-cols-1 divide-y divide-neutral-800 border border-neutral-800 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
             <div className="p-5"><dt className="text-xs">Fez accuracy</dt><dd className="mt-2 font-mono text-3xl tracking-tight text-white">{percent(f.accuracy)}</dd><dd className="mt-2 text-xs">{f.n_correct} of {f.n_attempted} public items correct</dd></div>
-            <div className="p-5"><dt className="text-xs">Fez Brier loss</dt><dd className="mt-2 font-mono text-3xl tracking-tight text-white">{decimal(f.brier_mean)}</dd><dd className="mt-2 text-xs">Kev: {decimal(k.brier_mean)}. Lower is better.</dd></div>
-            <div className="p-5"><dt className="text-xs">Fez confident mistakes</dt><dd className="mt-2 font-mono text-3xl tracking-tight text-white">{f.confident_errors}</dd><dd className="mt-2 text-xs">{k.confident_errors} for Kev. Wrong at ≥90% confidence.</dd></div>
+            <div className="p-5"><dt className="text-xs">Fez Brier loss</dt><dd className="mt-2 font-mono text-3xl tracking-tight text-white">{decimal(f.brier_mean)}</dd><dd className="mt-2 text-xs">Probability error. Lower is better.</dd></div>
+            <div className="p-5"><dt className="text-xs">Fez confident mistakes</dt><dd className="mt-2 font-mono text-3xl tracking-tight text-white">{f.confident_errors}</dd><dd className="mt-2 text-xs">Wrong at ≥90% confidence.</dd></div>
           </dl>
 
           <div className="border border-neutral-800">
@@ -104,8 +104,8 @@ export default function ModelPage() {
             <div role="region" aria-label="Overall model comparison" tabIndex={0} className="overflow-x-auto overscroll-x-contain">
               <table className="w-full min-w-[320px] border-collapse text-sm">
                 <caption className="sr-only">Recorded Fez and published Kev results on the same public items</caption>
-                <thead className="bg-neutral-950 text-xs text-neutral-300"><tr><th scope="col" className={HEAD}>Metric</th><th scope="col" className={CELL}>Published Kev 0.8B<span className="mt-1 block font-normal text-neutral-400">Reference checkpoint</span></th><th scope="col" className={`${CELL} text-[#FF6A00]`}>Fez candidate<span className="mt-1 block font-normal text-neutral-400">Experimental checkpoint</span></th></tr></thead>
-                <tbody>{rows.map(([name, hint, baseline, candidate]) => <tr key={name} className="hover:bg-neutral-950"><th scope="row" className={HEAD}>{name}<span className="mt-1 block text-xs text-neutral-400">{hint}</span></th><td className={CELL}>{baseline ?? 'Unavailable'}</td><td className={`${CELL} font-medium text-neutral-100`}>{candidate ?? 'Unavailable'}</td></tr>)}</tbody>
+                <thead className="bg-neutral-950 text-xs text-neutral-300"><tr><th scope="col" className={HEAD}>Metric</th><th scope="col" className={`${CELL} text-[#FF6A00]`}>Fez candidate<span className="mt-1 block font-normal text-neutral-400">Experimental checkpoint</span></th><th scope="col" className={CELL}>Published Kev 0.8B<span className="mt-1 block font-normal text-neutral-400">Comparison baseline</span></th></tr></thead>
+                <tbody>{rows.map(([name, hint, baseline, candidate]) => <tr key={name} className="hover:bg-neutral-950"><th scope="row" className={HEAD}>{name}<span className="mt-1 block text-xs text-neutral-400">{hint}</span></th><td className={`${CELL} font-medium text-neutral-100`}>{candidate ?? 'Unavailable'}</td><td className={CELL}>{baseline ?? 'Unavailable'}</td></tr>)}</tbody>
               </table>
             </div>
             <p className="border-t border-neutral-800 px-4 py-4 text-xs leading-6 sm:px-5">Brier loss measures probability error; ECE measures the gap between confidence and observed accuracy. Lower is better for both. Timing is {benchmark.runtime.measurement}, on {benchmark.runtime.hardware}, via localhost HTTP. This does not establish a reliable speedup or production SLA.</p>
@@ -117,8 +117,8 @@ export default function ModelPage() {
               <div role="region" aria-label="Accuracy by difficulty" tabIndex={0} className="overflow-x-auto overscroll-x-contain">
                 <table className="w-full min-w-[310px] border-collapse text-sm">
                   <caption className="sr-only">Correct and total counts, with accuracy, for each public subset</caption>
-                  <thead className="bg-neutral-950 text-xs"><tr><th scope="col" className={HEAD}>Subset</th><th scope="col" className={CELL}>Kev</th><th scope="col" className={`${CELL} text-[#FF6A00]`}>Fez</th></tr></thead>
-                  <tbody>{(['easy', 'original', 'hard'] as const).map(name => <tr key={name}><th scope="row" className={`${HEAD} capitalize`}>{name}</th>{[kev, fez].map(model => <td key={model.id} className={CELL}>{model.slices[name]?.n_correct ?? 'Unavailable'} / {model.slices[name]?.n_scorable ?? 'Unavailable'}<span className="block text-xs text-neutral-400">{percent(model.slices[name]?.accuracy)}</span></td>)}</tr>)}</tbody>
+                  <thead className="bg-neutral-950 text-xs"><tr><th scope="col" className={HEAD}>Subset</th><th scope="col" className={`${CELL} text-[#FF6A00]`}>Fez</th><th scope="col" className={CELL}>Kev baseline</th></tr></thead>
+                  <tbody>{(['easy', 'original', 'hard'] as const).map(name => <tr key={name}><th scope="row" className={`${HEAD} capitalize`}>{name}</th>{[fez, kev].map(model => <td key={model.id} className={CELL}>{model.slices[name]?.n_correct ?? 'Unavailable'} / {model.slices[name]?.n_scorable ?? 'Unavailable'}<span className="block text-xs text-neutral-400">{percent(model.slices[name]?.accuracy)}</span></td>)}</tr>)}</tbody>
                 </table>
               </div>
             </div>
@@ -138,6 +138,7 @@ export default function ModelPage() {
           <details className="border-y border-neutral-800 py-4 text-sm">
             <summary className="cursor-pointer text-neutral-200 hover:text-[#FF6A00]">Method, checkpoint identities & limitations</summary>
             <div className="mt-5 space-y-5 text-sm leading-7">
+              <p>Fez fine-tunes a published Kev 0.8B checkpoint built on Qwen3.5-0.8B-Base. The unchanged published checkpoint is the baseline in this comparison.</p>
               <p>No official JevBench rank or composite score is available: private and sealed tests were not run. Hosted cost was not measured. Other experiment suites are documented separately and cannot form an improvement line with this comparison.</p>
               <dl className="space-y-4 text-xs">
                 <div><dt className="text-neutral-200">Experiment / collection started</dt><dd>{benchmark.id} / <time dateTime={benchmark.started_at}>{time(benchmark.started_at)}</time></dd></div>
