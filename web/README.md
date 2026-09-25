@@ -35,3 +35,22 @@ The website's production hosting target is distinct from the chain network:
 the current Bazaar integration uses **Bittensor testnet, subnet 553**. A site
 deployment does not authorize model spending, specialist payments, or changes
 to coordination rewards.
+
+## Decision model page
+
+`/model` presents the experimental Fez decision model and its recorded public
+JevBench comparison. The shared header links to it from the homepage. This is
+separate from the coordination judge and its historical testnet records.
+
+The route is prerendered from `public/model/jevbench-public-001.json`; it requires
+no browser data request or live subnet service. That file is a public snapshot
+of `docs/data/jevbench-public-001.json` from `ooo-hq/fez`. Update the snapshot from
+that source and rerun the checks when the recorded comparison changes; never
+copy raw runs, private state, or model artifacts. The page exposes the same JSON
+at `/model/jevbench-public-001.json` for inspection. Evidence timestamps describe
+the experiment, not the time a visitor opens the page.
+
+From this directory, run `npm ci` for a fresh checkout, then `npm run dev -- --port 4175 --hostname 127.0.0.1` and open <http://127.0.0.1:4175/model>. Verify with
+`npm run types:check`, `npm run build`, and the repository's `npm run evals`.
+The intended production path is `https://fez.chat/model` in the existing
+`fez-web` hosting project. Adding the route does not publish it automatically.
