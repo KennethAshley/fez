@@ -1,0 +1,63 @@
+.playground { --edge: #303030; color: #b5b5b5; font-family: var(--font-sans); font-size: 14px; }
+.playground button, .playground select { cursor: pointer; }
+.playground button:disabled, .playground select:disabled { cursor: wait; opacity: .5; }
+.sourceNotice { border-left: 2px solid #ff6a00; padding: 2px 0 2px 16px; margin-bottom: 36px; }
+.sourceNotice > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.sourceNotice strong { color: #fff; font-weight: 500; }
+.sourceNotice p { margin-top: 6px; font-size: 13px; line-height: 1.6; }
+.statusDot { width: 6px; height: 6px; background: #ff6a00; border-radius: 50%; }
+.toolbar { display: flex; justify-content: space-between; align-items: end; gap: 20px; }
+.presets, .views { display: flex; gap: 22px; flex-wrap: wrap; }
+.presets button, .views button { padding: 10px 0; border-bottom: 2px solid transparent; white-space: nowrap; }
+.presets button[aria-pressed=true], .views button[aria-pressed=true] { color: #fff; border-color: #ff6a00; }
+.playground button:hover { color: #fff; }
+.modelLabel { display: flex; align-items: center; gap: 12px; white-space: nowrap; font-size: 12px; }
+.modelLabel select { color: #fff; background: #101010; border: 1px solid var(--edge); border-radius: 5px; padding: 8px 30px 8px 12px; max-width: 240px; }
+.presetDescription { font-size: 13px; margin: 12px 0 28px; }
+.columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr); gap: 36px; }
+.editor, .results { min-width: 0; }
+.editor fieldset { border: 0; min-width: 0; padding: 0; margin: 0; }
+.editor label { display: block; font-weight: 500; color: #fff; font-size: 13px; }
+.editor label span { font-weight: 400; color: #999; margin-left: 8px; }
+.editor textarea { display: block; width: 100%; border: 1px solid var(--edge); background: #0b0b0b; color: #e5e5e5; padding: 16px; border-radius: 6px; resize: vertical; font: 12px/1.75 var(--font-mono); tab-size: 2; }
+.state { min-height: 154px; margin-top: 12px; }
+.questions { min-height: 390px; margin-top: 12px; }
+.questionLabel { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 28px; }
+.questionLabel button { font-size: 11px; white-space: nowrap; }
+.runControls { display: flex; align-items: center; gap: 18px; margin-top: 16px; font-size: 12px; }
+.runButton { white-space: nowrap; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 32px; background: #ff6a00; border: 1px solid #ff6a00; border-radius: 5px; color: #000; padding: 11px 16px; font-size: 13px; font-weight: 600; }
+.runControls .runButton:hover { color: #000; background: #ff8533; }
+.runButton span { font: 11px var(--font-mono); opacity: .75; }
+.privacy { font-size: 12px; line-height: 1.7; color: #999; margin-top: 14px; max-width: 62ch; }
+.error { margin-top: 14px; background: #261607; border: 1px solid #965221; border-radius: 5px; padding: 12px; color: #ffbe91; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.resultToolbar { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--edge); margin-top: -10px; font-size: 13px; }
+.resultToolbar > button { padding: 8px; }
+.resultStatus { color: #999; min-height: 44px; display: flex; align-items: center; font-size: 12px; line-height: 1.7; }
+.runMeta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11px; margin: 0 0 18px; color: #999; }
+.runMeta span:first-child { flex-basis: 100%; color: #ddd; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.answer { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1fr); align-items: center; gap: 24px; border: 1px solid var(--edge); border-radius: 6px; padding: 18px; margin-bottom: 12px; }
+.answerIntro { min-width: 0; }
+.questionId { font: 11px/1.6 var(--font-mono); overflow-wrap: anywhere; }
+.questionId span { display: block; color: #999; font: 11px var(--font-sans); }
+.answer h3 { font-size: 13px; font-weight: 400; line-height: 1.6; color: #ddd; margin-top: 8px; overflow-wrap: anywhere; }
+.winner { font: 500 17px/1.5 var(--font-mono); color: #fff; margin-top: 12px; overflow-wrap: anywhere; }
+.confidence { font-size: 11px; margin-top: 3px; }
+.probabilities { min-width: 0; }
+.probabilities > div { margin: 9px 0; font-size: 11px; }
+.probabilities dt { overflow-wrap: anywhere; margin-bottom: 5px; }
+.probabilities dd { display: flex; align-items: center; gap: 10px; }
+.probabilities dd > span:last-child { min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
+.track { flex: 1; height: 4px; background: #252525; border-radius: 2px; overflow: hidden; }
+.track > span { display: block; height: 100%; background: #777; }
+.leading { color: #fff; }
+.leading .track > span { background: #ff6a00; }
+.empty { min-height: 430px; border: 1px dashed var(--edge); border-radius: 6px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 35px; }
+.emptyMark { color: #ff6a00; font-size: 36px; line-height: 1; margin-bottom: 26px; }
+.empty h2 { font: 500 19px/1.5 var(--font-mono); color: #fff; }
+.empty p { max-width: 35ch; line-height: 1.8; margin-top: 14px; font-size: 13px; }
+.empty .emptyTypes { display: flex; justify-content: center; gap: 20px; font-size: 11px; color: #999; margin-top: 30px; }
+.code { max-height: 660px; overflow: auto; border: 1px solid var(--edge); border-radius: 6px; background: #0b0b0b; padding: 18px; font: 12px/1.8 var(--font-mono); color: #ddd; white-space: pre-wrap; overflow-wrap: anywhere; }
+.apiNote, .resultFootnote { font-size: 12px; line-height: 1.8; margin: 0 0 16px; color: #999; }
+.resultFootnote { margin-top: 18px; }
+@media (max-width: 900px) { .toolbar { align-items: start; flex-direction: column-reverse; gap: 14px; } .columns { gap: 24px; } .answer { grid-template-columns: 1fr; gap: 12px; } }
+@media (max-width: 650px) { .columns { grid-template-columns: 1fr; gap: 40px; } .presets { gap: 4px 20px; } .questions { min-height: 320px; } .editor label span { display: block; margin: 4px 0 0; } .empty { min-height: 280px; } .answer { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 14px; } .runControls { gap: 12px; } .runButton { gap: 20px; } .sourceNotice > div > span:last-child { flex-basis: 100%; } }

@@ -8,6 +8,7 @@ import { docsUrl } from '@/lib/shared';
  */
 const LINKS = [
   { href: '/model', label: 'model' },
+  { href: '/playground', label: 'playground' },
   // The manual lives on its own hostname — an absolute link, not a path.
   { href: docsUrl, label: 'docs' },
   { href: 'https://github.com/KennethAshley/fez', label: 'github' },
