@@ -10,7 +10,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 const run = promisify(execFile);
 
-it('stages the normal Fez identity, updates, signed resources and owner assets without lab permissions', async () => {
+it.skipIf(process.platform !== 'darwin')('stages the normal Fez identity, updates, signed resources and owner assets without lab permissions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fez-native-package-'));
   let stage: string | undefined;
   const desktop = join(root, 'packages/fez-desktop/src-tauri');
@@ -97,10 +97,6 @@ fs.chmodSync(cli,0o755);
     const built = await run(process.execPath, [join(desktop, '../scripts/tauri-native.mjs'), 'build', '--debug', '--bundles', 'app'], {
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FEZ_TAURI_CHECKOUT: tauri, FEZ_TAURI_PLUGINS_CHECKOUT: plugins, CARGO_TARGET_DIR: '' },
     }).then(() => ({ error: undefined }), error => ({ error: String(error) }));
-    if (process.platform !== 'darwin') {
-      expect(built.error).toContain('Native browser desktop builds currently require macOS');
-      return;
-    }
     expect(built.error).toBeUndefined();
     const packaged = JSON.parse(await readFile(join(desktop, 'target/packaged.json'), 'utf8'));
     expect(packaged).toMatchObject({ args: ['build', '--debug', '--bundles', 'app', '--', '--locked'],

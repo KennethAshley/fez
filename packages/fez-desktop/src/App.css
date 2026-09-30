@@ -162,6 +162,10 @@ body {
   display: flex; align-items: center; justify-content: flex-end;
   padding: 2px 12px 0 78px; margin-bottom: 6px;
 }
+/* Linux keeps its system titlebar, so the light-well would be a second,
+   empty strip above the app — the 78px gap exists only to clear the macOS
+   traffic lights. The platform flag is set on every page load. */
+:root[data-platform="linux"] .rail-titlebar { display: none; }
 .rail {
   width: var(--rail-w, 240px);
   min-width: var(--rail-w, 240px);
