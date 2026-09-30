@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 
+import { SiteFooter } from '@/components/site-footer';
 import { SiteHeader } from '@/components/site-header';
 
 const ACCENT = 'text-[#FF6A00]';
@@ -100,12 +101,7 @@ export default function TermsPage() {
             </p>
           </Section>
         </main>
-        <footer className="flex items-center justify-between border-t border-neutral-900 py-8 text-xs text-neutral-700">
-          <span>
-            the relay remembers<span className={ACCENT}>.</span>
-          </span>
-          <span>early</span>
-        </footer>
+        <SiteFooter tone="dark" />
       </div>
     </div>
   );

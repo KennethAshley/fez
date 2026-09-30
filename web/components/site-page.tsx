@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { SiteFooter } from '@/components/site-footer';
 import { SiteHeader } from '@/components/site-header';
 
 export function SitePage({ current, title, description, note, children }: {
@@ -21,6 +22,7 @@ export function SitePage({ current, title, description, note, children }: {
           <div className="font-sans text-base leading-7">{children}</div>
         </main>
       </div>
+      <SiteFooter tone="dark" />
     </div>
   );
 }

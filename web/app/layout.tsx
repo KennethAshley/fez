@@ -16,8 +16,8 @@ const plexMono = IBM_Plex_Mono({
 
 export default function Layout({ children }: LayoutProps<'/'>) {
   return (
-    // Dark-only on purpose: the whole site commits to the black/ember
-    // look; a theme toggle here would fork the brand in half.
+    // Product and research routes retain their dark surfaces; the homepage
+    // defines its own light presentation.
     <html
       lang="en"
       className={`${plexSans.variable} ${plexMono.variable} dark`}

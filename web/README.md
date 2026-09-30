@@ -40,7 +40,8 @@ to coordination rewards.
 
 `/app` restores the former desktop-app homepage, including the Mac download,
 video tour, agent roster, and guide. It uses the shared site navigation and
-existing showcase components. The main `/` route remains the network homepage.
+existing showcase components. The main `/` route presents the early-access business decision-model direction.
+The former Sidecar/network homepage is preserved at `/cli` (`/network` redirects there).
 
 ## Decision model page
 
@@ -127,3 +128,91 @@ disconnected endpoint behavior, and a 390px mobile layout.
 The interaction is inspired by [Kev's playground](https://github.com/jaredpalmer/kev/tree/main/playground).
 The UI and examples here are original; the model-serving dependency remains
 Jared Palmer's Apache-2.0 Kev implementation.
+
+## Business positioning
+
+The homepage preserves the approved hero copy and distinguishes proposed customer
+training and deployment from the experimental pipeline. Its contact CTA uses the
+existing Discord community invite (`lib/shared.ts`); there is no customer signup
+or data-upload form. A dedicated business contact destination remains a product
+decision. Research stays at `/model`, with the original aggregate evidence intact.
+The playground, agent network, Mac app, extensions, artifacts, and manual remain
+available. Homepage canonical, Open Graph, and Twitter copy share the positioning.
+This update does not change Vercel configuration or publish a deployment.
+
+## Homepage visual design
+
+The light pages (home, research, playground, CLI) share `components/light.module.css`
+(drifting gradients, grain, scanlines, a phosphor terminal look) plus
+`LightBackdrop`/`SiteFooter` from `components/site-footer.tsx`. The header carries
+research and playground; everything else is in the one footer list,
+`FOOTER_LINKS` in `components/site-header.tsx`.
+
+The homepage ticker and the testnet replay terminal are built at request time
+from `public/model/*.json`; every number shown is in those records. The hero
+decision instrument (`app/(home)/live.tsx`) is illustrative and labeled so.
+All looping motion stops under reduced-motion preferences, and the instrument
+server-renders its settled first frame.
+
+## Training dashboard (development)
+
+`/train` is an authenticated UI for the model repository's coordinator API. It
+uses the existing Fez Supabase project, isolated by the backend's `fez_training_*`
+tables and private `fez-training-data` / `fez-training-models` buckets. This web
+app does not create tables, apply migrations, assign workers, or host inference.
+No backend or dashboard deployment is implied by this code.
+
+Configure these public browser settings in the website environment before building:
+
+```dotenv
+NEXT_PUBLIC_SUPABASE_URL=https://your-existing-project.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-public-publishable-key
+NEXT_PUBLIC_FEZ_TRAINING_API_URL=https://your-training-coordinator.example
+```
+
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` is a legacy fallback. Never put a Supabase service
+role or secret key in a public environment variable. Missing/invalid configuration
+renders a disconnected state with no signup form, uploads, or simulated jobs.
+Keep the actual project URL and publishable key configurable; do not copy service
+credentials into this repository.
+
+Deployment preparation (not performed by this change):
+
+- Apply the coordinator-owned SQL/storage migration to the existing project.
+- Configure Supabase email-link authentication and allow the exact `/train`
+  return URL on each approved website origin (including localhost for testing).
+- Deploy/configure the coordinator with its own server-side credentials and
+  approved workers. Allow the website origin in coordinator CORS; support
+  Authorization and Content-Type headers, GET/POST/OPTIONS requests.
+- Allow direct signed Storage PUTs with Content-Type and x-upsert headers.
+- Supply the three public website variables, rebuild, and test with authorized
+  synthetic data before accepting customer datasets.
+
+The browser checks three independently prepared JSONL splits (up to 128 MiB
+apiece), IDs, source groups, prompt overlap, labels, and family coverage before
+creating a job. This is a convenience check; the server is authoritative and
+checks again. It cannot detect semantic duplication or establish data rights.
+An explicit checkbox records permission to export training data to approved
+workers, who can read and retain it. This is not confidential compute.
+
+The UI creates a job, uploads raw files directly to private signed Supabase URLs,
+and submits for validation. Session bearer tokens go only to the coordinator.
+Failed uploads remain recoverable: reselect the original three files and use
+Resume missing uploads; `{uploaded:true}` slots are skipped, never overwritten.
+Retry submission handles the case where files arrived but submission did not.
+Cancel this job frees a stalled uploading job's active quota (five per account).
+Stop cancels local validation/network work, not a remote job already submitted.
+
+Jobs are refreshed every ten seconds while active; network failures retry at
+thirty seconds. The UI distinguishes operator approval, queueing, training,
+evaluation, accepted delivery, and no qualifying model. Signed download links
+are fetched on demand only for accepted completed jobs and are not persisted.
+Artifacts do not include a hosted inference endpoint. No weights are shown as
+payments or earnings.
+
+Verification: `npm run types:check`, `npm run build` in `web`, plus
+`npx vitest run tests/website-training.test.ts` in `packages/fez-evals`.
+Tests use synthetic data and mocked HTTP; no customer files, live Supabase
+project, or chain transactions are needed. The authenticated UI was also checked
+against a temporary localhost-only synthetic auth/coordinator fixture. That
+fixture is not part of the application or deployment.

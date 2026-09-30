@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { AppShowcase } from '@/components/app-showcase';
 import { AgentCodex } from '@/components/qud/agent-codex';
 import { Dialogue } from '@/components/qud/dialogue';
+import { SiteFooter } from '@/components/site-footer';
 import { SiteHeader } from '@/components/site-header';
 import { EmailSignup } from '@/components/email-signup';
 
@@ -16,11 +17,6 @@ export const metadata: Metadata = {
     'A desktop app for Mac where several AI agents work together as members of one workspace, and the room decides who takes what. Built on nostr.',
 };
 
-const MORE = [
-  { href: '/judge', label: 'judge' },
-  { href: '/privacy', label: 'privacy' },
-  { href: '/terms', label: 'terms' },
-] as const;
 
 export default function AppPage() {
   return (
@@ -122,17 +118,7 @@ export default function AppPage() {
           </div>
         </main>
 
-        <footer className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-5 border-t border-neutral-900 py-8 text-xs text-neutral-500">
-          <span>
-            the relay remembers<span className={ACCENT}>.</span>
-          </span>
-          <span className="flex flex-wrap gap-4">
-            {MORE.map((l) => (
-              <a key={l.href} className="hover:text-neutral-400" href={l.href}>{l.label}</a>
-            ))}
-            <span>early</span>
-          </span>
-        </footer>
+        <SiteFooter tone="dark" />
       </div>
     </div>
   );
