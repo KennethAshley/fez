@@ -18,7 +18,7 @@ export default function TrainPage() {
   let configured = Boolean(url && key && apiUrl && !key.startsWith('sb_secret_'));
   try { if (configured) { serviceUrl(url); serviceUrl(apiUrl); } } catch { configured = false; }
   return <div className={styles.page}><div className={styles.container}>
-    <SiteHeader tone="light" />
+    <SiteHeader tone="light" current="train" />
     <main id="main-content" tabIndex={-1}>
       <div className={styles.hero}><p className={styles.eyebrow}>FEZ / TRAINING / DEVELOPMENT PREVIEW</p><h1>A model for your decisions.</h1><p>Provide labeled examples, set your acceptance criteria, and inspect the measured result. This interface is in development; it is not a launched training service.</p></div>
       {configured ? <TrainingDashboard config={{ url, key, apiUrl }} /> : <section className={styles.panel} aria-labelledby="offline-title"><span className={styles.badge}>Not connected</span><h2 id="offline-title">Training is not configured here yet.</h2><p>Sign-in, uploads, and job submission become available once this environment is connected to Supabase and the training coordinator. No jobs are simulated.</p><div className={styles.actions}><Link href="/" className={styles.button}>Back to Fez</Link><Link href="/model" className={styles.secondary}>Explore the research ↗</Link></div></section>}
