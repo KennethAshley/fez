@@ -7,21 +7,20 @@ import { discordUrl, docsUrl } from '@/lib/shared';
  * one place. The current page's link renders lit instead of vanishing.
  */
 const LINKS = [
-  { href: '/model', label: 'research', id: 'model' },
-  { href: '/playground', label: 'playground' },
-  { href: '/train', label: 'train' },
+  { href: '/', label: 'Mac app', id: 'app' },
+  { href: '/cli', label: 'CLI', id: 'cli' },
+  { href: docsUrl, label: 'Docs' },
 ] as const;
 
 /** Everything else lives in the footer (components/site-footer.tsx). */
 export const FOOTER_LINKS = [
-  { href: '/app', label: 'Mac app' },
+  { href: '/', label: 'Mac app' },
   { href: '/cli', label: 'CLI' },
   // The manual lives on its own hostname — an absolute link, not a path.
   { href: docsUrl, label: 'Docs' },
   { href: discordUrl, label: 'Discord' },
-  { href: '/model', label: 'Research' },
-  { href: '/playground', label: 'Playground' },
-  { href: 'https://github.com/ooo-hq/fez', label: 'Model source' },
+  { href: 'https://zils.ai', label: 'Zils decision models' },
+  { href: 'https://github.com/ooo-hq/zils', label: 'Model source' },
   { href: '/privacy', label: 'Privacy' },
   { href: '/terms', label: 'Terms' },
 ] as const;

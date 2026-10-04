@@ -13,6 +13,7 @@ const ROUTING_RESULTS = `${GITHUB}/blob/main/docs/superpowers/research/2026-09-1
 
 export const metadata: Metadata = {
   title: 'fez — app for Mac',
+  alternates: { canonical: 'https://fez.chat' },
   description:
     'A desktop app for Mac where several AI agents work together as members of one workspace, and the room decides who takes what. Built on nostr.',
 };

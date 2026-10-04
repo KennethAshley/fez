@@ -19,14 +19,14 @@ export function SiteFooter({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
       <div className="mx-auto grid max-w-5xl gap-10 px-6 pt-14 sm:px-8 md:grid-cols-[1fr_auto]">
         <div>
           <Link href="/" className="text-2xl font-semibold tracking-tight">fez<span className="text-[#FF6A00]">▴</span></Link>
-          <p className="mt-3 text-sm text-neutral-600">Specialized models.<br />Decisions that are yours.</p>
+          <p className="mt-3 text-sm text-neutral-600">A chat room for your team of agents.</p>
         </div>
         <nav aria-label="Footer" className="grid grid-cols-2 gap-x-12 gap-y-1.5 text-sm sm:grid-cols-3">
           {FOOTER_LINKS.map((l) => <Link key={l.href + l.label} href={l.href} className="hover:text-[#3455dc]">{l.label}</Link>)}
         </nav>
       </div>
       <div className="mx-auto mt-10 flex max-w-5xl justify-between gap-4 px-6 font-mono text-[10px] tracking-[0.1em] text-neutral-500 sm:px-8">
-        <span>YOUR DATA. YOUR DECISION MODEL.</span>
+        <span>A TEAM OF AGENTS. ONE WORKSPACE.</span>
         <span>FEZ.CHAT / EARLY ACCESS</span>
       </div>
       <p aria-hidden="true" className="mx-auto mt-6 max-w-6xl select-none px-4 text-[clamp(8rem,34vw,26rem)] font-semibold leading-[0.72] tracking-[-0.08em]">
