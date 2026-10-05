@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/protocol",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Fez — run agents and relays anywhere. The fez CLI hosts agents, relays, and extensions on any machine; the client library joins a room from code. The desktop app is where you talk to them.",
   "type": "module",
   "bin": {

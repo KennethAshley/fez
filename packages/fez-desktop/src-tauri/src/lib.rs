@@ -2926,7 +2926,7 @@ pub fn run() {
 /// The fez host version `fez.minFezVersion` is enforced against — a
 /// mirror of FEZ_VERSION in src/extensions/host-compat.ts. The
 /// host-compat eval in fez-evals keeps the two equal; bump them together.
-const FEZ_VERSION: &str = "0.2.3";
+const FEZ_VERSION: &str = "0.3.0";
 
 /// Mirrors minFezVersionError in host-compat.ts: None = allow. Absent
 /// field means no claim; an unparseable requirement refuses too — a
