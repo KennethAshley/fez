@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { buildNip98Header } from "@fezchat/protocol";
+import { buildNip98Header, keychainFind } from "@fezchat/protocol";
 import { gitAuthUrl } from "./auth.js";
 
 /**
@@ -48,9 +48,7 @@ function readStdin(): string {
 function secretKey(): Uint8Array {
   const hex =
     process.env.FEZ_SECRET_KEY?.trim() ||
-    execFileSync("security", ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w"], {
-      encoding: "utf-8",
-    }).trim();
+    (keychainFind(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) ?? "");
   if (!/^[0-9a-f]{64}$/i.test(hex)) throw new Error("fez key is not 32 bytes of hex");
   return Uint8Array.from(hex.match(/../g)!.map((b) => parseInt(b, 16)));
 }

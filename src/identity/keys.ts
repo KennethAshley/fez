@@ -1,5 +1,5 @@
 import { fezHome } from "../shared/fez-home.js";
-import { spawnSync } from "node:child_process";
+import { keychainBackend, keychainFind, keychainStore } from "../keychain.js";
 import fs from "node:fs";
 import path from "node:path";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
@@ -12,11 +12,10 @@ import * as nip49 from "nostr-tools/nip49";
  * authority are all bound to pubkeys), so they belong in the OS keychain,
  * not plaintext dotfiles.
  *
- * - macOS: keychain via the `security` CLI (service "fez-keys", one item
- *   per key name). Zero native deps. The write path passes the secret via
- *   argv — momentarily visible in the process table, which is still
- *   strictly better than the file that sat in plaintext forever; swap in
- *   a native keyring binding if that trade-off stops being acceptable.
+ * - macOS and Linux: the platform keychain (service "fez-keys", one item
+ *   per key name) through the shared helper, which is the same store the
+ *   desktop app writes — the two MUST agree, or the app mints an identity
+ *   the CLI and the background worker cannot find.
  * - elsewhere (or FEZ_KEYSTORE=file): 0600 files under ~/.fez, exactly
  *   the pre-custody layout — a worse backend, not a different contract.
  *
@@ -33,8 +32,13 @@ import * as nip49 from "nostr-tools/nip49";
 const SERVICE = "fez-keys";
 const HEX64 = /^[0-9a-f]{64}$/i;
 
+/** What this platform calls the store, for anything the user reads. */
+function keystoreLabel(): string {
+  return keychainBackend() === "security" ? "macOS keychain" : "system keyring";
+}
+
 function useKeychain(): boolean {
-  return process.platform === "darwin" && process.env.FEZ_KEYSTORE !== "file";
+  return keychainBackend() !== undefined && process.env.FEZ_KEYSTORE !== "file";
 }
 
 /** Legacy/fallback file path for a key name. */
@@ -63,36 +67,24 @@ function indexAdd(name: string): void {
 }
 
 /**
- * Read one key from the keychain. Absent (`security` exit 44,
- * errSecItemNotFound) returns undefined; any OTHER failure — a denied
- * prompt, a locked keychain — throws. The two used to collapse into
+ * Read one key from the keychain. Absent returns undefined; any OTHER
+ * failure — a denied prompt, a locked keyring — throws. The two used to collapse into
  * undefined, and loadOrCreateKey's read-or-generate then MINTED A
  * REPLACEMENT for an agent whose key still existed, silently orphaning
  * its roster membership and attestations. Same distinction the Rust
  * side's get_identity has always drawn.
  */
 function keychainRead(name: string): string | undefined {
-  const out = spawnSync("security", ["find-generic-password", "-s", SERVICE, "-a", name, "-w"], {
-    encoding: "utf-8",
-  });
-  if (out.status !== 0) {
-    const stderr = String(out.stderr ?? "");
-    if (out.status === 44 || /could not be found/i.test(stderr)) return undefined;
-    throw new Error(
-      `keychain access failed for "${name}": ${stderr.trim() || `security exited ${out.status}`} — not minting a replacement key`
-    );
-  }
-  const value = out.stdout.trim();
+  // keychainFind keeps absence and access failure apart, which is the
+  // distinction this function exists for: a denied or locked store must
+  // throw rather than read as "no key" and mint a replacement.
+  const value = keychainFind(SERVICE, name);
+  if (value === undefined) return undefined;
   return HEX64.test(value) ? value.toLowerCase() : undefined;
 }
 
 function keychainWrite(name: string, hex: string): void {
-  const out = spawnSync(
-    "security",
-    ["add-generic-password", "-U", "-s", SERVICE, "-a", name, "-l", `fez key: ${name}`, "-w", hex],
-    { stdio: "ignore" }
-  );
-  if (out.status !== 0) throw new Error(`keychain write failed for "${name}" (security exited ${out.status})`);
+  keychainStore(SERVICE, name, hex, `fez key: ${name}`);
 }
 
 function fileRead(name: string): string | undefined {
@@ -134,7 +126,7 @@ export function getKey(name: string): string | undefined {
   }
   fs.rmSync(keyFile(name), { force: true });
   indexAdd(name);
-  console.log(`🔐 Key "${name}" migrated: ${keyFile(name)} → macOS keychain (service "${SERVICE}"). Export anytime: fez keys export ${name}`);
+  console.log(`🔐 Key "${name}" migrated: ${keyFile(name)} → ${keystoreLabel()} (service "${SERVICE}"). Export anytime: fez keys export ${name}`);
   return legacy;
 }
 
@@ -156,7 +148,7 @@ export function loadOrCreateKey(name: string): string {
   if (existing) return existing;
   const hex = bytesToHex(generateSecretKey());
   setKey(name, hex);
-  console.log(`🔑 Generated identity "${name}" → ${useKeychain() ? `macOS keychain (service "${SERVICE}")` : keyFile(name)}`);
+  console.log(`🔑 Generated identity "${name}" → ${useKeychain() ? `${keystoreLabel()} (service "${SERVICE}")` : keyFile(name)}`);
   return hex;
 }
 

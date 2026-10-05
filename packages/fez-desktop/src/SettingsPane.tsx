@@ -18,6 +18,7 @@ import { loadNotifyPrefs, saveNotifyPrefs } from "./notify";
 import { NOTIFY_KINDS, NOTIFY_LABELS, NOTIFY_UNBUILT, type NotifyPrefs } from "./notify-prefs";
 import { SOUND_NAMES, playSound } from "./sounds";
 import { norm } from "./extensions-catalog";
+import { KEYSTORE, THIS_MACHINE, IS_LINUX } from "./platform";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -260,7 +261,7 @@ function AppearanceSettings() {
   const names = [...new Set(["default", ...themeNames(), theme])];
   const change = (action: () => void) => {
     try { action(); setError(undefined); }
-    catch { setError("Couldn't save appearance on this Mac. Try the change again."); }
+    catch { setError(`Couldn't save appearance on ${THIS_MACHINE}. Try the change again.`); }
   };
   const update = (next: DisplayPrefs) => change(() => { saveDisplayPrefs(next); setPrefs(next); });
   return <>
@@ -281,7 +282,7 @@ function AppearanceSettings() {
       </div>
       <p className="appearance-hint">{!themeFollowsScheme(theme)
         ? `${theme} has one palette for both light and dark.`
-        : mode === "system" ? "Follows your Mac’s light and dark appearance." : `Always uses ${mode} colors.`}</p>
+        : mode === "system" ? `Follows ${IS_LINUX ? "your desktop" : "your Mac"}’s light and dark appearance.` : `Always uses ${mode} colors.`}</p>
     </fieldset>
     <fieldset className="appearance-section">
       <legend>Theme</legend>
@@ -319,7 +320,7 @@ function AppearanceSettings() {
     </div>
     {error && <p role="alert" className="ob-error">{error}</p>}
     <div className="set-actions appearance-footer">
-      <span className="set-note">Changes apply immediately and stay on this Mac.</span>
+      <span className="set-note">{`Changes apply immediately and stay on ${THIS_MACHINE}.`}</span>
       <button className="agent-action" onClick={() => change(() => {
         saveDisplayPrefs(DEFAULT_DISPLAY); setPrefs({ ...DEFAULT_DISPLAY });
         applyTheme("default"); setTheme("default"); applyMode("system"); setMode("system"); setScheme(resolvedScheme());
@@ -610,7 +611,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         <KeyboardSettings onNotice={flash} />
         </>)}
         {section === "skills" && (<>
-        <Head title="secrets" sub="Add a key once and every agent you attach the skill to can use it. Keys go straight into the macOS keychain, never into files — saving is write-only, so nothing can read a value back." />
+        <Head title="secrets" sub={`Add a key once and every agent you attach the skill to can use it. Keys go straight into the ${KEYSTORE}, never into files — saving is write-only, so nothing can read a value back.`} />
         <SkillSecretsSection onNotice={flash} />
 
         </>)}
@@ -651,7 +652,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         <Row
           stacked
           label="backup key"
-          desc={'Your key lives in the macOS keychain (service "fez-keys"). Anyone holding it IS you — reveal it only to write it down somewhere safe.'}
+          desc={`Your key lives in your ${KEYSTORE} (service "fez-keys"). Anyone holding it IS you — reveal it only to write it down somewhere safe.`}
           control={
             !keyHex ? (
               <button className="agent-action" onClick={() => void reveal()}>reveal backup key</button>

@@ -9,14 +9,36 @@
 //! fez downloads a pinned Node (sha256-verified, atomic install into
 //! ~/.fez/runtimes/node) and npm-installs the adapter into
 //! ~/.fez/node-tools the first time the user picks the Claude brain.
-//! Apple Silicon only, like the rest of the desktop.
+//! One pinned Node per platform; see NODE_PLATFORM below.
 
 use std::path::PathBuf;
 use std::process::Command;
 
 pub const MANAGED_NODE_VERSION: &str = "v24.18.0";
-const NODE_FILENAME: &str = "node-v24.18.0-darwin-arm64.tar.gz";
+// Node ships one tarball per platform and each carries its own digest, so
+// the platform slug and the checksum travel together. Both come from the
+// official https://nodejs.org/dist/v24.18.0/SHASUMS256.txt. macOS stays on
+// the arm64 build for every arch, exactly as this shipped.
+#[cfg(target_os = "macos")]
+const NODE_PLATFORM: &str = "darwin-arm64";
+#[cfg(target_os = "macos")]
 const NODE_SHA256: &str = "e1a97e14c99c803e96c7339403282ea05a499c32f8d83defe9ef5ec66f979ed1";
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const NODE_PLATFORM: &str = "linux-x64";
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const NODE_SHA256: &str = "783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8";
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const NODE_PLATFORM: &str = "linux-arm64";
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const NODE_SHA256: &str = "6b4484c2190274175df9aa8f28e2d758a819cb1c1fe6ab481e2f95b463ab8508";
+// A platform without a pinned digest must fail here, not download an
+// archive built for someone else's kernel.
+#[cfg(not(any(target_os = "macos",
+              all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))))]
+compile_error!("managed Node: add this platform's tarball name and SHASUMS256 entry");
+
+/// The archive the digest above belongs to.
+fn node_filename() -> String { format!("node-{MANAGED_NODE_VERSION}-{NODE_PLATFORM}.tar.gz") }
 // Shared with the TypeScript runtime and desktop picker.
 pub fn local_agents() -> Vec<serde_json::Value> {
     serde_json::from_str(include_str!("../../../../src/agent/local-agents.json"))
@@ -32,7 +54,7 @@ pub fn node_bin_dir() -> PathBuf {
         .join("runtimes")
         .join("node")
         .join(MANAGED_NODE_VERSION)
-        .join("darwin-arm64")
+        .join(NODE_PLATFORM)
         .join("bin")
 }
 
@@ -93,8 +115,9 @@ fn ensure_node_runtime() -> Result<(), String> {
     let root = fez_home_dir().join("runtimes").join("node");
     std::fs::create_dir_all(&root).map_err(|e| format!("mkdir runtimes: {e}"))?;
 
-    let url = format!("https://nodejs.org/dist/{MANAGED_NODE_VERSION}/{NODE_FILENAME}");
-    let archive = root.join(format!("{NODE_FILENAME}.download"));
+    let filename = node_filename();
+    let url = format!("https://nodejs.org/dist/{MANAGED_NODE_VERSION}/{filename}");
+    let archive = root.join(format!("{filename}.download"));
     let bytes = {
         let mut buf = Vec::new();
         std::io::Read::read_to_end(
@@ -130,11 +153,11 @@ fn ensure_node_runtime() -> Result<(), String> {
     }
     let _ = std::fs::remove_file(&archive);
 
-    let extracted = temp.join(NODE_FILENAME.trim_end_matches(".tar.gz"));
+    let extracted = temp.join(filename.trim_end_matches(".tar.gz"));
     if !extracted.join("bin").join("node").exists() {
         return Err("extracted node tree is missing bin/node".to_string());
     }
-    let final_dir = root.join(MANAGED_NODE_VERSION).join("darwin-arm64");
+    let final_dir = root.join(MANAGED_NODE_VERSION).join(NODE_PLATFORM);
     if let Some(parent) = final_dir.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }

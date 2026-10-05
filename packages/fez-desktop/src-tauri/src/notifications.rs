@@ -36,7 +36,37 @@ pub async fn notify_with_click(
         .await
         .map_err(|e| e.to_string())?
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        // libnotify prints the activated action's name on stdout, and --action
+        // implies --wait, so one blocking call answers the same question
+        // wait_for_click answers on macOS. A daemon that ignores actions closes
+        // the banner instead, which reads as "not clicked" — never as a click.
+        tauri::async_runtime::spawn_blocking(move || {
+            let output = std::process::Command::new("notify-send")
+                .arg("--app-name=Fez")
+                .arg("--action=default=Open")
+                // The separator keeps a title or body that starts with a dash
+                // out of libnotify's own option parsing.
+                .arg("--")
+                .arg(&title)
+                .arg(&body)
+                .output()
+                .map_err(|e| match e.kind() {
+                    std::io::ErrorKind::NotFound =>
+                        "Native notification clicks need notify-send (libnotify)".to_string(),
+                    _ => e.to_string(),
+                })?;
+            if !output.status.success() {
+                return Err(format!("notify-send could not post the notification ({})", output.status));
+            }
+            Ok(String::from_utf8_lossy(&output.stdout).trim() == "default")
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = (app, title, body);
         Err("Native notification clicks unavailable on this platform".into())

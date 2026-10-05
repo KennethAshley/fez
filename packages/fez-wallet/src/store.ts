@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { keychainBackend, keychainFind, keychainStore } from "@fezchat/protocol";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,9 +9,10 @@ import { isValidEntryName, isReservedEntryName, rootEntryName } from "./entry-na
  * SEPARATE keychain service ("fez-wallet"): money and identity never
  * share a compromise domain or a keychain grant.
  *
- * macOS: `security` CLI. Elsewhere, or under FEZ_WALLET_STORE=file:
- * 0600 files under ${FEZ_WALLET_HOME ?? ~/.fez}/wallet-store — a worse
- * backend, not a different contract (and what tests use).
+ * macOS: `security` CLI. Linux: `secret-tool` against the Secret Service.
+ * On a platform with neither, or under FEZ_WALLET_STORE=file: 0600 files
+ * under ${FEZ_WALLET_HOME ?? ~/.fez}/wallet-store — a worse backend, not a
+ * different contract (and what tests use).
  *
  * Every entry name is validated BEFORE either backend is touched (finding
  * #2 — path traversal in the file backend): no "/" and no leading "."
@@ -27,7 +28,7 @@ const NOSTR_SERVICE = "fez-keys";
 const HEX64 = /^[0-9a-f]{64}$/i;
 
 function useKeychain(): boolean {
-  return process.platform === "darwin" && process.env.FEZ_WALLET_STORE !== "file";
+  return keychainBackend() !== undefined && process.env.FEZ_WALLET_STORE !== "file";
 }
 
 function walletHome(): string {
@@ -49,10 +50,7 @@ function assertUsableEntryName(name: string): void {
 
 function rawRead(name: string): string | undefined {
   if (useKeychain()) {
-    const out = spawnSync("security", ["find-generic-password", "-s", SERVICE, "-a", name, "-w"], {
-      encoding: "utf-8",
-    });
-    return out.status === 0 ? out.stdout.trim() : undefined;
+    return keychainFind(SERVICE, name);
   }
   try {
     return fs.readFileSync(entryFile(name), "utf-8");
@@ -63,12 +61,7 @@ function rawRead(name: string): string | undefined {
 
 function rawWrite(name: string, value: string): void {
   if (useKeychain()) {
-    const out = spawnSync(
-      "security",
-      ["add-generic-password", "-U", "-s", SERVICE, "-a", name, "-l", `fez wallet: ${name}`, "-w", value],
-      { stdio: "ignore" }
-    );
-    if (out.status !== 0) throw new Error(`keychain write failed for "${name}" (security exited ${out.status})`);
+    keychainStore(SERVICE, name, value, `fez wallet: ${name}`);
     if (rawRead(name) !== value) throw new Error(`entry "${name}": keychain read-back mismatch`);
     return;
   }
@@ -126,12 +119,7 @@ export function writeRemoteHotkeyEntry(persona: string, value: string): void {
 /** The agent's NOSTR key (service fez-keys, account agent:<persona>) — read-only here; fez core owns that service. Used to sign consent requests. */
 export function readAgentNostrKey(persona: string): string | undefined {
   if (useKeychain()) {
-    const out = spawnSync(
-      "security",
-      ["find-generic-password", "-s", NOSTR_SERVICE, "-a", `agent:${persona}`, "-w"],
-      { encoding: "utf-8" }
-    );
-    const v = out.status === 0 ? out.stdout.trim() : undefined;
+    const v = keychainFind(NOSTR_SERVICE, `agent:${persona}`);
     return v && HEX64.test(v) ? v.toLowerCase() : undefined;
   }
   try {
