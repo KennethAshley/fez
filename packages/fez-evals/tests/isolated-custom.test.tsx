@@ -6,7 +6,7 @@ import * as React from "../../fez-desktop/node_modules/react/index.js";
 import { act } from "../../fez-desktop/node_modules/react/index.js";
 import { createRoot } from "../../fez-desktop/node_modules/react-dom/client.js";
 import { FezClient, type Wire, type WireEvent } from "../../fez-client/src/index.js";
-import { customChannelId, matchCustomContent, parseCustomGuiContributions, type CustomSurface } from "../../../src/extensions/gui-custom-contributions.js";
+import { matchCustomContent, parseCustomGuiContributions, type CustomSurface } from "../../../src/extensions/gui-custom-contributions.js";
 import { createCustomHost, customSnapshot, type CustomSnapshot } from "../../fez-desktop/src/isolated-custom-host";
 import { createCustomRuntime } from "../../fez-desktop/src/isolated-custom";
 import type { IsolatedPanelApi } from "../../fez-desktop/src/isolated-panel";
