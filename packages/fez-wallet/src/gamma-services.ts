@@ -12,6 +12,9 @@
  * "unknown" means this checker could not tell, never that the service is
  * wrong.
  */
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { gammaRegistrations, type GammaRegistration, type SubtensorApi } from "./chains/subtensor.js";
 import { deriveAgentPair, generateWalletMnemonic, type WalletPair } from "./derive.js";
@@ -220,21 +223,45 @@ export async function checkService(registered: GammaRegistration, probe: WalletP
 export interface GammaServicesReport { block: number; checkedAt: string; services: GammaServiceReport[] }
 
 const MAX_AGE_MS = 60 * 60_000;
+const CACHE_FILE = "gamma-services.json";
 const runs = new WeakMap<SubtensorApi, { at: number; run: Promise<GammaServicesReport> }>();
 
+/** One discovery run per network, shared by every wallet process (CLI and agent tools) for an hour. */
+export function gammaCacheDir(network: string): string {
+  return join(process.env.FEZ_WALLET_HOME ?? join(homedir(), ".fez"), `gamma-${network}`);
+}
+
+interface Kept { at?: number; report?: GammaServicesReport; probe?: WalletPair }
+const readKept = (dir: string): Kept => {
+  try { return JSON.parse(readFileSync(join(dir, CACHE_FILE), "utf8")) as Kept; } catch { return {}; }
+};
+
 /** Every registered gamma service with its checks. A run is kept for an
- * hour per chain connection: it costs about a hundred requests to other
- * people's servers, and services do not change by the minute. */
-export function discoverGammaServices(api: SubtensorApi, opts: { now?: () => number } = {}): Promise<GammaServicesReport> {
+ * hour: it costs about a hundred requests to other people's servers, and
+ * services do not change by the minute. With `cacheDir` the run and the
+ * probe key are kept on disk, because each wallet command is its own
+ * process: services count a new key as a new account and rate-limit them
+ * per address (Hippius, measured 26 Nov 2026). The probe key holds
+ * nothing and must never be funded. */
+export function discoverGammaServices(api: SubtensorApi, opts: { now?: () => number; cacheDir?: string } = {}): Promise<GammaServicesReport> {
   const now = (opts.now ?? Date.now)();
   const kept = runs.get(api);
   if (kept && now - kept.at < MAX_AGE_MS) return kept.run;
+  const onDisk = opts.cacheDir ? readKept(opts.cacheDir) : {};
+  if (onDisk.report && onDisk.at !== undefined && now - onDisk.at < MAX_AGE_MS) return Promise.resolve(onDisk.report);
   const run = (async () => {
     await cryptoWaitReady();
     const [registered, header] = await Promise.all([gammaRegistrations(api), api.rpc.chain.getHeader()]);
-    const probe = deriveAgentPair(generateWalletMnemonic(), "gamma-probe");
+    const probe = onDisk.probe ?? deriveAgentPair(generateWalletMnemonic(), "gamma-probe");
     const services = await Promise.all(registered.map((r) => checkService(r, probe)));
-    return { block: header.number.toNumber(), checkedAt: new Date(now).toISOString(), services };
+    const report = { block: header.number.toNumber(), checkedAt: new Date(now).toISOString(), services };
+    if (opts.cacheDir) {
+      try {
+        mkdirSync(opts.cacheDir, { recursive: true });
+        writeFileSync(join(opts.cacheDir, CACHE_FILE), JSON.stringify({ at: now, report, probe } satisfies Kept));
+      } catch { /* a run that cannot be kept is still a run */ }
+    }
+    return report;
   })();
   runs.set(api, { at: now, run });
   run.catch(() => { if (runs.get(api)?.run === run) runs.delete(api); });

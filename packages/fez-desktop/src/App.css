@@ -583,7 +583,6 @@ body {
 .budget .linkish:hover { text-decoration: underline; }
 .budget-edit input { width: 56px; background: var(--bg2); border: 1px solid var(--bg2); border-radius: 3px; color: var(--fg); font-size: 12px; padding: 1px 4px; margin: 0 2px; }
 .budget-edit button { margin-left: 6px; font-size: 12px; }
-.gamma-rule-edit input { width: 320px; max-width: 60%; }
 .budget-track { margin-top: 4px; height: 4px; border-radius: 2px; background: var(--bg2); overflow: hidden; }
 .budget-fill { height: 100%; border-radius: 2px; background: var(--accent); }
 .budget-fill.warn { background: var(--yellow); }
@@ -4641,9 +4640,6 @@ button.ucard-name:hover { text-decoration: underline; }
 .guest-hire-sel { background: var(--bg0); border: 1px solid var(--hairline); color: var(--fg); font: inherit; font-size: 11px; padding: 2px 4px; border-radius: 4px; }
 .guest-hire-err { color: var(--brand); }
 .guest-lease.on { color: var(--ok); }
-.rate-row { display: flex; align-items: center; gap: 8px; }
-.rate-input { max-width: 8rem; }
-.rate-unit { color: var(--muted, #999); font-size: 0.85em; }
 
 /* ── @fez's market proposal card ─────────────────────────────── */
 /* react-markdown wraps every fence in a bare <pre> (no <code> in between,

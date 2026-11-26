@@ -166,6 +166,14 @@ export function readPrefs(): WalletPrefs {
   }
 }
 
+/** The owner's daily gamma limit for one agent, set in the wallet panel.
+ * Anything but a positive number reads as no limit, and no limit means
+ * the agent cannot buy: a garbled value must fail closed. */
+export function gammaDailyLimitFor(persona: string, prefs: WalletPrefs = readPrefs()): number | undefined {
+  const v = prefs.gammaDailyUsd?.[persona];
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
 export function loadConfig(): WalletConfig {
   let onDisk: Partial<WalletConfig> & { endpoints?: { tao?: string } } = {};
   try {

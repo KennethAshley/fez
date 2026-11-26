@@ -3,6 +3,19 @@ import { type Network, endpointForUnchecked, isNetworkOwnedEndpoint } from "./ne
 import type { SpendEntry } from "./log.js";
 import type { ParsedReceipt } from "./receipt.js";
 import { formatAmount } from "./chains/adapter.js";
+import type { GammaFundingJson } from "./gamma-fund.js";
+
+/** What the owner agrees to before the treasury mints gamma for an agent.
+ * The dollar figure is the chain's quote at this moment, not a promise. */
+export function gammaFundConfirm(persona: string, tao: string, quote: GammaFundingJson, network: string): { title: string; body: string } {
+  return {
+    title: `Fund @${persona} with about $${Number(quote.quotedUsd).toFixed(2)} at ${quote.service}?`,
+    body:
+      `${tao} TAO from the treasury mints gamma on subnet ${quote.netuid}, and @${persona} spends all of it at ${quote.service} right away. ` +
+      `It becomes @${persona}'s balance there and cannot be refunded.` +
+      (network === "finney" ? "" : " This wallet is on testnet: play money."),
+  };
+}
 
 /**
  * The 💸 line need not be the FIRST line: walletSend prepends note lines
@@ -168,6 +181,15 @@ export function mergeThresholds(
   next: string
 ): Record<string, string> {
   return { ...(existing ?? {}), default: next };
+}
+
+/** One agent's daily gamma limit, merged into everyone's. Blank or zero
+ * removes the entry, and an agent with no entry cannot buy. */
+export function mergeGammaLimit(existing: Record<string, number> | undefined, persona: string, text: string): Record<string, number> {
+  const t = text.trim();
+  if (t && !/^\d+(\.\d+)?$/.test(t)) throw new Error("Enter a dollar amount, like 2.50");
+  const { [persona]: _old, ...rest } = existing ?? {};
+  return Number(t) > 0 ? { ...rest, [persona]: Number(t) } : rest;
 }
 
 /** Same shape parseAmount accepts, checked before it reaches the wallet:

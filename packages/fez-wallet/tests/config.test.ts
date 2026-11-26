@@ -350,3 +350,21 @@ describe("x402Settings", () => {
     expect(s.network).toBe("some-future-chain"); // the label itself is still whatever was set
   });
 });
+
+// The owner sets this per agent in the wallet panel; the agent's top-up tool reads it.
+describe("gamma daily limit", () => {
+  it("is the number the panel saved for that agent, and nothing for anyone else", async () => {
+    const { gammaDailyLimitFor } = await import("../src/config.js");
+    expect(gammaDailyLimitFor("scout")).toBeUndefined();
+    await mirrorPrefs({ gammaDailyUsd: { scout: 2.5 } });
+    expect(gammaDailyLimitFor("scout")).toBe(2.5);
+    expect(gammaDailyLimitFor("drift")).toBeUndefined();
+  });
+
+  it("reads a garbled or non-positive value as no limit, so the agent cannot buy", async () => {
+    const { gammaDailyLimitFor } = await import("../src/config.js");
+    for (const bad of [0, -1, Number.NaN, "3", null]) {
+      expect(gammaDailyLimitFor("scout", { gammaDailyUsd: { scout: bad as number } })).toBeUndefined();
+    }
+  });
+});

@@ -79,6 +79,8 @@ export type { Network };
 export interface WalletPrefs {
   network?: Network;
   thresholds?: Record<string, string>;
+  /** Per agent: the most of its own TAO it may turn into gamma in a day, in dollars. No entry: it cannot buy. */
+  gammaDailyUsd?: Record<string, number>;
   /** GUI-editable x402 overrides (network flip, caps). A prefs value wins
    * over wallet.json's x402 block key-by-key — see config.ts's
    * x402Settings for the layering, including the rule that a prefs-level
