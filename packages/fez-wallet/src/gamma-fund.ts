@@ -90,6 +90,7 @@ export async function fundGamma(
     throw new Error(
       `${mintTx ? "minted, but " : ""}the spend at ${service.name} failed: ${(e as Error).message}. ${formatRao(amount)} gamma sits in a deposit at ${agent.address} on subnet ${args.netuid}; ` +
         `finish with: fez-wallet gamma fund <persona> ${args.netuid} 0 --confirm`,
+      { cause: e },
     );
   }
 }
