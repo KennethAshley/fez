@@ -9,7 +9,7 @@ import { LESSON_PREFIX, parseLesson } from "../../fez-client/src/lessons.js";
 import type { WireEvent } from "../../fez-client/src/index.js";
 import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
 import { gateOwnerQuestion } from "./owner-gate.js";
-import { askJudge } from "../../fez-orchestrator/src/typesafe.js";
+import { askJudge } from "../../fez-orchestrator/src/judge.js";
 import { governAttention, type Attention } from "../../fez-acp/src/governor.js";
 import { ownerResultTags } from "../../fez-client/src/work-completion.js";
 import { attachedSkills, loadSkillBody } from "./skills.js";

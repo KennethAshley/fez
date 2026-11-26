@@ -12,7 +12,7 @@ import { useContext, useEffect, useState } from "react";
 import { parseHireProposal } from "./hire-proposal";
 import { recordProposal, updateRecord, findByProposal, tauriStore } from "./orchestration";
 import { openGuestDm } from "./gui-extensions";
-import { BAZAAR_RELAY } from "./bazaar-record";
+import { BAZAAR_RELAY } from "./market-relay";
 import { MdContext } from "./App";
 
 export default function HireProposalCard({ fenceText, roster }: { fenceText: string; roster: string[] }) {

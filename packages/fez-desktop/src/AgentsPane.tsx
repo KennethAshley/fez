@@ -15,6 +15,7 @@ import { ModelPicker, type BrainSelection } from "./ModelPicker";
 import { prepareAgentModel } from "./model-providers";
 import { useConfig } from "./config-store";
 import { agentSkillHealth, type InstalledSkillMd } from "./agent-skill-health";
+import { personaSetting, withPersonaSetting } from "./persona-setting";
 
 /**
  * The agents surface — Buzz's biggest pane, fez-shaped. Roster of every
@@ -49,21 +50,62 @@ interface CostSummary {
 const DAY_MS = 24 * 3600_000;
 const FLEET_DAYS = 14;
 
-/** Splice `spendCapUsd:` into a persona's frontmatter — replace the line
- * if present, append it if not, drop it when cap is undefined. The rest of
- * the file is untouched: personas are edited in an editor, so this command
- * changes exactly one declared setting, never the prose. */
-function withSpendCap(md: string, cap: number | undefined): string {
-  const line = cap !== undefined ? `spendCapUsd: ${cap}` : undefined;
-  const m = /^---\n([\s\S]*?)\n---/.exec(md);
-  if (!m) return line ? `---\n${line}\n---\n\n${md}` : md;
-  let fm = m[1];
-  if (/^spendCapUsd:.*$/m.test(fm)) {
-    fm = line ? fm.replace(/^spendCapUsd:.*$/m, line) : fm.replace(/\n?^spendCapUsd:.*$/m, "");
-  } else if (line) {
-    fm = `${fm}\n${line}`;
-  }
-  return `${md.slice(0, m.index)}---\n${fm}\n---${md.slice(m.index + m[0].length)}`;
+const withSpendCap = (md: string, cap: number | undefined): string =>
+  withPersonaSetting(md, "spendCapUsd", cap === undefined ? undefined : String(cap));
+
+/** The owner's rule for what this agent may buy with gamma (persona
+ * `gammaPolicy`). The wallet reads it on every purchase and sends nothing
+ * while it is empty, so saving here needs no restart. */
+function GammaRule({ name }: { name: string }) {
+  const [rule, setRule] = useState<string>();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saved, setSaved] = useState<string>();
+
+  useEffect(() => {
+    void invoke<string>("read_persona", { name }).then((md) => setRule(personaSetting(md, "gammaPolicy"))).catch(() => {});
+  }, [name]);
+
+  const save = async () => {
+    try {
+      const next = withPersonaSetting(await invoke<string>("read_persona", { name }), "gammaPolicy", draft);
+      await invoke("update_persona", { name, content: next });
+      const now = personaSetting(next, "gammaPolicy");
+      setRule(now);
+      setSaved(now ? "rule saved, applies to the next purchase" : `rule removed, @${name} can no longer buy with gamma`);
+      setEditing(false);
+    } catch (e) {
+      setSaved(String(e));
+    }
+  };
+
+  return (
+    <div className="budget">
+      <div className="cost-detail">
+        Gamma spending rule: {editing ? (
+          <span className="budget-edit gamma-rule-edit">
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEditing(false); }}
+              placeholder="e.g. storage and sandboxes, under $1 a call"
+              aria-label="gamma spending rule in your own words, empty to remove"
+              autoFocus
+            />
+            <button onClick={() => void save()}>Save</button>
+          </span>
+        ) : (
+          <>
+            {rule ?? "none, so this agent cannot buy"}{" · "}
+            <button className="linkish" onClick={() => { setDraft(rule ?? ""); setEditing(true); setSaved(undefined); }}>
+              {rule ? "Change rule" : "Set rule"}
+            </button>
+          </>
+        )}
+      </div>
+      {saved && <div className="cost-detail">{saved}</div>}
+    </div>
+  );
 }
 
 /** Spend today against the persona's `spendCapUsd`, plus the cap editor.
@@ -877,6 +919,7 @@ function AgentDetail({
               </div>
             )}
             {costs && costs !== "loading" && <BudgetBar name={name} summary={costs} />}
+            <GammaRule name={name} />
           </>
         )}
       </div>

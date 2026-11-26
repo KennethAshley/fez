@@ -11,7 +11,7 @@
  * presentation questions 0.88–0.94, real owner decisions ≤ 0.06, an
  * audience question 0.24. Fails open — any judge problem asks as before.
  */
-import type { JudgeQuestion, JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
+import type { JudgeQuestion, JudgeResult } from "../../fez-orchestrator/src/judge.js";
 
 export const STYLE_ONLY_AT = 0.8;
 

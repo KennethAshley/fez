@@ -23,7 +23,7 @@
  */
 import http from "node:http";
 import { randomUUID } from "node:crypto";
-import { chooseTypeSafeRoute, judge, validateJudgeQuestions } from "../../packages/fez-orchestrator/src/typesafe.js";
+import { chooseRoute, judge, validateJudgeQuestions } from "../../packages/fez-orchestrator/src/judge.js";
 import { ROUTER_SYSTEM } from "../../packages/fez-orchestrator/src/route-logic.js";
 
 const PORT = Number(process.env.PORT || 8081);
@@ -235,7 +235,7 @@ const server = http.createServer(async (req, res) => {
     const input = TYPESAFE_KEY ? routingInput(body) : null;
     if (input) {
       try {
-        const decision = await chooseTypeSafeRoute(TYPESAFE_KEY, input.message, input.criteria,
+        const decision = await chooseRoute(TYPESAFE_KEY, input.message, input.criteria,
           { model: TYPESAFE_MODEL, timeoutMs: TYPESAFE_TIMEOUT_MS });
         const picked = body.tools.find(t => t.function.name === decision.choice).function;
         const args = picked.parameters.properties?.task ? { task: input.message } : {};

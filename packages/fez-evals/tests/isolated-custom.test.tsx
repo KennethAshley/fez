@@ -6,7 +6,7 @@ import * as React from "../../fez-desktop/node_modules/react/index.js";
 import { act } from "../../fez-desktop/node_modules/react/index.js";
 import { createRoot } from "../../fez-desktop/node_modules/react-dom/client.js";
 import { FezClient, type Wire, type WireEvent } from "../../fez-client/src/index.js";
-import { customChannelId, matchCustomContent, parseCustomGuiContributions, type CustomSurface } from "../../../src/extensions/gui-custom-contributions.js";
+import { matchCustomContent, parseCustomGuiContributions, type CustomSurface } from "../../../src/extensions/gui-custom-contributions.js";
 import { createCustomHost, customSnapshot, type CustomSnapshot } from "../../fez-desktop/src/isolated-custom-host";
 import { createCustomRuntime } from "../../fez-desktop/src/isolated-custom";
 import type { IsolatedPanelApi } from "../../fez-desktop/src/isolated-panel";
@@ -30,12 +30,10 @@ function fixture() {
   return client;
 }
 
-it("uses bounded declarations for Mining bindings and Wallet launchers, rejecting executable and unknown rules", () => {
-  const mining = JSON.parse(readFileSync(resolve(__dirname, "../../fez-mining/package.json"), "utf8")).fez;
+it("uses bounded declarations for Wallet launchers, rejecting executable and unknown rules", () => {
   const wallet = JSON.parse(readFileSync(resolve(__dirname, "../../fez-wallet/package.json"), "utf8")).fez;
-  const mine = parseCustomGuiContributions(mining.guiContributions), pay = parseCustomGuiContributions(wallet.guiContributions);
-  expect(mining.guiRuntime).toBe("isolated"); expect(wallet.guiRuntime).toBe("isolated");
-  expect(customChannelId([{ id: "old", source: "mining" }, { id: "linked", source: "other", meta: { miningWorkspace: "true" } }], mine.nav[0].channel!)).toBe("linked");
+  const pay = parseCustomGuiContributions(wallet.guiContributions);
+  expect(wallet.guiRuntime).toBe("isolated");
   expect(matchCustomContent("a warning\n💸 **miner** wants to send **1 TAO**\nto `destination`\nreact ✅", pay.messages[0].match)).toBe(true);
   const address = "5" + "B".repeat(47);
   expect(matchCustomContent(`Pay ${address}`, pay.messages[3].match)).toBe(true);
@@ -152,29 +150,5 @@ it("refreshes consent reads without resetting a mounted custom component's input
     expect(document.querySelector("output")?.textContent).toBe("120");
     expect(document.querySelector("input")).toBe(input);
     expect(input.value).toBe("keep me");
-  } finally { await act(async () => root.unmount()); runtime.dispose(); }
-});
-
-it("renders the shipped Mining fleet summary and routes its tabs through the bounded broker", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const opening: CustomSurface = { kind: "navSummary", name: "mining" };
-  const value = customSnapshot(fixture(), opening, ["ui", "read:channels", "processes"]);
-  const invoke = vi.fn(async (_command: string, { request }: { request: { action: string } }) => {
-    if (request.action === "snapshot") return value;
-    if (request.action === "process_run") return { code: 0, stdout: JSON.stringify([{ alive: true }, { desired: "running", alive: false }]), stderr: "" };
-    return null;
-  });
-  vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
-  const runtime = await createCustomRuntime(baseApi(), opening);
-  const bundle = readFileSync(resolve(__dirname, "../../fez-mining/dist/gui.js"), "utf8");
-  const extension = new Function(`${bundle}\n;return __fezExt;`)() as { default(api: typeof runtime.api): void };
-  extension.default(runtime.api);
-  document.body.innerHTML = "<div id='test-root'></div>";
-  const root = createRoot(document.getElementById("test-root")!);
-  try {
-    await act(async () => root.render(<runtime.View />));
-    expect(document.body.textContent).toContain("2 active · 2 total miners · 1 need attention");
-    await act(async () => [...document.querySelectorAll("button")].find(button => button.textContent === "New miner")!.click());
-    expect(invoke).toHaveBeenCalledWith("isolated_panel_request", { request: { op: "custom", action: "open_tab", args: { id: "subnets" } } }, undefined);
   } finally { await act(async () => root.unmount()); runtime.dispose(); }
 });

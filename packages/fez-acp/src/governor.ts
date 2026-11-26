@@ -11,7 +11,7 @@
  *  - completion: a worker's successful result for work I assigned →
  *                accept (chit + one templated line, no model turn) / run
  */
-import type { JudgeQuestion, JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
+import type { JudgeQuestion, JudgeResult } from "../../fez-orchestrator/src/judge.js";
 
 export type GovernorOutcome = "run" | "skip" | "escalate";
 export interface GovernorValues { needs_me: number; resolved: number; contradiction: number }

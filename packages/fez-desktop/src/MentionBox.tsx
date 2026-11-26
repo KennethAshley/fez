@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FezClient, MentionCandidate } from "@fezchat/client";
 import { MentionList, mentionToken, rosterMatches } from "./mentions";
-import { useBazaarRecords } from "./useBazaarRecords";
 import { FormatBar, markdownFormatOps } from "./format-bar";
 
 /**
@@ -57,10 +56,9 @@ export default function MentionBox({
   const [hasSelection, setHasSelection] = useState(false);
 
   const token = useMemo(() => mentionToken(value, caret), [value, caret]);
-  const records = useBazaarRecords(useMemo(() => roster.filter((r) => r.isMember).map((r) => r.pubkey), [roster]));
   const candidates = useMemo(
-    () => (token ? rosterMatches(roster, token.partial, client.pubkey, 6, records) : []),
-    [roster, token, client, records]
+    () => (token ? rosterMatches(roster, token.partial, client.pubkey, 6) : []),
+    [roster, token, client]
   );
 
   useEffect(() => {
@@ -97,7 +95,7 @@ export default function MentionBox({
     <div className={format ? "mention-box formatted" : "mention-box"}>
       {open && (
         <div className="mention-pop">
-          <MentionList client={client} candidates={candidates} pickIndex={pickIndex} onPick={pick} records={records} />
+          <MentionList client={client} candidates={candidates} pickIndex={pickIndex} onPick={pick} />
         </div>
       )}
       {/* Same toolbar the channel composer uses, inside the same single

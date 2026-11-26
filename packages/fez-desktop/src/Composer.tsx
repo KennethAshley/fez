@@ -5,7 +5,6 @@ import { COMMANDS, type CommandMeta } from "./commands";
 import { guiCommandMenu } from "./gui-extensions";
 import { FormatBar, markdownFormatOps } from "./format-bar";
 import { MentionList, rosterMatches } from "./mentions";
-import { useBazaarRecords } from "./useBazaarRecords";
 
 /**
  * The message composer, Buzz-shaped: multiline textarea (Enter sends,
@@ -95,10 +94,9 @@ export default function Composer({
     return undefined;
   }, [value, caret, commandsEnabled]);
 
-  const records = useBazaarRecords(useMemo(() => roster.filter((r) => r.isMember).map((r) => r.pubkey), [roster]));
   const mentionCandidates = useMemo(
-    () => (token?.type === "mention" ? rosterMatches(roster, token.partial, client.pubkey, 6, records) : []),
-    [roster, client, token, records]
+    () => (token?.type === "mention" ? rosterMatches(roster, token.partial, client.pubkey, 6) : []),
+    [roster, client, token]
   );
 
   const emojiCandidates = useMemo(
@@ -238,7 +236,7 @@ export default function Composer({
       {popupOpen && (
         <div className="mention-pop">
           {token?.type === "mention" && (
-            <MentionList client={client} candidates={mentionCandidates} pickIndex={pickIndex} onPick={pick} records={records} />
+            <MentionList client={client} candidates={mentionCandidates} pickIndex={pickIndex} onPick={pick} />
           )}
           {token?.type === "channel" &&
             channelCandidates.map((candidate, index) => (

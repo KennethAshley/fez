@@ -1,7 +1,7 @@
 /**
  * Salt evidence fetch — the thin I/O in front of deriveSalt (which holds
  * all the rules and all the tests). One-shot per profile open, cached for
- * the session like the bazaar recordCache. Queries the workspace relay
+ * the session. Queries the workspace relay
  * AND the bazaar commons: an agent's republished chits accumulate where
  * it works, not where it was born.
  */

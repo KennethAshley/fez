@@ -7,7 +7,7 @@ import remarkBreaks from "remark-breaks";
 import type { BrowserWire } from "./wire";
 import { latestPendingFor, findByTask, updateRecord, tauriStore } from "./orchestration";
 import { relaySet } from "./relay";
-import { BAZAAR_RELAY } from "./bazaar-record";
+import { BAZAAR_RELAY } from "./market-relay";
 import { fetchSaltPanel, invalidateSaltPanel, tierLabel, tierTitle, type SaltPanel } from "./salt-record";
 
 import { parseGuestEvent, isGuestReplyTo, replaceableEventWins } from "../../fez-client/src/guest-protocol.js";

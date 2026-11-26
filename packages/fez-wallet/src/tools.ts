@@ -26,6 +26,10 @@ import {
 import { getPublicKey } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 import { requireWalletMutationAllowed } from "./evaluation.js";
+import type { SubtensorApi } from "./chains/subtensor.js";
+import { gammaBalance } from "./gamma.js";
+import { discoverGammaServices, routeAllowed } from "./gamma-services.js";
+import { buyWithGamma, type Ask } from "./gamma-buy.js";
 
 export const CONSENT_TIMEOUT_MS = 600_000; // 10 minutes
 
@@ -248,6 +252,71 @@ export async function walletSend(
   }
 
   return `sent ${formatAmount(amount)} → ${to} (tx ${txHash}${consent === "approved" ? ", owner-approved" : ""})${receiptNote}`;
+}
+
+/** What this agent can buy with gamma right now: the registered services
+ * that pass the standard's free checks, with the agent's own balance at
+ * each. Names and descriptions are the services' own words, so they are
+ * cut to one short line before they reach the agent. */
+export async function walletGammaServices(pair: WalletPair, api: SubtensorApi): Promise<string> {
+  const report = await discoverGammaServices(api);
+  const ready = report.services.filter((s) => s.ready);
+  const others = report.services.length - ready.length;
+  const rest = others ? `\n${others} other registered service${others === 1 ? "" : "s"} did not pass the checks and ${others === 1 ? "is" : "are"} not offered.` : "";
+  if (!ready.length) return `No gamma service is ready to buy from (chain block ${report.block}).${rest}`;
+  const rows = await Promise.all(ready.map(async (s) => {
+    const balance = await gammaBalance(s.balanceUrl!, pair, s.hotkey).then((b) => `$${b.remainingUsd}`, () => "unknown");
+    return `- SN${s.netuid} ${oneLine(s.name ?? "").slice(0, 60)}: ${oneLine(s.description ?? "").slice(0, 300)} Your balance: ${balance}. Spec: ${s.specUrls.map(oneLine).join(", ")}`;
+  }));
+  return [`Gamma services you can buy from (chain block ${report.block}). You pay from your balance at each service; $0 means your owner has not funded you there.`, ...rows].join("\n") + rest;
+}
+
+export interface GammaBuyDeps {
+  pair: WalletPair;
+  api: SubtensorApi;
+  /** The owner's spending rule for this agent, in their words (persona `gammaPolicy`). */
+  policy: string | undefined;
+  /** The judge; undefined when no key is set. */
+  ask: Ask | undefined;
+}
+
+const MAX_RESULT_CHARS = 4000;
+
+/** One purchase from a gamma service. Nothing is sent unless the owner
+ * wrote a rule, the judge picks a ready service, the request is one that
+ * service's own spec lists, and the judge says the rule allows it. */
+export async function walletGammaBuy(deps: GammaBuyDeps, args: { need: string; url: string; method?: string; body?: unknown }): Promise<string> {
+  requireWalletMutationAllowed();
+  if (!deps.policy?.trim()) return "Your owner has set no gamma spending rule for you, so nothing was sent. They can set one on your card in the Agents page.";
+  if (!deps.ask) return "No judge is available (ZILS_API_KEY is not set), so nothing was sent.";
+  const method = (args.method ?? (args.body === undefined ? "GET" : "POST")).toUpperCase();
+  const ready = (await discoverGammaServices(deps.api)).services.filter((s) => s.ready);
+  const routes = new Map(ready.map((s) => [s.netuid, s.routes]));
+  const purchase = await buyWithGamma({
+    need: args.need,
+    policy: deps.policy,
+    services: ready.map((s) => ({ netuid: s.netuid, name: oneLine(s.name ?? "").slice(0, 60), hotkey: s.hotkey, description: oneLine(s.description ?? "").slice(0, 300) })),
+    ask: deps.ask,
+    pair: deps.pair,
+    request: (service) => (routeAllowed(routes.get(service.netuid) ?? [], method, args.url) ? { url: args.url, method, body: args.body } : undefined),
+  });
+  if (purchase.outcome === "no_service") return "No ready gamma service clearly sells that, so nothing was sent. See wallet_gamma_services for what can be bought.";
+  const name = `SN${purchase.service.netuid} ${purchase.service.name}`;
+  switch (purchase.outcome) {
+    case "no_request":
+      return `The service that sells this is ${name}, and its spec does not list ${method} ${oneLine(args.url)}, so nothing was sent. Use a route from its spec.`;
+    case "not_allowed":
+      return `Your owner's spending rule does not allow paying ${name} for this, so nothing was sent.`;
+    case "unfunded":
+      return `You have no balance at ${name}, so it did no work and charged nothing. Ask your owner to spend gamma for your key ${deps.pair.address} at its service hotkey ${purchase.service.hotkey}.`;
+    default: {
+      const result = JSON.stringify(purchase.result) ?? "(no JSON body)";
+      const shown = result.length > MAX_RESULT_CHARS ? `${result.slice(0, MAX_RESULT_CHARS)}… (${result.length} characters in all)` : result;
+      return purchase.outcome === "delivered"
+        ? `Bought from ${name} (HTTP ${purchase.status}). Result:\n${shown}`
+        : `${name} answered (HTTP ${purchase.status}) but the result did not deliver what you needed. It may still have charged you. Result:\n${shown}`;
+    }
+  }
 }
 
 export async function walletHistory(deps: ToolDeps, args: { limit?: number }): Promise<string> {

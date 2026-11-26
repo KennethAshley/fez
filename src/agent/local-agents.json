@@ -5,7 +5,7 @@
     "cli": "claude",
     "adapter": "claude-agent-acp",
     "package": "@agentclientprotocol/claude-agent-acp",
-    "version": "0.70.0",
+    "version": "0.113.0",
     "statusCommand": "claude_brain_status",
     "setupCommand": "ensure_claude_adapter",
     "login": "claude /login"

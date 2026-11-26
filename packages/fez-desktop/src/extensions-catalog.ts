@@ -17,7 +17,7 @@ export interface CatalogEntry {
   /** Where it shows up once installed — so "nothing happened" isn't a mystery. */
   where: string;
   permissions: string[];
-  /** Source repo when it isn't a packages/ dir of the monorepo (e.g. bazaar). */
+  /** Source repo when it isn't a packages/ dir of the monorepo. */
   repo?: string;
 }
 
@@ -32,14 +32,9 @@ export const CATALOG: CatalogEntry[] = [
   { name: "@fezchat/live-blocks", title: "Live Blocks", blurb: "A markdown block an agent keeps breathing — live data that updates itself inside a doc.", where: "Renders live blocks inside docs.", permissions: ["ui", "commands", "read:channels", "publish", "background"] },
   { name: "@fezchat/themes", title: "Themes", blurb: "The classics — Dracula, Nord, Catppuccin, Solarized, Tokyo Night, Monokai, Night Owl, Kanagawa, Flexoki, and ten more. Each a light/dark pair.", where: "Adds a shelf of packs to Settings → theme.", permissions: ["ui"] },
   { name: "@fezchat/wallet", title: "Wallet", blurb: "Per-agent allowance wallets — HD-derived accounts from one master mnemonic, TAO live, threshold consent via owner-signed reactions. The balance IS the cap.", where: "Adds a wallet panel and the payment skill agents spend through.", permissions: ["network:.opentensor.ai", "network:.base.org", "network:relay", "publish", "read:channels", "ui", "processes"] },
-  { name: "@fezchat/mining", title: "Mining", blurb: "Manage subnet miners and uploaded agents from one fleet, with configuration, history and agent tools.", where: "Adds the Mining panel and mining tools. Install Wallet and a subnet adapter to get started.", permissions: ["ui", "processes", "personas", "background", "read:channels", "publish", "network:.opentensor.ai"] },
-  { name: "@fezchat/numinous", title: "Numinous", blurb: "Submit forecasting agents to Numinous SIGNAL on testnet 155. Validators host the code; Fez tracks versions and activation.", where: "Adds Numinous to Mining. Requires Mining and Wallet 0.1.14+. Docker is needed for local code checks. Testnet only; uploads require explicit confirmation.", permissions: ["network:stg.numinous.earth", "processes"] },
-  { name: "@fezchat/oro", title: "ORO", blurb: "Unsupported for testnet mining. ORO targets mainnet subnet 15.", where: "No public ORO testnet mining service has been verified. Local development does not mine or earn rewards. Keep Wallet on testnet; this adapter is not a supported testnet mining option.", permissions: ["network:api.oroagents.com", "processes"] },
-  { name: "@fezchat/ridges", title: "Ridges", blurb: "Pay for GitHub fixes or submit your coding agent to SN62. Track jobs, PRs and receipts in chat.", where: "Adds Ridges agent tools and SN62 in Mining. Ask your agent for job history or to configure channel updates.", permissions: ["network:product.ridges.ai", "network:agent-upload.ridges.ai", "network:api.github.com", "processes", "read:channels", "publish", "commands", "background"] },
   { name: "@fezchat/memory", title: "Memory", blurb: "Shared team memory for agents — fez_remember / fez_recall over append-only, signed events on the relay. Shared by default, because the relay is.", where: "Adds the fez_remember and fez_recall skills to granted agents.", permissions: ["read:channels", "publish"] },
   { name: "@fezchat/ditto", title: "Ditto Memory", blurb: "Let selected agents search your Ditto memories, retrieve their sources, and save notes you explicitly request.", where: "Add DITTO_API_KEY in Settings → secrets → ditto, then attach ditto in an agent's tool picker. Agents get access to the connected Ditto account; Fez team memory stays separate.", permissions: ["network:api.heyditto.ai"] },
   { name: "@fezchat/loom", title: "Loom", blurb: "Save, reopen, and share artifacts from any agent. Includes @loom as an optional builder.", where: "Adds the ▣ artifacts library. Saves stay with your account and workspace on this device.", permissions: ["read:channels", "publish", "personas", "ui"] },
-  { name: "@fezchat/bazaar", title: "Bazaar", blurb: "The fez bazaar — run a miner that serves the subnet, watch how it's doing, and ask the market questions with bazaar_ask.", where: "Adds a Bazaar panel, the bazaar_ask skill, and the fez-bazaar-miner program.", permissions: ["network:.fez.chat", "read:channels", "read:agents", "ui", "processes", "notifications"], repo: "https://github.com/KennethAshley/fez-bazaar" },
   { name: "@fezchat/web", title: "Web", blurb: "Eyes for your agents — search the public web (no API key; rides fez's hosted search) and read pages as clean text, with private-network addresses refused by construction.", where: "Adds web_search and web_fetch skills any attached agent can use. Plainly: agents you attach this to can reach any public website. For a full driven browser, attach browser=npm:@playwright/mcp alongside it.", permissions: ["network:*"] },
   { name: "@fezchat/browser", title: "Browser", blurb: "Open websites beside your chat, with separate browser panes for parallel work.", where: "Open /browser in chat. Add Browser Use to agents for visible mouse and keyboard control. Settings also provides a separate Camofox setup for anonymous reading tools.", permissions: ["network:*", "ui", "processes", "commands"] },
   { name: "@fezchat/browser-use", title: "Browser Use", blurb: "Let agents click, type, and scroll in your Fez browser panes.", where: "Attach to a local agent and restart it, then open /browser. Each pane has one driver and a waiting queue. Take control pauses its agents immediately. Requires the native-browser desktop build.", permissions: ["network:127.0.0.1"] },
@@ -122,7 +117,7 @@ export const SENSITIVE = new Set(["publish", "personas", "background", "processe
 
 /** Human label for a permission id — network:<host> ids get a real
  * sentence instead of falling through to raw code, since half the new
- * catalog entries (wallet, ridges, bazaar) declare them. */
+ * catalog entries (wallet) declare them. */
 export const permLabel = (p: string): string => {
   if (PERM_LABEL[p]) return PERM_LABEL[p];
   if (p.startsWith("network:")) {
