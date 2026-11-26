@@ -1,0 +1,1079 @@
+{
+ "standard": "Gamma Integration Standard V1.3",
+ "network": "finney",
+ "block": 9593351,
+ "checked_at": "2026-11-26T20:18:09+00:00",
+ "services": [
+  {
+   "netuid": 19,
+   "name": "blockmachine",
+   "hotkey": "5CK49hDJcseEk1V7iB1dmmztdw4igafhxLsVN82VtUVAQRfC",
+   "url": "https://blockmachine.io/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance_url",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "spec",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "pricing",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No GET route without parameters in an OpenAPI spec."
+    }
+   ]
+  },
+  {
+   "netuid": 22,
+   "name": "Desearch",
+   "hotkey": "5CUu1QhvrfyMDBELUPJLt4c7uJFbi7TKqDHkS1Zz41oD4dyP",
+   "url": "https://www.desearch.ai/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "fail",
+     "detail": "No gamma payment entry with \"signature\": \"btauth/1\"."
+    },
+    {
+     "id": "balance_url",
+     "status": "fail",
+     "detail": "The gamma payment entry has no balance URL."
+    },
+    {
+     "id": "spec",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "pricing",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance",
+     "status": "unknown",
+     "detail": "No balance URL to call."
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No GET route without parameters in an OpenAPI spec."
+    }
+   ]
+  },
+  {
+   "netuid": 24,
+   "name": "ms.computer sandboxes",
+   "hotkey": "5ELAvsvXL9kU9CMzkFcRiqFjw3QGVgA7MrvEfcHsicv5WvWX",
+   "url": "https://api.ms.computer/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance_url",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "spec",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "pricing",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "refuses",
+     "status": "pass",
+     "detail": "https://api.ms.computer/v1/quota"
+    }
+   ]
+  },
+  {
+   "netuid": 25,
+   "name": "URnetwork",
+   "hotkey": "5CyQFykVpfa9xgZVGgBsiNUpjbo1EihBTSkPvDC1FZbL1wxG",
+   "url": "https://api.bringyour.com/pay/gamma/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "fail",
+     "detail": "No gamma payment entry with \"signature\": \"btauth/1\"."
+    },
+    {
+     "id": "balance_url",
+     "status": "fail",
+     "detail": "The gamma payment entry has no balance URL."
+    },
+    {
+     "id": "spec",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "pricing",
+     "status": "unknown",
+     "detail": "No pricing key; prices may be inside the spec."
+    },
+    {
+     "id": "balance",
+     "status": "unknown",
+     "detail": "No balance URL to call."
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No GET route without parameters in an OpenAPI spec."
+    }
+   ]
+  },
+  {
+   "netuid": 28,
+   "name": "SayGM",
+   "hotkey": "5Evgh9QTXJLxYLusVy3tcY5S6Z3GgRSNDb9AzXUchX5dco3P",
+   "url": "https://saygm.com/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance_url",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "spec",
+     "status": "unknown",
+     "detail": "No OpenAPI entry; other spec types are not checked."
+    },
+    {
+     "id": "pricing",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No GET route without parameters in an OpenAPI spec."
+    }
+   ]
+  },
+  {
+   "netuid": 51,
+   "name": "Lium",
+   "hotkey": "5FTVrwEpjvpNeKwczFtYjs62GHKKLHLCdqCThtj2unZouKg1",
+   "url": "https://lium.io/api/gamma/service.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance_url",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "spec",
+     "status": "unknown",
+     "detail": "No OpenAPI entry; other spec types are not checked."
+    },
+    {
+     "id": "pricing",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No GET route without parameters in an OpenAPI spec."
+    }
+   ]
+  },
+  {
+   "netuid": 53,
+   "name": "engy",
+   "hotkey": "5DXSBCCKH5ENuyHFNaAvtaMfbhEEWpjSJB4rzc4mJfsc1uvJ",
+   "url": "https://engy.ai/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance_url",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "spec",
+     "status": "unknown",
+     "detail": "No OpenAPI entry; other spec types are not checked."
+    },
+    {
+     "id": "pricing",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No GET route without parameters in an OpenAPI spec."
+    }
+   ]
+  },
+  {
+   "netuid": 58,
+   "name": "Attune",
+   "hotkey": "5DsnuvVczKJvrFphbzNnuRhiGhH48co7im1EzzvnWibWBp9S",
+   "url": "https://api.robotensor.ai/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "fail",
+     "detail": "Access-Control-Allow-Origin: None"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "fail",
+     "detail": "No gamma payment entry with \"signature\": \"btauth/1\"."
+    },
+    {
+     "id": "balance_url",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "spec",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "pricing",
+     "status": "unknown",
+     "detail": "No pricing key; prices may be inside the spec."
+    },
+    {
+     "id": "balance",
+     "status": "fail",
+     "detail": "HTTP 422 for a hotkey never seen; zeros expected."
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No GET route without parameters in an OpenAPI spec."
+    }
+   ]
+  },
+  {
+   "netuid": 64,
+   "name": null,
+   "hotkey": "5CS3g6nVJM6ouns8n9buN9CzFf2C1YDHVcVGRcxoirKs2xbV",
+   "url": "https://api.chutes.ai/gamma/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "fail",
+     "detail": "HTTP 404"
+    },
+    {
+     "id": "json",
+     "status": "fail",
+     "detail": "The URL does not return a JSON object."
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "btauth",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "balance_url",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "spec",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "pricing",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "balance",
+     "status": "unknown",
+     "detail": "No balance URL to call."
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No GET route without parameters in an OpenAPI spec."
+    }
+   ]
+  },
+  {
+   "netuid": 75,
+   "name": "Hippius",
+   "hotkey": "5G1Qj93Fy22grpiGKq6BEvqqmS2HVRs3jaEdMhq9absQzs6g",
+   "url": "https://api.hippius.com/api/billing/gamma/service.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance_url",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "spec",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "pricing",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "refuses",
+     "status": "pass",
+     "detail": "https://api.hippius.com/api/account/deletion/"
+    }
+   ]
+  },
+  {
+   "netuid": 76,
+   "name": "Ormas",
+   "hotkey": "5CqaQ34dznCVTdrpcxoiTKcSTbZ87x3oSjJh5G1rTERmcCWK",
+   "url": "https://api.ormas.ai/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "fail",
+     "detail": "The hotkey registered on chain is not a listed publisher."
+    },
+    {
+     "id": "btauth",
+     "status": "fail",
+     "detail": "No gamma payment entry with \"signature\": \"btauth/1\"."
+    },
+    {
+     "id": "balance_url",
+     "status": "fail",
+     "detail": "The gamma payment entry has no balance URL."
+    },
+    {
+     "id": "spec",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "pricing",
+     "status": "unknown",
+     "detail": "No pricing key; prices may be inside the spec."
+    },
+    {
+     "id": "balance",
+     "status": "unknown",
+     "detail": "No balance URL to call."
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No GET route without parameters in an OpenAPI spec."
+    }
+   ]
+  },
+  {
+   "netuid": 80,
+   "name": null,
+   "hotkey": "5HTwtytUfeUhK4p8NRCGppjUZrhJ5ckoRHeVWEQafg2N1Zo6",
+   "url": "https://www.openroboto.ai/",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "fail",
+     "detail": "The URL does not return a JSON object."
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "btauth",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "balance_url",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "spec",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "pricing",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "balance",
+     "status": "unknown",
+     "detail": "No balance URL to call."
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No GET route without parameters in an OpenAPI spec."
+    }
+   ]
+  },
+  {
+   "netuid": 91,
+   "name": "Ephemeris",
+   "hotkey": "5FcCsoB2R5M55RdrNrvPQv7xmLJRFzs7R7C73UUSxgUCyfsw",
+   "url": "https://api.cascade.industries/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance_url",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "spec",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "pricing",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No 402 on the routes tried: 200 https://api.cascade.industries/api/v1/models, 200 https://api.cascade.industries/api/v1/balance, 200 https://api.cascade.industries/api/v1/usage"
+    }
+   ]
+  },
+  {
+   "netuid": 94,
+   "name": "Cathedral",
+   "hotkey": "5FQsFkui1UvS7S7Sf3JAqN9FPCR7RmufSEZTGuVPPN5EDmsN",
+   "url": "https://cathedral.computer/v1/gamma/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance_url",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "spec",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "pricing",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "refuses",
+     "status": "pass",
+     "detail": "https://api.polaris.computer/v1/quota"
+    }
+   ]
+  },
+  {
+   "netuid": 103,
+   "name": null,
+   "hotkey": "5FCSL8R69CXweUjewpoGUpDnYFcFg3Q1J4tQbNHj23SbLgUc",
+   "url": "https://terza.si",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "fail",
+     "detail": "The URL does not return a JSON object."
+    },
+    {
+     "id": "cors",
+     "status": "fail",
+     "detail": "Access-Control-Allow-Origin: None"
+    },
+    {
+     "id": "publisher",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "btauth",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "balance_url",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "spec",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "pricing",
+     "status": "unknown",
+     "detail": "No document to read."
+    },
+    {
+     "id": "balance",
+     "status": "unknown",
+     "detail": "No balance URL to call."
+    },
+    {
+     "id": "refuses",
+     "status": "unknown",
+     "detail": "No GET route without parameters in an OpenAPI spec."
+    }
+   ]
+  },
+  {
+   "netuid": 117,
+   "name": "EveryFrame",
+   "hotkey": "5G9K4zDrdcAE8F1MaaZNxLGXuhMApR5ENZGTs2wAEhiptHEf",
+   "url": "https://app.everyframe.studio/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance_url",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "spec",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "pricing",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "refuses",
+     "status": "pass",
+     "detail": "https://app.everyframe.studio/api/v1/gamma/balance"
+    }
+   ]
+  },
+  {
+   "netuid": 127,
+   "name": "Zils",
+   "hotkey": "5EKrpcqVNWfVfmKiq8v3LRrgb3E3ENBwYzmAziDhMK58gtb5",
+   "url": "https://training.zils.ai/decision/v1/gamma/services.json",
+   "checks": [
+    {
+     "id": "enabled",
+     "status": "fail",
+     "detail": "Minting is off for this subnet."
+    },
+    {
+     "id": "reachable",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "json",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "cors",
+     "status": "pass",
+     "detail": "Access-Control-Allow-Origin: *"
+    },
+    {
+     "id": "publisher",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "btauth",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance_url",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "spec",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "pricing",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "balance",
+     "status": "pass",
+     "detail": ""
+    },
+    {
+     "id": "refuses",
+     "status": "pass",
+     "detail": "https://training.zils.ai/decision/v1/models"
+    }
+   ]
+  }
+ ]
+}

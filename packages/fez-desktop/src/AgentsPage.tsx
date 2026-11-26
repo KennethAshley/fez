@@ -4,8 +4,6 @@ import type { FezClient } from "@fezchat/client";
 import AgentCard, { type AgentCardSkill } from "./AgentCard";
 import { agentSkillStrip } from "./agent-skill-health";
 import { useConfig } from "./config-store";
-import { useBazaarRecords } from "./useBazaarRecords";
-import { bestRow } from "./bazaar-record";
 import { wakingSince, clearWaking, subscribeWaking } from "./waking";
 
 /**
@@ -40,7 +38,6 @@ export default function AgentsPage({
 }) {
   const { skills: catalog } = useConfig();
   const [rows, setRows] = useState<Row[]>([]);
-  const records = useBazaarRecords(useMemo(() => rows.map((r) => r.pk).filter((pk): pk is string => !!pk), [rows]));
   const [loaded, setLoaded] = useState(false);
 
   // The waking window: redraw when it opens or closes, close it the
@@ -142,12 +139,6 @@ export default function AgentsPage({
               online={row.online}
               waking={wakingSince(row.name) !== undefined}
               waiting={client.waitingInputs().some(request => request.agentPk === row.pk)}
-              record={(() => {
-                const top = row.pk && records ? bestRow(records.get(row.pk) ?? []) : undefined;
-                return top
-                  ? `${top.taskType}${top.percentile !== undefined ? ` · ${top.percentile}th` : ""} · ${top.count} task${top.count === 1 ? "" : "s"}`
-                  : undefined;
-              })()}
               onOpen={() => onOpen(row.name)}
             />
           ))}

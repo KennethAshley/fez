@@ -75,10 +75,6 @@ const EXTENSIONS = [
   // published range.
   "packages/fez-themes",
   "packages/fez-wallet",
-  "packages/fez-mining",
-  "packages/fez-numinous",
-  "packages/fez-ridges",
-  "packages/fez-oro",
   // Shared Models. Needs a desktop build carrying the model-provider hook;
   // installing it on an older Fez shows an update message rather than failing.
   "packages/fez-mesh",

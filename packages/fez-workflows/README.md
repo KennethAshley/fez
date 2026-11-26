@@ -60,7 +60,7 @@ trigger:
 
 ## Judged conditions
 
-The skeleton stays deterministic; the fez router's judge (TypeSafe Jev,
+The skeleton stays deterministic; the fez router's judge (Zils,
 `/v1/judge`) answers the yes/no questions inside it. Every judgment is a
 statement scored 0–1, logged and traced, thresholded by you. Set
 `FEZ_JUDGE_URL` (router base, e.g. `https://…/v1`) and `FEZ_JUDGE_KEY`

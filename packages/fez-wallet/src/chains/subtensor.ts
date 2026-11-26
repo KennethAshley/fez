@@ -1,3 +1,4 @@
+import { hexToString } from "@polkadot/util";
 import type { WalletPair } from "../derive.js";
 import {
   connectApi,
@@ -42,6 +43,14 @@ export interface SubtensorApi extends SubstrateApi {
        *  for immunity-left math (getNeuron carries no registration block).
        *  Verified live against 553/uid 5 (2026-09-08): 7925697. */
       blockAtRegistration(netuid: number, uid: number): Promise<{ toNumber(): number }>;
+      /** Every gamma service, keyed (netuid, service hotkey). The value's
+       *  JSON is `{ url }` with the url as hex bytes — verified live on
+       *  finney (2026-11-26, block 9593794): 17 entries. */
+      services: {
+        entries(): Promise<Array<[{ args: [{ toNumber(): number }, { toString(): string }] }, { toJSON(): unknown }]>>;
+      };
+      /** Whether the subnet owner has turned gamma minting on. */
+      subnetGammaEnabled(netuid: number): Promise<{ isTrue: boolean }>;
     };
   };
   tx: SubstrateApi["tx"] & {
@@ -260,6 +269,26 @@ export async function alphaPriceTao(api: SubtensorApi, netuid: number): Promise<
   } catch {
     return undefined;
   }
+}
+
+export interface GammaRegistration { netuid: number; hotkey: string; url: string; enabled: boolean }
+
+/** Every service registered with `set_service`, lowest netuid first, with
+ * whether its subnet has gamma minting on. Pure read. The url is whatever
+ * the registrant wrote: treat it as a stranger's input. */
+export async function gammaRegistrations(api: SubtensorApi): Promise<GammaRegistration[]> {
+  const entries = await api.query.subtensorModule.services.entries();
+  const registered = entries.map(([key, value]) => {
+    const url = (value.toJSON() as { url?: unknown } | null)?.url;
+    return { netuid: key.args[0].toNumber(), hotkey: key.args[1].toString(), url: typeof url === "string" ? hexToString(url) : "" };
+  });
+  const enabled = new Map<number, boolean>();
+  await Promise.all([...new Set(registered.map((r) => r.netuid))].map(async (netuid) => {
+    enabled.set(netuid, (await api.query.subtensorModule.subnetGammaEnabled(netuid)).isTrue);
+  }));
+  return registered
+    .map((r) => ({ ...r, enabled: enabled.get(r.netuid)! }))
+    .sort((a, b) => a.netuid - b.netuid || a.hotkey.localeCompare(b.hotkey));
 }
 
 /** Pure shaping — u16 normalization + the immunity countdown, injected

@@ -3,7 +3,7 @@ import {
   completionDecision, completionQuestions, governCompletion, silentAccept, governSteer, governAttention, governOwnerMention, governNarration, governDeliverable, STATE_CHARS,
   governThread, governorDecision, governorQuestions, governorState,
 } from "../../fez-acp/src/governor.js";
-import type { JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
+import type { JudgeResult } from "../../fez-orchestrator/src/judge.js";
 
 const nouls = (values: Record<string, number>): JudgeResult => ({
   model: "jev-1.13.0", inputTokens: 10, outputTokens: 3,

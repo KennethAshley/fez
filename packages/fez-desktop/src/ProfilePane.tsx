@@ -7,7 +7,7 @@ import CopyNpub from "./CopyNpub";
 import { SaltSection, AgentProfileExtras } from "./AgentReputation";
 import { fetchSaltPanel, type SaltPanel } from "./salt-record";
 import { relaySet } from "./relay";
-import { BAZAAR_RELAY } from "./bazaar-record";
+import { BAZAAR_RELAY } from "./market-relay";
 
 /**
  * Profile card — click any name, get the person (or agent) behind it.

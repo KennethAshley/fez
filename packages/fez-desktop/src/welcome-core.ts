@@ -89,36 +89,6 @@ export function buildFezPersonaMd(harness: string, model?: string, provider?: st
   const brainLines =
     (model && provider ? `provider: ${provider}\nmodel: ${model}\n` : model ? `model: ${model}\n` : "") +
     (effort ? `effort: ${effort}\n` : "");
-  // Double-quoted (not template-literal) so the fenced example's literal
-  // backticks need no escaping.
-  const marketParagraph =
-    "\nWhen a task needs a capability nobody on the roster claims — or the user\n" +
-    "explicitly asks for the market — call market_directory, pick AT MOST ONE\n" +
-    "candidate you would stake your name on, and reply with a fenced\n" +
-    "fez-hire-proposal block:\n\n" +
-    "```fez-hire-proposal\n" +
-    '{ "task": "<the work, stated so a stranger could do it>",\n' +
-    '  "pk": "<its 64-hex pubkey>", "name": "<its name>",\n' +
-    '  "why": "<the roster gap, in one sentence>",\n' +
-    '  "kind": "settle", "price_est_tao": 0.0, "rate_tao_hr": 0.0 }\n' +
-    "```\n\n" +
-    "The block renders as a card; the human decides. Never present market\n" +
-    "answers as your own, never propose more than one candidate, and if the\n" +
-    "roster covers the task, do not mention the market at all. If\n" +
-    "market_directory is not among your tools, say the market extension\n" +
-    "isn't installed rather than guessing.\n\n" +
-    // Two tiers (Ken's ruling): free tryouts flow, money gets consent.
-    // Paid work goes through the propose_hire TOOL, not a hand-formatted
-    // block — a model calls a tool far more reliably than it emits a fence.
-    "Two tiers. bazaar_ask is the FREE tryout — use it directly for one-off\n" +
-    "questions and fact-checks, attributing answers as bazaar results. When\n" +
-    "the work merits PAYING — a priority lease, or an escrowed deliverable —\n" +
-    "call the propose_hire TOOL and relay its output verbatim; its card\n" +
-    "carries the buttons that pay, clicked by the human from their own\n" +
-    "wallet. That tool IS your ability to arrange paid work: you cannot spend\n" +
-    "and must never ask for wallet access, and \"blocked on payment\" is never\n" +
-    "true. Propose even when the agent is offline (say so in the why; the\n" +
-    "hire waits).\n";
   // What the guide must know cold. Found on a fresh workspace: asked how to
   // invite someone, the guide said invites "aren't exposed to my tools" —
   // it had no idea the composer has slash commands.
@@ -139,12 +109,11 @@ export function buildFezPersonaMd(harness: string, model?: string, provider?: st
     "An @mention in your reply is a handoff: the room turns it into an assignment and that agent starts working. When\n" +
     "you are only describing a teammate (\"drift searches the web\"), write the name without the @.\n";
   return (
-    `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\nguide: true\nmcpServers: [bazaar=npm:@fezchat/bazaar]\n` +
+    `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\nguide: true\n` +
     `description: your guide to fez — ask how anything works, or hand over a task and the right agent gets it\n---\n` +
     `You are @fez, the guide for this fez workspace. Answer questions about fez\n` +
     `plainly; for tasks, name the persona best suited and offer to bring it in.\n` +
-    basicsParagraph +
-    marketParagraph
+    basicsParagraph
   );
 }
 

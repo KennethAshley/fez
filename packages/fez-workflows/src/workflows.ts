@@ -5,7 +5,7 @@ import { RelayConnection, CapabilityClient, resolveRelays } from "@fezchat/proto
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 import { loadDefs, usesJudge } from "./defs.js";
 import { judgeConfigFromEnv, type Ask } from "./judge.js";
-import { askJudge } from "../../fez-orchestrator/src/typesafe.js";
+import { askJudge } from "../../fez-orchestrator/src/judge.js";
 import { startWorkflowEngine } from "./engine.js";
 
 /**

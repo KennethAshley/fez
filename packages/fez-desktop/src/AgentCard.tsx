@@ -32,7 +32,6 @@ export default function AgentCard({
   waking,
   waiting,
   selected,
-  record,
   onOpen,
 }: {
   name: string;
@@ -45,8 +44,6 @@ export default function AgentCard({
   waking?: boolean;
   waiting?: boolean;
   selected?: boolean;
-  /** Judged bazaar record, e.g. "research · 91st · 240 tasks". */
-  record?: string;
   onOpen: () => void;
 }) {
   // A face exists if the agent is in the hand-drawn cast (name is enough)
@@ -86,7 +83,6 @@ export default function AgentCard({
       ) : (
         <span className="agent-card-desc dim">Add a description so your team knows when to ask for help.</span>
       )}
-      {record && <span className="agent-card-desc mention-key">{record}</span>}
       {skills.length > 0 ? (
         <span className="skill-strip">
           {skills.map((skill) => (

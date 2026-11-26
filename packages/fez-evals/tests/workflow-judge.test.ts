@@ -5,7 +5,7 @@ import path from "node:path";
 import { loadDefs, usesJudge } from "../../fez-workflows/src/defs.js";
 import { evalCondition } from "../../fez-workflows/src/expr.js";
 import { judgeConfigFromEnv, judgeState, judgeStatements, judgeVars, nouls } from "../../fez-workflows/src/judge.js";
-import type { JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
+import type { JudgeResult } from "../../fez-orchestrator/src/judge.js";
 
 function loadYaml(yamlText: string) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fez-wf-judge-"));

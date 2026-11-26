@@ -15,6 +15,8 @@ import {
   walletBalance,
   walletSend,
   walletHistory,
+  walletGammaServices,
+  walletGammaBuy,
   x402Fetch,
   makeX402Deps,
   type ToolDeps,
@@ -22,12 +24,18 @@ import {
 import type { ChainAdapter } from "./chains/adapter.js";
 import type { WalletPair, EvmPair } from "./derive.js";
 import type { WalletConfig } from "./config.js";
-import { personaStatus, stakePersona, unstakePersona, escrowApprove, escrowStatus } from "./stake.js";
+import { personaStatus, stakePersona, unstakePersona, escrowApprove, escrowStatus, subtensorFor } from "./stake.js";
 import { rentAgent } from "./rent.js";
 import { resolveRecipient } from "./resolve.js";
 import { rosterFilter, rosterFromEvents } from "./roster.js";
 import { createAddressAnnouncer } from "./announce.js";
 import { requireWalletMutationAllowed } from "./evaluation.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { askJudge, ZILS_URL } from "../../fez-orchestrator/src/judge.js";
+import { keychainSecret } from "../../../src/extensions/mcp-servers.js";
+import type { Ask } from "./gamma-buy.js";
 
 /**
  * fez-wallet, skill part — the calling agent's OWN allowance account.
@@ -336,6 +344,55 @@ server.registerTool(
     inputSchema: { limit: z.number().optional().describe("Max rows (default 20).") },
   },
   async ({ limit }) => text(await walletHistory(await deps(), { limit }))
+);
+
+/** The judge this agent's room already uses, found the way fez-acp finds
+ * it (env, then Settings, then the owner's own Zils key), minus the
+ * per-persona override. ponytail: a second copy of that lookup; move both
+ * to one module when either changes. */
+function judgeAsk(): Ask | undefined {
+  let settings: { judgeUrl?: unknown; judgeKey?: unknown } = {};
+  try { settings = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".fez", "settings.json"), "utf8")); } catch { /* no settings file */ }
+  const own = process.env.ZILS_API_KEY || keychainSecret("fez", "ZILS_API_KEY");
+  const url = process.env.FEZ_JUDGE_URL || (typeof settings.judgeUrl === "string" ? settings.judgeUrl : undefined) || (own ? ZILS_URL : undefined);
+  const key = process.env.FEZ_JUDGE_KEY || (typeof settings.judgeKey === "string" ? settings.judgeKey : undefined) || own;
+  return url && key ? (state, questions) => askJudge(url, key, state, questions, { timeoutMs: 15_000 }) : undefined;
+}
+
+server.registerTool(
+  "wallet_gamma_buy",
+  {
+    description:
+      "Buy from a Bittensor gamma service with your own balance there. Call wallet_gamma_services first, read the service's spec, " +
+      "and give the exact request. It is sent only if a ready service sells what you need, that service's spec lists the request, " +
+      "and your owner's spending rule allows it. Gamma cannot be refunded.",
+    inputSchema: {
+      need: z.string().describe("What you need, in plain words. Checked against the result."),
+      url: z.string().describe("Full https URL of a route from the service's spec."),
+      method: z.string().optional().describe("HTTP method. Default: POST with a body, GET without."),
+      body: z.unknown().optional().describe("JSON request body, if the route takes one."),
+    },
+  },
+  async ({ need, url, method, body }) => {
+    const d = await deps();
+    // Read per call, like the config: a rule the owner just changed applies to the next purchase.
+    const { findPersona } = await import("@fezchat/protocol");
+    const policy = (await findPersona(persona!))?.extra.gammaPolicy;
+    return text(await walletGammaBuy({ pair: d.pair, api: await subtensorFor(d.config.endpoints.tao), policy, ask: judgeAsk() }, { need, url, method, body }));
+  }
+);
+
+server.registerTool(
+  "wallet_gamma_services",
+  {
+    description:
+      "Bittensor services you can buy from with gamma (prepaid USD credit on your own key), and your balance at each. Read-only; spends nothing.",
+    inputSchema: {},
+  },
+  async () => {
+    const d = await deps();
+    return text(await walletGammaServices(d.pair, await subtensorFor(d.config.endpoints.tao)));
+  }
 );
 
 await server.connect(new StdioServerTransport());

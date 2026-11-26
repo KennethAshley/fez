@@ -8,7 +8,7 @@
  * existing expression language (`judge.blocker >= 0.8`), so nothing is
  * hidden: the value lands in the run trace and in a variable.
  */
-import type { JudgeQuestion, JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
+import type { JudgeQuestion, JudgeResult } from "../../fez-orchestrator/src/judge.js";
 
 export interface JudgeConfig { url: string; key: string }
 export type Ask = (state: unknown, questions: Record<string, JudgeQuestion>) => Promise<JudgeResult>;

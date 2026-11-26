@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { STYLE_ONLY_AT, gateOwnerQuestion, pickFor, presentationQuestion } from "../../fez-mcp/src/owner-gate.js";
-import type { JudgeResult } from "../../fez-orchestrator/src/typesafe.js";
+import type { JudgeResult } from "../../fez-orchestrator/src/judge.js";
 
 const noul = (v: number): JudgeResult => ({ model: "jev-1.13.0", inputTokens: 1, outputTokens: 1, answers: { style: { type: "noul", noul: v } } });
 const options = [{ label: "Technical" }, { label: "Concise", recommended: true }, { label: "Actionable" }];

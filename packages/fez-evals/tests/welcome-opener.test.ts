@@ -74,19 +74,10 @@ describe("welcome opener", () => {
     }
   });
 
-  it("@fez knows the market is a fallback, not a first resort", () => {
+  it("@fez is a guide and a router, with no market", () => {
     const md = buildFezPersonaMd("pi");
-    expect(md).toContain("market_directory");
-    expect(md).toContain("fez-hire-proposal");
-    expect(md).toContain("AT MOST ONE");
-    expect(md).toContain("do not mention the market");
-    // The two-tier ruling: free tryouts execute; paid work goes through the
-    // propose_hire TOOL (prose alone kept losing to the model's "I have no
-    // payment tool, so I'm blocked" reflex — the tool removes that premise).
-    expect(md).toContain("FREE tryout");
-    expect(md).toContain("call the propose_hire TOOL and relay its output");
-    expect(md).toContain("must never ask for wallet access");
-    expect(md).toMatch(/mcpServers:.*bazaar/);
+    expect(md).toContain("guide: true");
+    expect(md).not.toMatch(/market|bazaar|hire/i);
   });
 
   it("starter team: summons by mention, inherits the brain, waits for real intros", () => {
