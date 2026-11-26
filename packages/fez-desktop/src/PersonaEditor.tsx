@@ -302,29 +302,6 @@ export default function PersonaEditor({
             onChange={(e) => update("aliases", textToList(e.target.value))}
           />
         </div>
-        {/* The wallet reads this on every purchase and sends nothing while
-            it is blank, so a change applies without restarting the agent. */}
-        <div className="settings-field">
-          <label htmlFor="gamma-daily-usd">Gamma daily limit</label>
-          <div className="rate-row">
-            <input
-              id="gamma-daily-usd"
-              className="manage-input rate-input"
-              type="number"
-              min="0"
-              step="0.01"
-              inputMode="decimal"
-              value={field("gammaDailyUsd")}
-              placeholder="0"
-              onChange={(e) => update("gammaDailyUsd", e.target.value)}
-            />
-            <span className="rate-unit">$ / day</span>
-          </div>
-          <div className="field-note">
-            The most of its own TAO this agent may turn into gamma for Bittensor services in a day, in
-            dollars. Leave blank and it cannot buy.
-          </div>
-        </div>
 
         </div>
 

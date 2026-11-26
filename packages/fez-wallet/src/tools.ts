@@ -275,7 +275,7 @@ export async function walletGammaServices(pair: WalletPair, api: SubtensorApi, c
 export interface GammaBuyDeps {
   pair: WalletPair;
   api: SubtensorApi;
-  /** The owner's limit for this agent in dollars a day (persona `gammaDailyUsd`). Unset or 0: no buying. */
+  /** The owner's limit for this agent in dollars a day (wallet setting `gammaDailyUsd`). Unset or 0: no buying. */
   dailyLimitUsd: number | undefined;
   /** The judge; undefined when no key is set. */
   ask: Ask | undefined;
@@ -285,7 +285,7 @@ export interface GammaBuyDeps {
 
 const MAX_RESULT_CHARS = 4000;
 const usd = (n: number) => `$${+n.toFixed(9)}`;
-const NO_LIMIT = "Your owner has set no daily gamma limit for you, so nothing was sent. They can set one in your persona (Agents page).";
+const NO_LIMIT = "Your owner has set no daily gamma limit for you, so nothing was sent. They can set one in the Wallet settings.";
 const hasLimit = (limit: number | undefined): limit is number => limit !== undefined && limit > 0;
 
 /** One purchase from a gamma service, paid from the agent's balance there.

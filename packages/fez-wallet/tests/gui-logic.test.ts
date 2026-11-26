@@ -452,3 +452,22 @@ describe("taoEquiv — the ≈ gloss", () => {
     expect(taoEquiv("junk", 0.02)).toBeUndefined();      // unparseable amount
   });
 });
+
+describe("mergeGammaLimit", () => {
+  it("sets one agent's limit and keeps everyone else's", async () => {
+    const { mergeGammaLimit } = await import("../src/gui-logic.js");
+    expect(mergeGammaLimit({ drift: 1 }, "scout", " 2.50 ")).toEqual({ drift: 1, scout: 2.5 });
+    expect(mergeGammaLimit(undefined, "scout", "5")).toEqual({ scout: 5 });
+  });
+
+  it("blank or zero removes the limit, which stops that agent buying", async () => {
+    const { mergeGammaLimit } = await import("../src/gui-logic.js");
+    expect(mergeGammaLimit({ drift: 1, scout: 2 }, "scout", "")).toEqual({ drift: 1 });
+    expect(mergeGammaLimit({ scout: 2 }, "scout", "0")).toEqual({});
+  });
+
+  it("refuses anything that is not a dollar amount", async () => {
+    const { mergeGammaLimit } = await import("../src/gui-logic.js");
+    for (const bad of ["abc", "-1", "1e3", "2 dollars"]) expect(() => mergeGammaLimit({}, "scout", bad)).toThrow(/dollar amount/i);
+  });
+});

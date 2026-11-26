@@ -30,6 +30,7 @@ import {
   X402_NETWORKS,
   X402_DISPLAY,
   gammaFundConfirm,
+  mergeGammaLimit,
 } from "./gui-logic.js";
 import type { X402MirrorRow, X402Meta } from "./storage-mirror.js";
 import { parseReceipt, type ParsedReceipt } from "./receipt.js";
@@ -887,6 +888,14 @@ export default function activate(api: GuiExtensionApi): void {
     const [busy, setBusy] = useState<string | undefined>(undefined);
     const [note, setNote] = useState<string | undefined>(undefined);
     const [error, setError] = useState<string | undefined>(undefined);
+    const [limit, setLimit] = useState("");
+    const [savedLimit, setSavedLimit] = useState("");
+    useEffect(() => {
+      void api.prefs.get<Record<string, number>>("gammaDailyUsd").then((all) => {
+        const mine = all?.[persona] ? String(all[persona]) : "";
+        setLimit(mine); setSavedLimit(mine);
+      }, () => {});
+    }, [persona]);
     if (!run) return null;
 
     const call = async <T,>(args: string[]): Promise<T> => {
@@ -917,10 +926,39 @@ export default function activate(api: GuiExtensionApi): void {
       setNote(`✓ funded with $${done.spentUsd} at ${done.service}. It shows as @${persona}'s balance there in about two minutes.`);
     });
 
+    const saveLimit = () => act("limit", async () => {
+      // Read-modify-write the one prefs key: it holds every agent's limit.
+      const next = mergeGammaLimit(await api.prefs.get<Record<string, number>>("gammaDailyUsd"), persona, limit);
+      await api.prefs.set("gammaDailyUsd", next);
+      setSavedLimit(limit.trim());
+      setNote(next[persona] ? `✓ @${persona} may turn up to $${next[persona]} a day of its own TAO into gamma.` : `✓ @${persona} can no longer buy with gamma.`);
+    });
+
     const posRow = { display: "flex", alignItems: "center", gap: 10, padding: "3px 0", fontSize: 12.5 } as const;
     const posLabel = { color: "var(--fg-dim, #928374)", width: "3.8rem", flex: "none" } as const;
     return (
       <div>
+        <div style={posRow}>
+          <span style={posLabel}>gamma</span>
+          <span style={{ color: "var(--fg-dim, #928374)" }}>daily limit: the most of its own TAO it may turn into gamma. Blank: it cannot buy.</span>
+          <span style={{ flex: 1 }} />
+          <input
+            className="manage-input"
+            style={{ width: 92, flex: "none" }}
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            placeholder="$ / day"
+            aria-label={`gamma daily limit for ${persona}, in dollars`}
+            value={limit}
+            onChange={(e) => setLimit(e.target.value)}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+          <button className="mini" disabled={busy !== undefined || limit.trim() === savedLimit} onClick={() => void saveLimit()}>
+            {busy === "limit" ? "saving…" : "save"}
+          </button>
+        </div>
         {services === undefined ? (
           <div style={posRow}>
             <span style={posLabel}>gamma</span>

@@ -21,7 +21,6 @@ export const ALL_KNOWN_KEYS = [
   "reflectionEvery", "reflectionPrompt",
   "url", "channels", "owner", "respondTo",
   "maxReplyChars", "shareLevel", "approvalQuorum",
-  "gammaDailyUsd",
 ];
 
 function editDistance(a: string, b: string): number {

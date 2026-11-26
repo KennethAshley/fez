@@ -183,6 +183,15 @@ export function mergeThresholds(
   return { ...(existing ?? {}), default: next };
 }
 
+/** One agent's daily gamma limit, merged into everyone's. Blank or zero
+ * removes the entry, and an agent with no entry cannot buy. */
+export function mergeGammaLimit(existing: Record<string, number> | undefined, persona: string, text: string): Record<string, number> {
+  const t = text.trim();
+  if (t && !/^\d+(\.\d+)?$/.test(t)) throw new Error("Enter a dollar amount, like 2.50");
+  const { [persona]: _old, ...rest } = existing ?? {};
+  return Number(t) > 0 ? { ...rest, [persona]: Number(t) } : rest;
+}
+
 /** Same shape parseAmount accepts, checked before it reaches the wallet:
  * a decimal with at most TAO's 9 places. */
 export function validThreshold(text: string): boolean {

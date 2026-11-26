@@ -6,7 +6,7 @@ import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { pairFromStored, evmPairFromStored } from "./derive.js";
 import { readEntry, readAgentNostrKey } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, gammaDailyLimitFor } from "./config.js";
 import { substrateAdapter } from "./chains/substrate.js";
 import { evmAdapter } from "./chains/evm.js";
 import { poolRelay } from "./consent.js";
@@ -362,10 +362,7 @@ function judgeAsk(): Ask | undefined {
 }
 
 /** Read per call, like the config: a limit the owner just changed applies to the next call. */
-async function gammaDailyLimit(): Promise<number> {
-  const { findPersona } = await import("@fezchat/protocol");
-  return Number((await findPersona(persona!))?.extra.gammaDailyUsd);
-}
+const gammaDailyLimit = () => gammaDailyLimitFor(persona!);
 
 server.registerTool(
   "wallet_gamma_buy",
