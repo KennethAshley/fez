@@ -5,7 +5,7 @@ import { substrateAdapter } from "./chains/substrate.js";
 import {
   cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork, initWallet, derivePersona,
   cmdRegister, cmdPersonaStatus, cmdPayout, cmdCost, cmdMetagraph, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona, payFromTreasury, registrationCost, metagraphInfo,
-  exportRemoteHotkey,
+  exportRemoteHotkey, cmdGammaServices, cmdGammaFund,
 } from "./cli-commands.js";
 import { rentAgent, payAddress, rentalIdentity } from "./rent.js";
 import { escrowOpen, escrowApprove, escrowStatus } from "./stake.js";
@@ -202,6 +202,17 @@ try {
       }
       break;
     }
+    case "gamma": {
+      const serviceFlag = argv.indexOf("--service");
+      const args = rest.filter((a) => a !== "--confirm" && a !== "--service" && a !== argv[serviceFlag + 1]);
+      if (args[0] === "services") { await cmdGammaServices(io, json); break; }
+      const subnet = Number(args[2]);
+      if (args[0] !== "fund" || !args[1] || !Number.isInteger(subnet) || subnet < 0 || !args[3]) {
+        throw new Error("usage: fez-wallet gamma services | gamma fund <persona> <netuid> <tao> [--service <hotkey>] [--confirm]");
+      }
+      await cmdGammaFund(io, args[1], subnet, args[3], { confirm: argv.includes("--confirm"), service: serviceFlag >= 0 ? argv[serviceFlag + 1] : undefined, json });
+      break;
+    }
     case "network":
       await cmdNetwork(io, rest[0]);
       break;
@@ -211,6 +222,8 @@ try {
       io.print("  init                    create the master wallet (once)");
       io.print("  derive <persona>        create an agent's allowance account");
       io.print("  fund <persona> <amt>    treasury → agent (TAO)");
+      io.print("  gamma services          Bittensor services agents can buy from, and which are ready");
+      io.print("  gamma fund <persona> <netuid> <tao> [--confirm]   treasury mints gamma for an agent at that subnet's service; quotes only without --confirm");
       io.print("  status [persona]        balances — with a persona: uid + free + staked");
       io.print("  register <persona> [--hotkey <ss58>]   register on the subnet (treasury pays the burn); --hotkey registers a remote address instead of deriving one");
       io.print("  cost [--netuid 553]     read-only: what registering would burn, before paying it");

@@ -17,6 +17,7 @@ import {
   walletHistory,
   walletGammaServices,
   walletGammaBuy,
+  walletGammaTopup,
   x402Fetch,
   makeX402Deps,
   type ToolDeps,
@@ -36,6 +37,7 @@ import path from "node:path";
 import { askJudge, ZILS_URL } from "../../fez-orchestrator/src/judge.js";
 import { keychainSecret } from "../../../src/extensions/mcp-servers.js";
 import type { Ask } from "./gamma-buy.js";
+import { discoverGammaServices, gammaCacheDir } from "./gamma-services.js";
 
 /**
  * fez-wallet, skill part — the calling agent's OWN allowance account.
@@ -359,13 +361,19 @@ function judgeAsk(): Ask | undefined {
   return url && key ? (state, questions) => askJudge(url, key, state, questions, { timeoutMs: 15_000 }) : undefined;
 }
 
+/** Read per call, like the config: a limit the owner just changed applies to the next call. */
+async function gammaDailyLimit(): Promise<number> {
+  const { findPersona } = await import("@fezchat/protocol");
+  return Number((await findPersona(persona!))?.extra.gammaDailyUsd);
+}
+
 server.registerTool(
   "wallet_gamma_buy",
   {
     description:
       "Buy from a Bittensor gamma service with your own balance there. Call wallet_gamma_services first, read the service's spec, " +
       "and give the exact request. It is sent only if a ready service sells what you need, that service's spec lists the request, " +
-      "and your owner's spending rule allows it. Gamma cannot be refunded.",
+      "and your owner has set you a daily gamma limit. No balance there yet? Use wallet_gamma_topup. Gamma cannot be refunded.",
     inputSchema: {
       need: z.string().describe("What you need, in plain words. Checked against the result."),
       url: z.string().describe("Full https URL of a route from the service's spec."),
@@ -375,10 +383,32 @@ server.registerTool(
   },
   async ({ need, url, method, body }) => {
     const d = await deps();
-    // Read per call, like the config: a rule the owner just changed applies to the next purchase.
-    const { findPersona } = await import("@fezchat/protocol");
-    const policy = (await findPersona(persona!))?.extra.gammaPolicy;
-    return text(await walletGammaBuy({ pair: d.pair, api: await subtensorFor(d.config.endpoints.tao), policy, ask: judgeAsk() }, { need, url, method, body }));
+    return text(await walletGammaBuy({
+      pair: d.pair, api: await subtensorFor(d.config.endpoints.tao), dailyLimitUsd: await gammaDailyLimit(), ask: judgeAsk(), cacheDir: gammaCacheDir(d.config.network),
+    }, { need, url, method, body }));
+  }
+);
+
+server.registerTool(
+  "wallet_gamma_topup",
+  {
+    description:
+      "Turn some of your own TAO into balance at one gamma service, so you can buy from it. Give the service's subnet (from wallet_gamma_services) " +
+      "and an amount in dollars. Counted against your owner's daily gamma limit; refused if it would pass it. Cannot be undone: gamma is not refundable " +
+      "and only spends at that service. Top up what the job needs, not more.",
+    inputSchema: {
+      netuid: z.number().int().describe("The service's subnet number."),
+      usd: z.number().positive().describe("How many dollars of balance to add."),
+    },
+  },
+  async ({ netuid, usd }) => {
+    const d = await deps();
+    const api = await subtensorFor(d.config.endpoints.tao);
+    const { services } = await discoverGammaServices(api, { cacheDir: gammaCacheDir(d.config.network) });
+    return text(await walletGammaTopup({
+      pair: d.pair, api, persona: persona!, dir: process.env.FEZ_WALLET_HOME ?? path.join(os.homedir(), ".fez"),
+      dailyLimitUsd: await gammaDailyLimit(), services,
+    }, { netuid, usd }));
   }
 );
 
@@ -391,7 +421,7 @@ server.registerTool(
   },
   async () => {
     const d = await deps();
-    return text(await walletGammaServices(d.pair, await subtensorFor(d.config.endpoints.tao)));
+    return text(await walletGammaServices(d.pair, await subtensorFor(d.config.endpoints.tao), gammaCacheDir(d.config.network)));
   }
 );
 

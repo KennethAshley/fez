@@ -69,9 +69,24 @@ export interface SubtensorApi extends SubstrateApi {
         destinationNetuid: number,
         alphaAmount: bigint
       ): Submittable;
+      /** TAO in → alpha bought and burned → gamma (1 = 1 USD, 9 decimals)
+       *  credited to the signer's deposit at `hotkey` on that subnet.
+       *  Fails below `minAmountOut` gamma. Arguments read from finney
+       *  metadata, 2026-11-26. */
+      mintGamma(hotkey: string, netuid: number, amount: bigint, minAmountOut: bigint, dailySpendCap: bigint | null): Submittable;
+      /** Signed by the hotkey holding the deposit; moves gamma to a
+       *  service's hotkey, which then credits the signer. Pays no fee. */
+      spendGamma(service: string, netuid: number, amount: bigint): Submittable;
     };
   };
   call: {
+    gammaRuntimeApi: {
+      /** `{ ok: [alpha, taoValue, gamma] }` or `{ err }` — measured on
+       *  finney 2026-11-26: 0.01 TAO on netuid 75 quoted 1.837468982 gamma. */
+      simMintGamma(netuid: number, amount: bigint): Promise<{ toJSON(): unknown }>;
+      /** null, or `{ deposit: { coldkey, balance, dailySpendCap }, spendable }`. */
+      getGammaDeposit(netuid: number, hotkey: string): Promise<{ toJSON(): unknown }>;
+    };
     stakeInfoRuntimeApi: {
       getStakeInfoForHotkeyColdkeyNetuid(hotkey: string, coldkey: string, netuid: number): Promise<unknown>;
     };

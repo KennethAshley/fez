@@ -3,6 +3,19 @@ import { type Network, endpointForUnchecked, isNetworkOwnedEndpoint } from "./ne
 import type { SpendEntry } from "./log.js";
 import type { ParsedReceipt } from "./receipt.js";
 import { formatAmount } from "./chains/adapter.js";
+import type { GammaFundingJson } from "./gamma-fund.js";
+
+/** What the owner agrees to before the treasury mints gamma for an agent.
+ * The dollar figure is the chain's quote at this moment, not a promise. */
+export function gammaFundConfirm(persona: string, tao: string, quote: GammaFundingJson, network: string): { title: string; body: string } {
+  return {
+    title: `Fund @${persona} with about $${Number(quote.quotedUsd).toFixed(2)} at ${quote.service}?`,
+    body:
+      `${tao} TAO from the treasury mints gamma on subnet ${quote.netuid}, and @${persona} spends all of it at ${quote.service} right away. ` +
+      `It becomes @${persona}'s balance there and cannot be refunded.` +
+      (network === "finney" ? "" : " This wallet is on testnet: play money."),
+  };
+}
 
 /**
  * The 💸 line need not be the FIRST line: walletSend prepends note lines

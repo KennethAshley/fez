@@ -302,27 +302,27 @@ export default function PersonaEditor({
             onChange={(e) => update("aliases", textToList(e.target.value))}
           />
         </div>
-        {/* Hire rate: the agent's own price for a lease on the bazaar. Blank =
-            not for lease. Pay-to isn't asked for — it's the agent's wallet
-            address, filled in automatically when it's sent to the bazaar. */}
+        {/* The wallet reads this on every purchase and sends nothing while
+            it is blank, so a change applies without restarting the agent. */}
         <div className="settings-field">
-          <label>hire rate</label>
+          <label htmlFor="gamma-daily-usd">Gamma daily limit</label>
           <div className="rate-row">
             <input
+              id="gamma-daily-usd"
               className="manage-input rate-input"
               type="number"
               min="0"
               step="0.01"
               inputMode="decimal"
-              value={field("rate")}
+              value={field("gammaDailyUsd")}
               placeholder="0"
-              onChange={(e) => update("rate", e.target.value)}
+              onChange={(e) => update("gammaDailyUsd", e.target.value)}
             />
-            <span className="rate-unit">tτ / hour</span>
+            <span className="rate-unit">$ / day</span>
           </div>
           <div className="field-note">
-            What a lease costs on the bazaar. Leave blank if this agent isn&apos;t for hire. Payments go to
-            its own wallet.
+            The most of its own TAO this agent may turn into gamma for Bittensor services in a day, in
+            dollars. Leave blank and it cannot buy.
           </div>
         </div>
 

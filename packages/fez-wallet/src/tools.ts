@@ -28,7 +28,8 @@ import { hexToBytes } from "nostr-tools/utils";
 import { requireWalletMutationAllowed } from "./evaluation.js";
 import type { SubtensorApi } from "./chains/subtensor.js";
 import { gammaBalance } from "./gamma.js";
-import { discoverGammaServices, routeAllowed } from "./gamma-services.js";
+import { discoverGammaServices, routeAllowed, type GammaServiceReport } from "./gamma-services.js";
+import { fundGamma, quoteGammaMint } from "./gamma-fund.js";
 import { buyWithGamma, type Ask } from "./gamma-buy.js";
 
 export const CONSENT_TIMEOUT_MS = 600_000; // 10 minutes
@@ -258,8 +259,8 @@ export async function walletSend(
  * that pass the standard's free checks, with the agent's own balance at
  * each. Names and descriptions are the services' own words, so they are
  * cut to one short line before they reach the agent. */
-export async function walletGammaServices(pair: WalletPair, api: SubtensorApi): Promise<string> {
-  const report = await discoverGammaServices(api);
+export async function walletGammaServices(pair: WalletPair, api: SubtensorApi, cacheDir?: string): Promise<string> {
+  const report = await discoverGammaServices(api, { cacheDir });
   const ready = report.services.filter((s) => s.ready);
   const others = report.services.length - ready.length;
   const rest = others ? `\n${others} other registered service${others === 1 ? "" : "s"} did not pass the checks and ${others === 1 ? "is" : "are"} not offered.` : "";
@@ -268,54 +269,108 @@ export async function walletGammaServices(pair: WalletPair, api: SubtensorApi): 
     const balance = await gammaBalance(s.balanceUrl!, pair, s.hotkey).then((b) => `$${b.remainingUsd}`, () => "unknown");
     return `- SN${s.netuid} ${oneLine(s.name ?? "").slice(0, 60)}: ${oneLine(s.description ?? "").slice(0, 300)} Your balance: ${balance}. Spec: ${s.specUrls.map(oneLine).join(", ")}`;
   }));
-  return [`Gamma services you can buy from (chain block ${report.block}). You pay from your balance at each service; $0 means your owner has not funded you there.`, ...rows].join("\n") + rest;
+  return [`Gamma services you can buy from (chain block ${report.block}). You pay from your balance at each service; $0 means nothing is there yet: add some from your own TAO with wallet_gamma_topup.`, ...rows].join("\n") + rest;
 }
 
 export interface GammaBuyDeps {
   pair: WalletPair;
   api: SubtensorApi;
-  /** The owner's spending rule for this agent, in their words (persona `gammaPolicy`). */
-  policy: string | undefined;
+  /** The owner's limit for this agent in dollars a day (persona `gammaDailyUsd`). Unset or 0: no buying. */
+  dailyLimitUsd: number | undefined;
   /** The judge; undefined when no key is set. */
   ask: Ask | undefined;
+  /** Where discovery runs are shared between wallet processes. */
+  cacheDir?: string;
 }
 
 const MAX_RESULT_CHARS = 4000;
+const usd = (n: number) => `$${+n.toFixed(9)}`;
+const NO_LIMIT = "Your owner has set no daily gamma limit for you, so nothing was sent. They can set one in your persona (Agents page).";
+const hasLimit = (limit: number | undefined): limit is number => limit !== undefined && limit > 0;
 
-/** One purchase from a gamma service. Nothing is sent unless the owner
- * wrote a rule, the judge picks a ready service, the request is one that
- * service's own spec lists, and the judge says the rule allows it. */
+/** One purchase from a gamma service, paid from the agent's balance there.
+ * Nothing is sent unless the owner set a daily limit, the judge picks a
+ * ready service, and the request is one that service's own spec lists.
+ * The limit itself is enforced where money enters a service: at the
+ * top-up (walletGammaTopup), where the chain quotes the dollars exactly. */
 export async function walletGammaBuy(deps: GammaBuyDeps, args: { need: string; url: string; method?: string; body?: unknown }): Promise<string> {
   requireWalletMutationAllowed();
-  if (!deps.policy?.trim()) return "Your owner has set no gamma spending rule for you, so nothing was sent. They can set one on your card in the Agents page.";
+  if (!hasLimit(deps.dailyLimitUsd)) return NO_LIMIT;
   if (!deps.ask) return "No judge is available (ZILS_API_KEY is not set), so nothing was sent.";
+
   const method = (args.method ?? (args.body === undefined ? "GET" : "POST")).toUpperCase();
-  const ready = (await discoverGammaServices(deps.api)).services.filter((s) => s.ready);
+  const ready = (await discoverGammaServices(deps.api, { cacheDir: deps.cacheDir })).services.filter((s) => s.ready);
   const routes = new Map(ready.map((s) => [s.netuid, s.routes]));
   const purchase = await buyWithGamma({
     need: args.need,
-    policy: deps.policy,
     services: ready.map((s) => ({ netuid: s.netuid, name: oneLine(s.name ?? "").slice(0, 60), hotkey: s.hotkey, description: oneLine(s.description ?? "").slice(0, 300) })),
     ask: deps.ask,
     pair: deps.pair,
-    request: (service) => (routeAllowed(routes.get(service.netuid) ?? [], method, args.url) ? { url: args.url, method, body: args.body } : undefined),
+    request: async (service) => (routeAllowed(routes.get(service.netuid) ?? [], method, args.url) ? { url: args.url, method, body: args.body } : undefined),
   });
   if (purchase.outcome === "no_service") return "No ready gamma service clearly sells that, so nothing was sent. See wallet_gamma_services for what can be bought.";
   const name = `SN${purchase.service.netuid} ${purchase.service.name}`;
-  switch (purchase.outcome) {
-    case "no_request":
-      return `The service that sells this is ${name}, and its spec does not list ${method} ${oneLine(args.url)}, so nothing was sent. Use a route from its spec.`;
-    case "not_allowed":
-      return `Your owner's spending rule does not allow paying ${name} for this, so nothing was sent.`;
-    case "unfunded":
-      return `You have no balance at ${name}, so it did no work and charged nothing. Ask your owner to spend gamma for your key ${deps.pair.address} at its service hotkey ${purchase.service.hotkey}.`;
-    default: {
-      const result = JSON.stringify(purchase.result) ?? "(no JSON body)";
-      const shown = result.length > MAX_RESULT_CHARS ? `${result.slice(0, MAX_RESULT_CHARS)}… (${result.length} characters in all)` : result;
-      return purchase.outcome === "delivered"
-        ? `Bought from ${name} (HTTP ${purchase.status}). Result:\n${shown}`
-        : `${name} answered (HTTP ${purchase.status}) but the result did not deliver what you needed. It may still have charged you. Result:\n${shown}`;
-    }
+  if (purchase.outcome === "no_request") {
+    return `The service that sells this is ${name}, and its spec does not list ${method} ${oneLine(args.url)}, so nothing was sent. Use a route from its spec.`;
+  }
+  if (purchase.outcome === "unfunded") {
+    return `You have no balance at ${name}, so it did no work and charged nothing. Top up there first with wallet_gamma_topup (subnet ${purchase.service.netuid}).`;
+  }
+  const result = JSON.stringify(purchase.result) ?? "(no JSON body)";
+  const shown = result.length > MAX_RESULT_CHARS ? `${result.slice(0, MAX_RESULT_CHARS)}… (${result.length} characters in all)` : result;
+  return purchase.outcome === "delivered"
+    ? `Bought from ${name} (HTTP ${purchase.status}). Result:\n${shown}`
+    : `${name} answered (HTTP ${purchase.status}) but the result did not deliver what you needed. It may still have charged you. Result:\n${shown}`;
+}
+
+export interface GammaTopupDeps {
+  pair: WalletPair;
+  api: SubtensorApi;
+  persona: string;
+  /** Where the per-agent day tally is kept (the wallet's home). */
+  dir: string;
+  dailyLimitUsd: number | undefined;
+  /** A discovery run; only services that passed its checks can be topped up. */
+  services: GammaServiceReport[];
+  signer?: (pair: WalletPair) => Promise<unknown>; // test seam
+}
+
+/** The size of the quote used to learn the going rate: 0.01 TAO. */
+const RATE_PROBE_RAO = 10_000_000n;
+
+/** The agent turns some of its own TAO into credit at one gamma service:
+ * it mints gamma to itself and deposits all of it there. This is where the
+ * owner's daily limit bites. The chain quotes the dollars before anything
+ * is sent, so a top-up that would pass the limit is refused outright, and
+ * the TAO amount is rounded down so the quote never exceeds what was asked. */
+export async function walletGammaTopup(deps: GammaTopupDeps, args: { netuid: number; usd: number }): Promise<string> {
+  requireWalletMutationAllowed();
+  const limit = deps.dailyLimitUsd;
+  if (!hasLimit(limit)) return NO_LIMIT;
+  if (!(args.usd > 0)) return "Give the amount in dollars, greater than zero. Nothing was sent.";
+  const tally = `gamma-topup-${deps.persona}.json`;
+  const room = limit - todaySpend(deps.dir, tally);
+  const refuse = (dollars: number) => `Topping up ${usd(dollars)} would pass your daily limit of ${usd(limit)}: ${usd(Math.max(0, room))} left today. Nothing was sent.`;
+  if (args.usd > room) return refuse(args.usd);
+
+  let quoted = 0;
+  try {
+    const rate = await quoteGammaMint(deps.api, args.netuid, RATE_PROBE_RAO);
+    const taoRao = (BigInt(Math.round(args.usd * 1e9)) * RATE_PROBE_RAO) / rate;
+    const fund = (confirm: boolean) => fundGamma({ api: deps.api, payer: deps.pair, agent: deps.pair, services: deps.services, signer: deps.signer }, { netuid: args.netuid, taoRao, confirm });
+    const plan = await fund(false);
+    quoted = Number(plan.quotedGamma) / 1e9;
+    if (quoted > room) return refuse(quoted);
+    const done = await fund(true);
+    const added = done.sent ? Number(done.spentGamma) / 1e9 : quoted;
+    const total = recordSpend(deps.dir, quoted, undefined, tally);
+    return `Topped up ${usd(added)} at SN${done.service.netuid} ${done.service.name} from ${formatAmount({ raw: taoRao, decimals: 9, symbol: "TAO" })}. ` +
+      `It shows as your balance there in about two minutes. ${usd(total)} of your ${usd(limit)} daily limit is used.`;
+  } catch (e) {
+    const why = (e as Error).message;
+    // TAO that became gamma counts against today even when the last step failed or is unconfirmed.
+    if (quoted > 0 && /sits in a deposit|MAY OR MAY NOT/.test(why)) recordSpend(deps.dir, quoted, undefined, tally);
+    return `${why}${/TAO free/.test(why) ? ". Ask your owner to fund you with TAO." : ""}`;
   }
 }
 

@@ -149,8 +149,8 @@ interface DaySpend {
 const SPEND_FILE = "x402-spend.json";
 const localDay = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, the owner's clock
 
-function readDaySpend(dir: string): DaySpend {
-  const file = path.join(dir, SPEND_FILE);
+function readDaySpend(dir: string, name = SPEND_FILE): DaySpend {
+  const file = path.join(dir, name);
   const today = localDay();
   try {
     const saved = JSON.parse(readFileSync(file, "utf-8")) as Partial<DaySpend>;
@@ -164,8 +164,9 @@ function readDaySpend(dir: string): DaySpend {
   return { day: today, usd: 0 };
 }
 
-export function todaySpend(dir: string): number {
-  return readDaySpend(dir).usd;
+/** `name` picks another tally in the same folder; gamma keeps one per agent. */
+export function todaySpend(dir: string, name = SPEND_FILE): number {
+  return readDaySpend(dir, name).usd;
 }
 
 /**
@@ -188,14 +189,14 @@ export function todaySpend(dir: string): number {
  * synchronity is the actual guarantee; upgrade to a real file lock
  * (e.g. proper-lockfile) only if multiple processes ever share one dir.
  */
-export function recordSpend(dir: string, usd: number, capUsd?: number): number {
-  const current = readDaySpend(dir);
+export function recordSpend(dir: string, usd: number, capUsd?: number, name = SPEND_FILE): number {
+  const current = readDaySpend(dir, name);
   const next = current.usd + usd;
   if (capUsd !== undefined && next > capUsd) {
     throw new Error(`x402: daily cap $${capUsd.toFixed(2)} would be exceeded (spent $${current.usd.toFixed(2)} today)`);
   }
   current.usd = next;
-  const file = path.join(dir, SPEND_FILE);
+  const file = path.join(dir, name);
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(current));
   renameSync(tmp, file);

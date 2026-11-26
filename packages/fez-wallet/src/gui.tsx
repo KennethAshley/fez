@@ -1,5 +1,4 @@
 import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
-import { registerWalletReputation } from "./gui-reputation.js";
 import type { SpendEntry } from "./log.js";
 import type { Network } from "./storage-mirror.js";
 import qrcode from "qrcode-generator";
@@ -30,10 +29,12 @@ import {
   x402NetworkLabel,
   X402_NETWORKS,
   X402_DISPLAY,
+  gammaFundConfirm,
 } from "./gui-logic.js";
 import type { X402MirrorRow, X402Meta } from "./storage-mirror.js";
 import { parseReceipt, type ParsedReceipt } from "./receipt.js";
 import type { SignedNostrEvent } from "./consent.js";
+import type { GammaFundingJson } from "./gamma-fund.js";
 
 type AddressBook = { treasury?: string; personas?: Record<string, string> };
 
@@ -870,9 +871,99 @@ export default function activate(api: GuiExtensionApi): void {
     );
   }
 
+  /**
+   * Fund an agent at a Bittensor gamma service. Same custody rule as the
+   * subnet row: the panel runs CLI verbs and never sees a key. The list of
+   * services loads only when asked for, because finding them probes every
+   * registered service. Funding is quote first, then the owner's explicit
+   * yes: gamma spent at a service cannot be refunded.
+   */
+  interface GammaChoice { netuid: number; name: string; hotkey: string; ready: boolean }
+  function GammaRow({ persona, network }: { persona: string; network: string }): JSX.Element | null {
+    const run = api.processes?.run;
+    const [services, setServices] = useState<GammaChoice[] | undefined>(undefined);
+    const [pick, setPick] = useState("");
+    const [amt, setAmt] = useState("");
+    const [busy, setBusy] = useState<string | undefined>(undefined);
+    const [note, setNote] = useState<string | undefined>(undefined);
+    const [error, setError] = useState<string | undefined>(undefined);
+    if (!run) return null;
+
+    const call = async <T,>(args: string[]): Promise<T> => {
+      const out = await run("fez-wallet", args);
+      if (out.code !== 0) throw new Error(cleanErr(out.stderr) || `fez-wallet ${args[1]} exited ${out.code}`);
+      // The answer is the last JSON line: chain libraries may print above it.
+      return JSON.parse(out.stdout.trim().split("\n").filter((l) => l.startsWith("{")).pop() ?? "") as T;
+    };
+    const act = async (label: string, what: () => Promise<void>) => {
+      setBusy(label); setError(undefined); setNote(undefined);
+      try { await what(); } catch (err) { setError(err instanceof Error ? cleanErr(err.message) : String(err)); } finally { setBusy(undefined); }
+    };
+    const load = () => act("load", async () => {
+      const ready = (await call<{ services: GammaChoice[] }>(["gamma", "services", "--json"])).services.filter((s) => s.ready);
+      setServices(ready);
+      setPick(ready[0]?.hotkey ?? "");
+    });
+    const fund = () => act("fund", async () => {
+      const chosen = services?.find((s) => s.hotkey === pick);
+      if (!chosen) return;
+      const args = ["gamma", "fund", persona, String(chosen.netuid), amt.trim(), "--service", chosen.hotkey, "--json"];
+      const quote = await call<GammaFundingJson>(args);
+      if (typeof api.confirm !== "function") throw Error("Update Fez to fund agents with gamma.");
+      if (!await api.confirm(gammaFundConfirm(persona, amt.trim(), quote, network))) return;
+      setBusy("send");
+      const done = await call<GammaFundingJson>([...args, "--confirm"]);
+      setAmt("");
+      setNote(`✓ funded with $${done.spentUsd} at ${done.service}. It shows as @${persona}'s balance there in about two minutes.`);
+    });
+
+    const posRow = { display: "flex", alignItems: "center", gap: 10, padding: "3px 0", fontSize: 12.5 } as const;
+    const posLabel = { color: "var(--fg-dim, #928374)", width: "3.8rem", flex: "none" } as const;
+    return (
+      <div>
+        {services === undefined ? (
+          <div style={posRow}>
+            <span style={posLabel}>gamma</span>
+            <span style={{ color: "var(--fg-dim, #928374)" }}>prepaid credit at Bittensor services</span>
+            <span style={{ flex: 1 }} />
+            <button className="mini" disabled={busy !== undefined} onClick={() => void load()}>
+              {busy === "load" ? "finding services…" : "fund with gamma"}
+            </button>
+          </div>
+        ) : services.length === 0 ? (
+          <div style={posRow}>
+            <span style={posLabel}>gamma</span>
+            <span style={{ color: "var(--fg-dim, #928374)" }}>no gamma service is ready on this network</span>
+          </div>
+        ) : (
+          <div style={posRow}>
+            <span style={posLabel}>gamma</span>
+            <select className="manage-input" style={{ flex: "none" }} value={pick} aria-label="gamma service to fund" onChange={(e) => setPick((e.target as HTMLSelectElement).value)}>
+              {services.map((s) => <option key={s.hotkey} value={s.hotkey}>{`SN${s.netuid} ${s.name}`}</option>)}
+            </select>
+            <span style={{ flex: 1 }} />
+            <input
+              className="manage-input"
+              style={{ width: 92, flex: "none" }}
+              placeholder={`${network === "finney" ? "" : "t"}TAO amt`}
+              aria-label="TAO to spend from the treasury"
+              value={amt}
+              onChange={(e) => setAmt(e.target.value)}
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+            <button className="mini" disabled={busy !== undefined || !amt.trim()} onClick={() => void fund()}>
+              {busy === "fund" ? "getting a quote…" : busy === "send" ? "funding…" : "fund"}
+            </button>
+          </div>
+        )}
+        {note ? <p className="skill-desc" style={{ margin: "2px 0 0" }}>{note}</p> : null}
+        {error ? <p className="ob-error">{error}</p> : null}
+      </div>
+    );
+  }
+
   // ── wallet panel ─────────────────────────────────────────────────
   api.registerSettingsPanel("Wallet", () => <WalletPanel />);
-  registerWalletReputation(api);
 
   function WalletPanel(): JSX.Element {
     const [addresses, setAddresses] = useState<AddressBook>({});
@@ -1186,6 +1277,7 @@ export default function activate(api: GuiExtensionApi): void {
                 {who !== "treasury" ? (
                   <div style={{ marginTop: 8 }}>
                     {network !== "finney" ? <SubnetRow persona={who} /> : null}
+                    <GammaRow persona={who} network={network} />
                     {evmAddresses[who] ? (
                       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "3px 0", fontSize: 12.5 }}>
                         <span style={{ color: "var(--fg-dim, #928374)", width: "3.8rem", flex: "none" }}>usdc</span>

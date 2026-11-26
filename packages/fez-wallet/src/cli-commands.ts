@@ -10,6 +10,8 @@ import { burnCost, formatRao, metagraph, ownerOf, register, stakedAlpha, transfe
 import { TAO_DECIMALS } from "./chains/substrate.js";
 import { DEFAULT_NETUID, personaStatus, requirePersonaPair, requireRehearsalNetwork, requireExpectedPayer, isTaoAddress, subtensorFor } from "./stake.js";
 import { requireWalletMutationAllowed } from "./evaluation.js";
+import { discoverGammaServices, gammaCacheDir } from "./gamma-services.js";
+import { fundGamma, fundingJson } from "./gamma-fund.js";
 
 /**
  * The ceremony. This module is the ONLY place the "root" entry (the
@@ -175,6 +177,55 @@ export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string,
     consent: "auto",
     network: config.network,
   });
+}
+
+/** What can be funded: every registered gamma service and whether it passed the checks. */
+export async function cmdGammaServices(io: CliIo, json = false): Promise<void> {
+  const config = loadConfig();
+  const report = await discoverGammaServices(await subtensorFor(config.endpoints.tao), { cacheDir: gammaCacheDir(config.network) });
+  if (json) {
+    io.print(JSON.stringify({ block: report.block, services: report.services.map((s) => ({ netuid: s.netuid, name: s.name ?? s.url, hotkey: s.hotkey, ready: s.ready })) }));
+    return;
+  }
+  io.print(`gamma services at block ${report.block} — "ready" ones can be funded and bought from`);
+  for (const s of report.services) {
+    const failed = s.checks.filter((c) => c.status === "fail").map((c) => c.id);
+    io.print(`  SN${s.netuid}  ${s.ready ? "ready    " : "not ready"}  ${s.name ?? s.url}${s.ready ? `  ${s.hotkey}` : failed.length ? `  (failed: ${failed.join(", ")})` : "  (no paid route answered the probe)"}`);
+  }
+}
+
+/**
+ * Fund an agent at one gamma service: the treasury mints, the agent's own
+ * key spends the deposit at the service. Without `confirm` it only quotes.
+ * Unlike the stake verbs this is not testnet-only: gamma services exist on
+ * mainnet, so the quote-then-confirm step is the guard instead.
+ */
+export async function cmdGammaFund(io: CliIo, persona: string, netuid: number, amount: string, opts: { confirm: boolean; service?: string; json?: boolean }): Promise<void> {
+  requireWalletMutationAllowed();
+  const agent = requirePersonaPair(persona);
+  const treasury = treasuryPair(requireRoot());
+  const config = loadConfig();
+  const parsed = parseAmount(amount, TAO_DECIMALS, "TAO");
+  const api = await subtensorFor(config.endpoints.tao);
+  const { services } = await discoverGammaServices(api, { cacheDir: gammaCacheDir(config.network) });
+  const done = await fundGamma({ api, payer: treasury, agent, services }, { netuid, taoRao: parsed.raw, confirm: opts.confirm, service: opts.service });
+  if (done.sent && done.mintTx) {
+    try {
+      await mirrorSpend({ ts: new Date().toISOString(), persona: "treasury", to: agent.address, amount, asset: "TAO", txHash: done.mintTx, memo: `gamma at SN${done.service.netuid} ${done.service.name}`, consent: "auto", network: config.network });
+    } catch { /* the confirmed funding must not fail on its local log */ }
+  }
+  if (opts.json) { io.print(JSON.stringify(fundingJson(done))); return; }
+  const where = `SN${done.service.netuid} ${done.service.name}`;
+  if (!done.sent) {
+    io.print(`network: ${config.network}`);
+    io.print(parsed.raw > 0n
+      ? `${amount} TAO from the treasury would mint about $${formatRao(done.quotedGamma)} of gamma for ${persona} at ${where}.`
+      : `would spend ${persona}'s existing gamma deposit at ${where}.`);
+    io.print("Nothing was sent. Gamma cannot be refunded once spent at a service. To do it, run the same command with --confirm.");
+    return;
+  }
+  io.print(`funded ${persona} with $${formatRao(done.spentGamma)} at ${where}${done.mintTx ? ` (mint tx ${done.mintTx}, ` : " ("}spend tx ${done.spendTx})`);
+  io.print("The service credits it within about 10 finalized blocks (two minutes).");
 }
 
 /**

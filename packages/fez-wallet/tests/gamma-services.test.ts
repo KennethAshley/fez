@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { stringToHex } from "@polkadot/util";
 import { deriveAgentPair } from "../src/derive.js";
@@ -321,13 +324,12 @@ describe("routeAllowed", () => {
 });
 
 /** A judge that answers from a table and counts its questions. */
-function judge(answers: { service?: string; allowed?: number; delivered?: number } = {}) {
+function judge(answers: { service?: string; delivered?: number } = {}) {
   const asked: string[] = [];
   const ask = async (_state: unknown, questions: Record<string, unknown>) => {
     asked.push(...Object.keys(questions));
     return { model: "m", inputTokens: 1, outputTokens: 0, answers: {
       ...(questions.service ? { service: { type: "choice", choice: answers.service ?? "sn7", confidence: 0.9, probabilities: {} } } : {}),
-      ...(questions.allowed ? { allowed: { type: "noul", noul: answers.allowed ?? 0.9 } } : {}),
       ...(questions.delivered ? { delivered: { type: "noul", noul: answers.delivered ?? 0.9 } } : {}),
     } } as never;
   };
@@ -336,69 +338,128 @@ function judge(answers: { service?: string; allowed?: number; delivered?: number
 
 describe("wallet_gamma_buy", () => {
   const agent = () => deriveAgentPair(DEV_MNEMONIC, "drift");
-  const withPaidRoute = (run: () => Response) => standardService({
-    "/openapi.json": () => Response.json({ openapi: "3.1.0", paths: { "/v1/models": { get: {} }, "/balance": { get: {} }, "/v1/run": { post: {} } } }),
-    "/v1/run": run,
-  });
   const RUN = { need: "run a model", url: "https://api.example.com/v1/run", method: "POST", body: { model: "x" } };
+
+  /** A funded agent at a service whose paid route charges `price` a call. The probe key still reads zero. */
+  function paidService(opts: { balance?: number; price?: number; run?: () => Response; balanceDown?: () => boolean } = {}) {
+    const account = { remaining: opts.balance ?? 1, used: 0 };
+    const requests = standardService({
+      "/openapi.json": () => Response.json({ openapi: "3.1.0", paths: { "/v1/models": { get: {} }, "/balance": { get: {} }, "/v1/run": { post: {} } } }),
+      "/balance": ({ url }) => {
+        if (url.searchParams.get("hotkey") !== agent().address) return Response.json({ credited_usd: "0", used_usd: "0", remaining_usd: "0" });
+        if (opts.balanceDown?.()) return new Response("", { status: 503 });
+        return Response.json({ credited_usd: String(account.remaining + account.used), used_usd: account.used.toFixed(2), remaining_usd: account.remaining.toFixed(2) });
+      },
+      "/v1/run": () => {
+        if (account.remaining <= 0) return Response.json({ error: "insufficient_balance" }, { status: 402 });
+        account.remaining -= opts.price ?? 0.3; account.used += opts.price ?? 0.3;
+        return (opts.run ?? (() => Response.json({ output: "42" })))();
+      },
+    });
+    return { requests, paid: () => requests.filter((r) => r.url === RUN.url).length };
+  }
+  const buy = (over: { dailyLimitUsd?: number; ask?: ReturnType<typeof judge>["ask"] | null; url?: string } = {}) =>
+    walletGammaBuy({
+      pair: agent(), api: chain([REGISTERED]).api,
+      dailyLimitUsd: "dailyLimitUsd" in over ? over.dailyLimitUsd : 1, ask: over.ask === null ? undefined : over.ask ?? judge().ask,
+    }, { ...RUN, ...(over.url ? { url: over.url } : {}) });
 
   it("checks every registered service's routes into the report", async () => {
     standardService();
     expect((await checkService(REGISTERED, agent())).routes).toEqual(["GET https://api.example.com/v1/models", "GET https://api.example.com/balance"]);
   });
 
-  it("sends nothing until the owner has written a spending rule", async () => {
-    const requests = withPaidRoute(() => Response.json({ ok: true }));
-    const j = judge();
-    const said = await walletGammaBuy({ pair: agent(), api: chain([REGISTERED]).api, policy: undefined, ask: j.ask }, RUN);
-    expect(said).toMatch(/no gamma spending rule/i);
-    expect(requests.length + j.asked.length).toBe(0);
+  it("sends nothing until the owner has set a daily limit", async () => {
+    const s = paidService();
+    for (const dailyLimitUsd of [undefined, 0, Number.NaN, -1]) expect(await buy({ dailyLimitUsd })).toMatch(/no daily gamma limit/i);
+    expect(s.requests.length).toBe(0);
   });
 
   it("sends nothing without a judge", async () => {
-    const requests = withPaidRoute(() => Response.json({ ok: true }));
-    expect(await walletGammaBuy({ pair: agent(), api: chain([REGISTERED]).api, policy: "anything", ask: undefined }, RUN)).toMatch(/ZILS_API_KEY/);
-    expect(requests.length).toBe(0);
+    const s = paidService();
+    expect(await buy({ ask: null })).toMatch(/ZILS_API_KEY/);
+    expect(s.requests.length).toBe(0);
   });
 
-  it("refuses a request the chosen service's spec does not list, before asking about policy", async () => {
-    const requests = withPaidRoute(() => Response.json({ ok: true }));
+  it("refuses a request the chosen service's spec does not list", async () => {
+    const s = paidService();
     const j = judge();
-    const said = await walletGammaBuy({ pair: agent(), api: chain([REGISTERED]).api, policy: "anything", ask: j.ask }, { ...RUN, url: "https://evil.example/v1/run" });
+    const said = await buy({ ask: j.ask, url: "https://evil.example/v1/run" });
     expect(said).toMatch(/nothing was sent/i);
     expect(said).toContain("SN7 Example");
-    expect(requests.some((r) => r.url.includes("evil.example"))).toBe(false);
-    expect(requests.some((r) => r.url === RUN.url)).toBe(false);
+    expect(s.requests.some((r) => r.url.includes("evil.example"))).toBe(false);
+    expect(s.paid()).toBe(0);
     expect(j.asked).toEqual(["service"]);
   });
 
-  it("refuses when the owner's rule does not allow it", async () => {
-    const requests = withPaidRoute(() => Response.json({ ok: true }));
-    const said = await walletGammaBuy({ pair: agent(), api: chain([REGISTERED]).api, policy: "images only", ask: judge({ allowed: 0.1 }).ask }, RUN);
-    expect(said).toMatch(/rule does not allow/i);
-    expect(requests.some((r) => r.url === RUN.url)).toBe(false);
-  });
-
-  it("tells an unfunded agent to ask its owner, naming the service", async () => {
-    withPaidRoute(() => Response.json({ error: "insufficient_balance" }, { status: 402 }));
-    const said = await walletGammaBuy({ pair: agent(), api: chain([REGISTERED]).api, policy: "anything", ask: judge().ask }, RUN);
-    expect(said).toMatch(/no balance at SN7 Example/i);
-    expect(said).toContain(HOTKEY);
-  });
-
-  it("pays with the agent's own key and returns the result with the judge's verdict", async () => {
-    const requests = withPaidRoute(() => Response.json({ output: "42" }));
-    const said = await walletGammaBuy({ pair: agent(), api: chain([REGISTERED]).api, policy: "anything", ask: judge().ask }, RUN);
+  it("pays with the agent's own key from its balance at the service", async () => {
+    const s = paidService({ price: 0.3 });
+    const said = await buy();
     expect(said).toMatch(/^Bought from SN7 Example/);
     expect(said).toContain('{"output":"42"}');
-    const paid = requests.find((r) => r.url === RUN.url)!;
+    const paid = s.requests.find((r) => r.url === RUN.url)!;
     expect(paid.headers).toMatchObject({ "X-Bittensor-Hotkey": agent().address, "X-Bittensor-Receiver": HOTKEY });
   });
 
+  // The daily limit is counted where money enters a service (wallet_gamma_topup), so a
+  // balance already there can be spent down freely: it was inside the limit when it went in.
+  it("keeps buying while the balance lasts, then points an empty agent at the top-up", async () => {
+    const s = paidService({ balance: 0.6, price: 0.3 });
+    await buy({ dailyLimitUsd: 0.5 });
+    await buy({ dailyLimitUsd: 0.5 });
+    const said = await buy({ dailyLimitUsd: 0.5 });
+    expect(said).toMatch(/no balance at SN7 Example.*wallet_gamma_topup \(subnet 7\)/i);
+    expect(s.paid()).toBe(3); // the third was refused by the service: 402, no work, no charge
+  });
+
   it("says so when the service was paid and the result does not deliver", async () => {
-    withPaidRoute(() => Response.json({ error: "model not found" }, { status: 404 }));
-    const said = await walletGammaBuy({ pair: agent(), api: chain([REGISTERED]).api, policy: "anything", ask: judge({ delivered: 0.1 }).ask }, RUN);
+    paidService({ run: () => Response.json({ error: "model not found" }, { status: 404 }) });
+    const said = await buy({ ask: judge({ delivered: 0.1 }).ask });
     expect(said).toMatch(/did not deliver/i);
     expect(said).toContain("HTTP 404");
+    expect(said).toMatch(/may still have charged/i);
+  });
+});
+
+// Measured 26 Nov 2026: Hippius answered 429 "new_account_limit: too many new
+// accounts from this address" after an afternoon of runs that each probed
+// with a fresh key. Every wallet command is its own process, so the run and
+// the probe key must outlive the process.
+describe("discovery shared between wallet processes", () => {
+  const probeKeys = (requests: { url: string; headers: Record<string, string> }[]) =>
+    [...new Set(requests.filter((r) => r.url === "https://api.example.com/v1/models").map((r) => r.headers["X-Bittensor-Hotkey"]))];
+
+  it("a second process reuses the first one's run for an hour", async () => {
+    standardService();
+    const cacheDir = mkdtempSync(join(tmpdir(), "gamma-cache-"));
+    let clock = 1_000_000;
+    const first = await discoverGammaServices(chain([REGISTERED]).api, { now: () => clock, cacheDir });
+    const second = chain([REGISTERED]);
+    clock += 59 * 60_000;
+    expect(await discoverGammaServices(second.api, { now: () => clock, cacheDir })).toEqual(first);
+    expect(second.reads.count).toBe(0);
+  });
+
+  it("after the hour it checks again, with the same probe key as before", async () => {
+    const requests = standardService();
+    const cacheDir = mkdtempSync(join(tmpdir(), "gamma-cache-"));
+    let clock = 1_000_000;
+    await discoverGammaServices(chain([REGISTERED]).api, { now: () => clock, cacheDir });
+    clock += 61 * 60_000;
+    const later = chain([REGISTERED]);
+    await discoverGammaServices(later.api, { now: () => clock, cacheDir });
+    expect(later.reads.count).toBe(1);
+    expect(probeKeys(requests).length).toBe(1);
+  });
+
+  it("a failed run leaves nothing behind for the next process", async () => {
+    standardService();
+    const cacheDir = mkdtempSync(join(tmpdir(), "gamma-cache-"));
+    const broken = chain([REGISTERED]);
+    broken.api.query.subtensorModule.services.entries = async () => { throw new Error("chain unreachable"); };
+    await expect(discoverGammaServices(broken.api, { cacheDir })).rejects.toThrow(/unreachable/);
+    const next = chain([REGISTERED]);
+    expect((await discoverGammaServices(next.api, { cacheDir })).services.length).toBe(1);
+    expect(next.reads.count).toBe(1);
   });
 });
