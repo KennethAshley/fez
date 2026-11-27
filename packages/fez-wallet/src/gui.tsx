@@ -934,66 +934,76 @@ export default function activate(api: GuiExtensionApi): void {
       setNote(next[persona] ? `✓ @${persona} may turn up to $${next[persona]} a day of its own TAO into gamma.` : `✓ @${persona} can no longer buy with gamma.`);
     });
 
-    const posRow = { display: "flex", alignItems: "center", gap: 10, padding: "3px 0", fontSize: 12.5 } as const;
-    const posLabel = { color: "var(--fg-dim, #928374)", width: "3.8rem", flex: "none" } as const;
+    const posRow = { display: "flex", alignItems: "center", gap: 10, padding: "4px 0", fontSize: 12.5 } as const;
+    const dim = { color: "var(--fg-dim, #928374)" } as const;
+    const posLabel = { ...dim, width: "3.8rem", flex: "none" } as const;
+    // Both lines end in [amount] [unit] [button] on the same right edge.
+    const amountInput = { width: 84, flex: "none", textAlign: "right" } as const;
+    const rowButton = { minWidth: 48, flex: "none" } as const;
     return (
       <div>
         <div style={posRow}>
           <span style={posLabel}>gamma</span>
-          <span style={{ color: "var(--fg-dim, #928374)" }}>daily limit: the most of its own TAO it may turn into gamma. Blank: it cannot buy.</span>
+          <span>daily limit</span>
+          <span style={dim}>
+            {savedLimit ? "the most of its own TAO it may convert" : "not set, so it cannot buy from services"}
+          </span>
           <span style={{ flex: 1 }} />
+          <span style={dim}>$</span>
           <input
             className="manage-input"
-            style={{ width: 92, flex: "none" }}
+            style={amountInput}
             type="number"
             min="0"
             step="0.01"
             inputMode="decimal"
-            placeholder="$ / day"
+            placeholder="0.00"
             aria-label={`gamma daily limit for ${persona}, in dollars`}
             value={limit}
             onChange={(e) => setLimit(e.target.value)}
             onKeyDown={(e) => e.stopPropagation()}
           />
-          <button className="mini" disabled={busy !== undefined || limit.trim() === savedLimit} onClick={() => void saveLimit()}>
+          <span style={{ ...dim, width: "2.6rem", flex: "none" }}>a day</span>
+          <button className="mini" style={rowButton} disabled={busy !== undefined || limit.trim() === savedLimit} onClick={() => void saveLimit()}>
             {busy === "limit" ? "saving…" : "save"}
           </button>
         </div>
-        {services === undefined ? (
-          <div style={posRow}>
-            <span style={posLabel}>gamma</span>
-            <span style={{ color: "var(--fg-dim, #928374)" }}>prepaid credit at Bittensor services</span>
-            <span style={{ flex: 1 }} />
-            <button className="mini" disabled={busy !== undefined} onClick={() => void load()}>
-              {busy === "load" ? "finding services…" : "fund with gamma"}
-            </button>
-          </div>
-        ) : services.length === 0 ? (
-          <div style={posRow}>
-            <span style={posLabel}>gamma</span>
-            <span style={{ color: "var(--fg-dim, #928374)" }}>no gamma service is ready on this network</span>
-          </div>
-        ) : (
-          <div style={posRow}>
-            <span style={posLabel}>gamma</span>
-            <select className="manage-input" style={{ flex: "none" }} value={pick} aria-label="gamma service to fund" onChange={(e) => setPick((e.target as HTMLSelectElement).value)}>
+        {/* The second line belongs to the same subject, so its label cell stays empty. */}
+        <div style={posRow}>
+          <span style={posLabel} />
+          <span>add credit</span>
+          {services === undefined ? (
+            <span style={dim}>from the treasury, at one service</span>
+          ) : services.length === 0 ? (
+            <span style={dim}>no service is ready on this network</span>
+          ) : (
+            <select className="manage-input" style={{ flex: "none", maxWidth: "16rem" }} value={pick} aria-label="gamma service to fund" onChange={(e) => setPick((e.target as HTMLSelectElement).value)}>
               {services.map((s) => <option key={s.hotkey} value={s.hotkey}>{`SN${s.netuid} ${s.name}`}</option>)}
             </select>
-            <span style={{ flex: 1 }} />
-            <input
-              className="manage-input"
-              style={{ width: 92, flex: "none" }}
-              placeholder={`${network === "finney" ? "" : "t"}TAO amt`}
-              aria-label="TAO to spend from the treasury"
-              value={amt}
-              onChange={(e) => setAmt(e.target.value)}
-              onKeyDown={(e) => e.stopPropagation()}
-            />
-            <button className="mini" disabled={busy !== undefined || !amt.trim()} onClick={() => void fund()}>
-              {busy === "fund" ? "getting a quote…" : busy === "send" ? "funding…" : "fund"}
+          )}
+          <span style={{ flex: 1 }} />
+          {services === undefined ? (
+            <button className="mini" disabled={busy !== undefined} onClick={() => void load()}>
+              {busy === "load" ? "finding services…" : "choose a service"}
             </button>
-          </div>
-        )}
+          ) : services.length > 0 ? (
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <input
+                className="manage-input"
+                style={amountInput}
+                placeholder="0.00"
+                aria-label="TAO to spend from the treasury"
+                value={amt}
+                onChange={(e) => setAmt(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+              <span style={{ ...dim, width: "2.6rem", flex: "none" }}>{network === "finney" ? "TAO" : "tTAO"}</span>
+              <button className="mini" style={rowButton} disabled={busy !== undefined || !amt.trim()} onClick={() => void fund()}>
+                {busy === "fund" ? "quoting…" : busy === "send" ? "funding…" : "fund"}
+              </button>
+            </span>
+          ) : null}
+        </div>
         {note ? <p className="skill-desc" style={{ margin: "2px 0 0" }}>{note}</p> : null}
         {error ? <p className="ob-error">{error}</p> : null}
       </div>
@@ -1279,6 +1289,8 @@ export default function activate(api: GuiExtensionApi): void {
       ...Object.entries(addresses.personas ?? {}),
     ];
 
+    const sectionGap = { marginTop: 36 } as const;
+    const fieldLabel = { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--fg-dim, #928374)", whiteSpace: "nowrap" } as const;
     return (
       <div className="ext-panel">
         {flash ? <p className="settings-hint">{flash}</p> : null}
@@ -1298,14 +1310,14 @@ export default function activate(api: GuiExtensionApi): void {
         ) : (
           <div>
             {balanceRows.map(([who, addr]) => (
-              <div key={who} style={{ padding: "12px 0", borderBottom: "1px solid var(--hairline, #333)" }}>
+              <div key={who} style={{ padding: "16px 0", borderBottom: "1px solid var(--hairline, #333)" }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-                  <span className="skill-name" style={{ fontSize: 14 }}>{who}</span>
+                  <span className="skill-name" style={{ fontSize: 15 }}>{who}</span>
                   {who === "treasury" ? (
                     <span className="skill-desc" style={{ margin: 0 }}>funds every allowance</span>
                   ) : null}
                   <span style={{ flex: 1 }} />
-                  <span style={{ fontFamily: "var(--font-mono, monospace)", fontVariantNumeric: "tabular-nums", fontSize: 15, whiteSpace: "nowrap" }}>
+                  <span style={{ fontFamily: "var(--font-mono, monospace)", fontVariantNumeric: "tabular-nums", fontSize: 20, lineHeight: 1, whiteSpace: "nowrap" }}>
                     {balances[who] ?? "…"}
                   </span>
                 </div>
@@ -1313,11 +1325,11 @@ export default function activate(api: GuiExtensionApi): void {
                   <AddressRow address={addr} />
                 </div>
                 {who !== "treasury" ? (
-                  <div style={{ marginTop: 8 }}>
+                  <div style={{ marginTop: 12 }}>
                     {network !== "finney" ? <SubnetRow persona={who} /> : null}
                     <GammaRow persona={who} network={network} />
                     {evmAddresses[who] ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "3px 0", fontSize: 12.5 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0", fontSize: 12.5 }}>
                         <span style={{ color: "var(--fg-dim, #928374)", width: "3.8rem", flex: "none" }}>usdc</span>
                         <span style={{ fontFamily: "var(--font-mono, monospace)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
                           {usdcBalances[who] ?? "…"}
@@ -1336,9 +1348,9 @@ export default function activate(api: GuiExtensionApi): void {
         {addresses.treasury ? <DeriveRows have={Object.keys(addresses.personas ?? {})} onDone={() => void reloadMirror()} /> : null}
 
         {/* ── the book's tail: everything that moved, newest first. */}
-        <div className="manage-section">ledger</div>
+        <div className="manage-section" style={sectionGap}>ledger</div>
         {log.length === 0 ? (
-          <p className="settings-hint">no transfers yet</p>
+          <p className="settings-hint">Nothing has moved yet. Transfers appear here as they happen.</p>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table className="wallet-ledger" style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -1401,10 +1413,8 @@ export default function activate(api: GuiExtensionApi): void {
             </table>
           </div>
         )}
-        {x402Log.length > 0 ? <p className="settings-hint" style={{ marginTop: 10 }}>x402 · per-call payments</p> : null}
-        {x402Log.length === 0 ? (
-          <p className="settings-hint">no x402 payments yet</p>
-        ) : (
+        {x402Log.length > 0 ? <p className="settings-hint" style={{ marginTop: 18 }}>per-call payments (x402)</p> : null}
+        {x402Log.length === 0 ? null : (
           <div style={{ overflowX: "auto" }}>
             <table className="wallet-ledger" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
@@ -1458,11 +1468,11 @@ export default function activate(api: GuiExtensionApi): void {
 
         {/* ── policy: set once, glance rarely. The knobs live below the
             money because the money is why the page opens. */}
-        <div className="manage-section">policy</div>
+        <div className="manage-section" style={sectionGap}>policy</div>
         <div className="skill-row">
           <div className="skill-main">
-            <span className="skill-name">{networkLabel(network)}</span>
-            <div className="skill-desc">which chain new payments go out on — applies immediately</div>
+            <span className="skill-name">TAO network</span>
+            <div className="skill-desc">Which chain new payments go out on. Applies immediately.</div>
           </div>
           <select
             className="skill-actions"
@@ -1477,7 +1487,7 @@ export default function activate(api: GuiExtensionApi): void {
         <div className="skill-row">
           <div className="skill-main">
             <span className="skill-name">auto-approve below</span>
-            <div className="skill-desc">spends at or under this amount skip the consent card</div>
+            <div className="skill-desc">A spend at or under this many TAO goes through without asking you.</div>
           </div>
           <div className="skill-actions">
             <input
@@ -1506,8 +1516,8 @@ export default function activate(api: GuiExtensionApi): void {
         ) : null}
         <div className="skill-row">
           <div className="skill-main">
-            <span className="skill-name">{x402NetworkLabel(x402Network)}</span>
-            <div className="skill-desc">which chain agents use to pay per-call services (x402) — applies on their next call</div>
+            <span className="skill-name">per-call payment network</span>
+            <div className="skill-desc">Which chain agents pay per-call services on (x402). Applies on their next call.</div>
           </div>
           <select
             className="skill-actions"
@@ -1523,28 +1533,36 @@ export default function activate(api: GuiExtensionApi): void {
         </div>
         <div className="skill-row">
           <div className="skill-main">
-            <span className="skill-name">daily cap / auto-approve (USD)</span>
+            <span className="skill-name">per-call spending</span>
             <div className="skill-desc">
               {`in force: $${capSaved} cap · auto-approve under $${autoSaved} (0 = every spend asks you)`}
             </div>
           </div>
           <div className="skill-actions">
+            <label style={fieldLabel}>
+              daily cap $
             <input
               type="text"
-              placeholder={`cap ${capSaved}`}
+              aria-label="daily cap in dollars"
+              placeholder={capSaved}
               value={capDraft}
               spellCheck={false}
               style={{ width: "5.5em", ...(capDraft === "" || validUsd(capDraft) ? {} : { borderColor: "var(--danger, #c00)" }) }}
               onChange={(e: { target: { value: string } }) => setCapDraft(e.target.value)}
             />
+            </label>
+            <label style={fieldLabel}>
+              auto-approve under $
             <input
               type="text"
-              placeholder={`auto ${autoSaved}`}
+              aria-label="auto-approve under, in dollars"
+              placeholder={autoSaved}
               value={autoDraft}
               spellCheck={false}
               style={{ width: "5.5em", ...(autoDraft === "" || validUsd(autoDraft) ? {} : { borderColor: "var(--danger, #c00)" }) }}
               onChange={(e: { target: { value: string } }) => setAutoDraft(e.target.value)}
             />
+            </label>
             <button
               className="agent-action"
               disabled={
